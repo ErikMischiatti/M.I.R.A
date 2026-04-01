@@ -6,3 +6,7 @@ class FaceState(Enum):
     LISTENING = auto()
     THINKING = auto()
     SPEAKING = auto()
+    HAPPY = auto()
+    TIRED = auto()
+    ANGRY = auto()
+    CONFUSED = auto()
