@@ -1,3 +1,4 @@
+import math
 import random
 
 from PySide6.QtCore import Qt, QTimer, QRectF
@@ -36,6 +37,19 @@ class FaceWidget(QWidget):
             corner_radius=28.0,
         )
 
+        self.current_offset_x = 0.0
+        self.current_offset_y = 0.0
+        self.target_offset_x = 0.0
+        self.target_offset_y = 0.0
+
+        self.current_height_scale = 1.0
+        self.target_height_scale = 1.0
+
+        self.current_width_scale = 1.0
+        self.target_width_scale = 1.0
+
+        self.speaking_phase = 0.0
+
         self.frame_timer = QTimer(self)
         self.frame_timer.timeout.connect(self.update_animation)
         self.frame_timer.start(30)
@@ -44,7 +58,11 @@ class FaceWidget(QWidget):
         self.blink_timer.timeout.connect(self.trigger_blink)
         self.schedule_next_blink()
 
-        self.speaking_phase = 0.0
+        self.idle_timer = QTimer(self)
+        self.idle_timer.timeout.connect(self.choose_idle_target)
+        self.idle_timer.start(1800)
+
+        self.apply_state_targets()
 
     def schedule_next_blink(self):
         next_blink_ms = random.randint(2000, 5000)
@@ -54,7 +72,6 @@ class FaceWidget(QWidget):
         self.left_eye.is_closed = True
         self.right_eye.is_closed = True
         self.update()
-
         QTimer.singleShot(140, self.end_blink)
 
     def end_blink(self):
@@ -65,13 +82,63 @@ class FaceWidget(QWidget):
 
     def set_state(self, new_state: FaceState):
         self.state = new_state
+        self.apply_state_targets()
         self.update()
 
+    def apply_state_targets(self):
+        if self.state == FaceState.IDLE:
+            self.target_height_scale = 1.00
+            self.target_width_scale = 1.00
+
+        elif self.state == FaceState.LISTENING:
+            self.target_height_scale = 1.22
+            self.target_width_scale = 1.02
+            self.target_offset_y = -10.0
+
+        elif self.state == FaceState.THINKING:
+            self.target_height_scale = 0.58
+            self.target_width_scale = 1.10
+            self.target_offset_y = 10.0
+
+        elif self.state == FaceState.SPEAKING:
+            self.target_height_scale = 0.95
+            self.target_width_scale = 1.00
+
+    def choose_idle_target(self):
+        if self.state != FaceState.IDLE:
+            return
+
+        self.target_offset_x = random.uniform(-18.0, 18.0)
+        self.target_offset_y = random.uniform(-10.0, 10.0)
+
+    def lerp(self, current: float, target: float, alpha: float) -> float:
+        return current + (target - current) * alpha
+
     def update_animation(self):
-        if self.state == FaceState.SPEAKING:
-            self.speaking_phase += 0.25
-        else:
-            self.speaking_phase = 0.0
+        if self.state == FaceState.IDLE:
+            pass
+
+        elif self.state == FaceState.LISTENING:
+            self.target_offset_x = 0.0
+            self.target_offset_y = -8.0
+
+        elif self.state == FaceState.THINKING:
+            self.target_offset_x = -8.0 + 8.0 * math.sin(self.speaking_phase * 0.35)
+            self.target_offset_y = 10.0
+
+        elif self.state == FaceState.SPEAKING:
+            self.speaking_phase += 0.22
+            self.target_offset_x = 0.0
+            self.target_offset_y = 0.0
+            self.target_height_scale = 0.88 + 0.16 * abs(math.sin(self.speaking_phase))
+
+        self.current_offset_x = self.lerp(self.current_offset_x, self.target_offset_x, 0.08)
+        self.current_offset_y = self.lerp(self.current_offset_y, self.target_offset_y, 0.08)
+        self.current_height_scale = self.lerp(self.current_height_scale, self.target_height_scale, 0.10)
+        self.current_width_scale = self.lerp(self.current_width_scale, self.target_width_scale, 0.10)
+
+        if self.state != FaceState.SPEAKING:
+            self.speaking_phase += 0.05
 
         self.update()
 
@@ -79,25 +146,10 @@ class FaceWidget(QWidget):
         width = self.width()
         height = self.height()
 
-        x = width * eye.x_ratio
-        y = height * eye.y_ratio
-        w = width * eye.width_ratio
-        h = height * eye.height_ratio
-
-        if self.state == FaceState.IDLE:
-            pass
-
-        elif self.state == FaceState.LISTENING:
-            h *= 1.10
-            y -= h * 0.03
-
-        elif self.state == FaceState.THINKING:
-            h *= 0.72
-            y += height * 0.03
-
-        elif self.state == FaceState.SPEAKING:
-            pulse = 1.0 + 0.08 * abs(__import__("math").sin(self.speaking_phase))
-            h *= pulse
+        x = width * eye.x_ratio + self.current_offset_x
+        y = height * eye.y_ratio + self.current_offset_y
+        w = width * eye.width_ratio * self.current_width_scale
+        h = height * eye.height_ratio * self.current_height_scale
 
         return QRectF(x, y, w, h)
 
