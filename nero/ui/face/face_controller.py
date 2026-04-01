@@ -1,14 +1,16 @@
 import math
 import random
 
-from nero.ui.face.expression_library import EXPRESSION_LIBRARY
+from nero.ui.face.expression_store import load_expression_library, reset_expression
 from nero.ui.face.face_state import FaceState
 
 
 class FaceController:
     def __init__(self):
+        self.expression_library = load_expression_library()
+
         self.state = FaceState.IDLE
-        self.profile = EXPRESSION_LIBRARY[self.state]
+        self.profile = self.expression_library[self.state]
 
         self.left_eye_closed = False
         self.right_eye_closed = False
@@ -40,14 +42,19 @@ class FaceController:
         self.apply_profile()
 
     def random_blink_interval(self) -> int:
-        return random.randint(
+        min_frames = min(
             self.profile.blink_min_interval_frames,
             self.profile.blink_max_interval_frames,
         )
+        max_frames = max(
+            self.profile.blink_min_interval_frames,
+            self.profile.blink_max_interval_frames,
+        )
+        return random.randint(min_frames, max_frames)
 
     def set_state(self, new_state: FaceState):
         self.state = new_state
-        self.profile = EXPRESSION_LIBRARY[self.state]
+        self.profile = self.expression_library[self.state]
         self.apply_profile()
 
     def apply_profile(self):
@@ -132,3 +139,23 @@ class FaceController:
         self.update_idle_behavior()
         self.update_state_animation()
         self.update_interpolation()
+
+    def get_profile(self):
+        return self.profile
+
+    def refresh_profile_targets(self):
+        self.apply_profile()
+
+    def save_profiles(self):
+        from nero.ui.face.expression_store import save_expression_library
+        save_expression_library(self.expression_library)
+
+    def reload_profiles(self):
+        self.expression_library = load_expression_library()
+        self.profile = self.expression_library[self.state]
+        self.apply_profile()
+
+    def reset_current_profile(self):
+        self.expression_library[self.state] = reset_expression(self.state)
+        self.profile = self.expression_library[self.state]
+        self.apply_profile()

@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 
 
 @dataclass
@@ -27,3 +27,10 @@ class ExpressionProfile:
     asymmetry_offset_y_right: float = 0.0
     asymmetry_height_left: float = 1.0
     asymmetry_height_right: float = 1.0
+
+    def to_dict(self) -> dict:
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "ExpressionProfile":
+        return cls(**data)
