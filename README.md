@@ -1,20 +1,19 @@
-# H.A.R.O. — Home Assistant & Robotic Operator
+# H.A.R.O. — Home Assistant & Robotic Operator  
+### (with N.E.R.O — Neural Embodied Robotic Operator)
 
-An interactive desktop companion robot designed to **rotate, sense the environment, and react with lights and simple animations**.  
-Built on **STM32 (C/C++)**, with a modular architecture to expand towards voice, vision, and web-based control.
+This project explores the development of an **interactive assistant system** across two complementary layers:
 
----
+- **N.E.R.O (Neural Embodied Robotic Operator)**  
+  A software-based virtual assistant with a visual embodiment, designed to run on a desktop environment and handle interaction, logic, and behavior.
 
-## 📍 Roadmap
-- **Initial Setup**: idea definition & repository structure ✔
-- **MVP (Q4 2025)**: base rotation + sensor readings + 3 LED emotions
-- **Interactive Version**: sound/gesture input + animated responses
-- **Advanced Version**: AI integration + remote telemetry
-- **Demo Portfolio**: choreographed showcase for events
+- **H.A.R.O (Home Assistant & Robotic Operator)**  
+  A physical robotic platform intended to integrate sensing, actuation, and embedded control, building on top of the N.E.R.O core.
+
+The project follows a **software-first approach**, where the virtual system is developed first and later transferred to a physical device.
 
 ---
 
 ## 👤 Author
-Developed by **Erik Mischiatti**  
-M.Sc. Mechatronics Engineering (Robotics & Electronics)  
-University of Trento · TU Wien  
+
+Erik Mischiatti  
+M.Sc. Mechatronics Engineering
