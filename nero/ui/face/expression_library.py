@@ -1,8 +1,10 @@
+import copy
+
 from nero.ui.face.expression_profile import ExpressionProfile
 from nero.ui.face.face_state import FaceState
 
 
-EXPRESSION_LIBRARY = {
+DEFAULT_EXPRESSION_LIBRARY = {
     FaceState.IDLE: ExpressionProfile(
         name="IDLE",
         width_scale=1.0,
@@ -17,6 +19,9 @@ EXPRESSION_LIBRARY = {
         blink_min_interval_frames=70,
         blink_max_interval_frames=170,
         blink_duration_frames=5,
+        eyelid_tired=0.0,
+        eyelid_angry=0.0,
+        eyelid_happy=0.0,
     ),
     FaceState.LISTENING: ExpressionProfile(
         name="LISTENING",
@@ -30,6 +35,9 @@ EXPRESSION_LIBRARY = {
         blink_min_interval_frames=90,
         blink_max_interval_frames=190,
         blink_duration_frames=4,
+        eyelid_tired=0.0,
+        eyelid_angry=0.0,
+        eyelid_happy=0.0,
     ),
     FaceState.THINKING: ExpressionProfile(
         name="THINKING",
@@ -44,6 +52,9 @@ EXPRESSION_LIBRARY = {
         blink_max_interval_frames=220,
         blink_duration_frames=4,
         thinking_drift=True,
+        eyelid_tired=0.18,
+        eyelid_angry=0.0,
+        eyelid_happy=0.0,
     ),
     FaceState.SPEAKING: ExpressionProfile(
         name="SPEAKING",
@@ -58,6 +69,9 @@ EXPRESSION_LIBRARY = {
         blink_max_interval_frames=170,
         blink_duration_frames=4,
         speaking_pulse=True,
+        eyelid_tired=0.0,
+        eyelid_angry=0.0,
+        eyelid_happy=0.0,
     ),
     FaceState.HAPPY: ExpressionProfile(
         name="HAPPY",
@@ -73,6 +87,9 @@ EXPRESSION_LIBRARY = {
         blink_min_interval_frames=80,
         blink_max_interval_frames=170,
         blink_duration_frames=4,
+        eyelid_tired=0.0,
+        eyelid_angry=0.0,
+        eyelid_happy=0.42,
     ),
     FaceState.TIRED: ExpressionProfile(
         name="TIRED",
@@ -86,6 +103,9 @@ EXPRESSION_LIBRARY = {
         blink_min_interval_frames=35,
         blink_max_interval_frames=80,
         blink_duration_frames=8,
+        eyelid_tired=0.45,
+        eyelid_angry=0.0,
+        eyelid_happy=0.0,
     ),
     FaceState.ANGRY: ExpressionProfile(
         name="ANGRY",
@@ -99,6 +119,9 @@ EXPRESSION_LIBRARY = {
         blink_min_interval_frames=90,
         blink_max_interval_frames=180,
         blink_duration_frames=4,
+        eyelid_tired=0.0,
+        eyelid_angry=0.42,
+        eyelid_happy=0.0,
     ),
     FaceState.CONFUSED: ExpressionProfile(
         name="CONFUSED",
@@ -116,5 +139,12 @@ EXPRESSION_LIBRARY = {
         asymmetry_offset_y_right=6.0,
         asymmetry_height_left=1.05,
         asymmetry_height_right=0.82,
+        eyelid_tired=0.0,
+        eyelid_angry=0.10,
+        eyelid_happy=0.0,
     ),
 }
+
+
+def make_expression_library():
+    return {state: copy.deepcopy(profile) for state, profile in DEFAULT_EXPRESSION_LIBRARY.items()}

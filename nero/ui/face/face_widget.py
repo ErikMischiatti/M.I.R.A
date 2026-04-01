@@ -1,6 +1,6 @@
-from PySide6.QtCore import Qt, QRectF, QTimer
-from PySide6.QtGui import QColor, QPainter, QBrush
+from PySide6.QtCore import Qt, QRectF, QTimer, QPointF
 from PySide6.QtWidgets import QWidget
+from PySide6.QtGui import QColor, QPainter, QBrush
 
 from nero.ui.face.eye import Eye
 from nero.ui.face.face_controller import FaceController
@@ -69,14 +69,27 @@ class FaceWidget(QWidget):
 
         painter.fillRect(self.rect(), self.background_color)
         painter.setPen(Qt.NoPen)
+
+        left_rect = self.get_eye_rect(self.left_eye, "left")
+        right_rect = self.get_eye_rect(self.right_eye, "right")
+
         painter.setBrush(QBrush(self.eye_color))
+        self.draw_eye(painter, left_rect, self.controller.left_eye_closed)
+        self.draw_eye(painter, right_rect, self.controller.right_eye_closed)
 
-        self.draw_eye(painter, self.left_eye, self.controller.left_eye_closed, "left")
-        self.draw_eye(painter, self.right_eye, self.controller.right_eye_closed, "right")
+        if not self.controller.left_eye_closed:
+            self.draw_tired_eyelid(painter, left_rect, "left")
+            self.draw_angry_eyelid(painter, left_rect, "left")
+            self.draw_happy_eyelid(painter, left_rect)
 
-    def draw_eye(self, painter: QPainter, eye: Eye, is_closed: bool, side: str):
-        rect = self.get_eye_rect(eye, side)
+        if not self.controller.right_eye_closed:
+            self.draw_tired_eyelid(painter, right_rect, "right")
+            self.draw_angry_eyelid(painter, right_rect, "right")
+            self.draw_happy_eyelid(painter, right_rect)
+
+    def draw_eye(self, painter: QPainter, rect: QRectF, is_closed: bool):
         radius = self.controller.current_corner_radius
+        painter.setBrush(QBrush(self.eye_color))
 
         if is_closed:
             closed_height = max(6, rect.height() * 0.08)
@@ -90,11 +103,70 @@ class FaceWidget(QWidget):
                 radius,
             )
         else:
-            painter.drawRoundedRect(
-                rect,
-                radius,
-                radius,
-            )
+            painter.drawRoundedRect(rect, radius, radius)
+
+    def draw_tired_eyelid(self, painter: QPainter, rect: QRectF, side: str):
+        amount = self.controller.current_eyelid_tired
+        if amount <= 0.01:
+            return
+
+        painter.setBrush(QBrush(self.background_color))
+        top_cut = rect.height() * amount
+
+        if side == "left":
+            points = [
+                QPointF(rect.left(), rect.top() - 1),
+                QPointF(rect.right(), rect.top() - 1),
+                QPointF(rect.left(), rect.top() + top_cut),
+            ]
+        else:
+            points = [
+                QPointF(rect.left(), rect.top() - 1),
+                QPointF(rect.right(), rect.top() - 1),
+                QPointF(rect.right(), rect.top() + top_cut),
+            ]
+
+        painter.drawPolygon(points)
+
+    def draw_angry_eyelid(self, painter: QPainter, rect: QRectF, side: str):
+        amount = self.controller.current_eyelid_angry
+        if amount <= 0.01:
+            return
+
+        painter.setBrush(QBrush(self.background_color))
+        top_cut = rect.height() * amount
+
+        if side == "left":
+            points = [
+                QPointF(rect.left(), rect.top() - 1),
+                QPointF(rect.right(), rect.top() - 1),
+                QPointF(rect.right(), rect.top() + top_cut),
+            ]
+        else:
+            points = [
+                QPointF(rect.left(), rect.top() - 1),
+                QPointF(rect.right(), rect.top() - 1),
+                QPointF(rect.left(), rect.top() + top_cut),
+            ]
+
+        painter.drawPolygon(points)
+
+    def draw_happy_eyelid(self, painter: QPainter, rect: QRectF):
+        amount = self.controller.current_eyelid_happy
+        if amount <= 0.01:
+            return
+
+        painter.setBrush(QBrush(self.background_color))
+
+        bottom_cover = rect.height() * amount
+        painter.drawRoundedRect(
+            rect.left() - 1,
+            rect.bottom() - bottom_cover + 1,
+            rect.width() + 2,
+            rect.height(),
+            self.controller.current_corner_radius,
+            self.controller.current_corner_radius,
+        )
 
     def keyPressEvent(self, event):
         if event.key() == Qt.Key_1:

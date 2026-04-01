@@ -29,6 +29,15 @@ class FaceController:
         self.current_corner_radius = 28.0
         self.target_corner_radius = 28.0
 
+        self.current_eyelid_tired = 0.0
+        self.target_eyelid_tired = 0.0
+
+        self.current_eyelid_angry = 0.0
+        self.target_eyelid_angry = 0.0
+
+        self.current_eyelid_happy = 0.0
+        self.target_eyelid_happy = 0.0
+
         self.speaking_phase = 0.0
 
         self.blink_interval_frames = 100
@@ -63,6 +72,10 @@ class FaceController:
         self.target_offset_x = self.profile.offset_x
         self.target_offset_y = self.profile.offset_y
         self.target_corner_radius = self.profile.corner_radius
+
+        self.target_eyelid_tired = self.profile.eyelid_tired
+        self.target_eyelid_angry = self.profile.eyelid_angry
+        self.target_eyelid_happy = self.profile.eyelid_happy
 
         self.blink_duration_frames = self.profile.blink_duration_frames
         self.blink_interval_frames = self.random_blink_interval()
@@ -133,6 +146,10 @@ class FaceController:
         self.current_height_scale = self.lerp(self.current_height_scale, self.target_height_scale, 0.10)
         self.current_width_scale = self.lerp(self.current_width_scale, self.target_width_scale, 0.10)
         self.current_corner_radius = self.lerp(self.current_corner_radius, self.target_corner_radius, 0.10)
+
+        self.current_eyelid_tired = self.lerp(self.current_eyelid_tired, self.target_eyelid_tired, 0.10)
+        self.current_eyelid_angry = self.lerp(self.current_eyelid_angry, self.target_eyelid_angry, 0.10)
+        self.current_eyelid_happy = self.lerp(self.current_eyelid_happy, self.target_eyelid_happy, 0.10)
 
     def update(self):
         self.update_blink()

@@ -28,6 +28,10 @@ class ExpressionProfile:
     asymmetry_height_left: float = 1.0
     asymmetry_height_right: float = 1.0
 
+    eyelid_tired: float = 0.0
+    eyelid_angry: float = 0.0
+    eyelid_happy: float = 0.0
+
     def to_dict(self) -> dict:
         return asdict(self)
 
