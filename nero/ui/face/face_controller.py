@@ -125,9 +125,17 @@ class FaceController:
         self.idle_frame_counter += 1
         if self.idle_frame_counter >= self.idle_change_interval_frames:
             self.idle_frame_counter = 0
+            self.idle_change_interval_frames = random.randint(40, 90)
             self.choose_idle_target()
 
     def update_state_animation(self):
+        self.target_width_scale = self.profile.width_scale
+        self.target_height_scale = self.profile.height_scale
+
+        if not self.profile.idle_enabled:
+            self.target_offset_x = self.profile.offset_x
+            self.target_offset_y = self.profile.offset_y
+
         if self.profile.thinking_drift:
             self.target_offset_x = self.profile.offset_x + (-8.0 + 8.0 * math.sin(self.speaking_phase * 0.35))
             self.target_offset_y = self.profile.offset_y
@@ -135,16 +143,16 @@ class FaceController:
         if self.profile.speaking_pulse:
             self.speaking_phase += 0.22
             self.target_height_scale = self.profile.height_scale + 0.16 * abs(math.sin(self.speaking_phase))
-        else:
-            self.target_height_scale = self.profile.height_scale
+
+        self.apply_look_deformation()
 
         self.speaking_phase += 0.05
 
     def update_interpolation(self):
-        self.current_offset_x = self.lerp(self.current_offset_x, self.target_offset_x, 0.08)
-        self.current_offset_y = self.lerp(self.current_offset_y, self.target_offset_y, 0.08)
-        self.current_height_scale = self.lerp(self.current_height_scale, self.target_height_scale, 0.10)
-        self.current_width_scale = self.lerp(self.current_width_scale, self.target_width_scale, 0.10)
+        self.current_offset_x = self.lerp(self.current_offset_x, self.target_offset_x, 0.05)
+        self.current_offset_y = self.lerp(self.current_offset_y, self.target_offset_y, 0.05)
+        self.current_height_scale = self.lerp(self.current_height_scale, self.target_height_scale, 0.07)
+        self.current_width_scale = self.lerp(self.current_width_scale, self.target_width_scale, 0.07)
         self.current_corner_radius = self.lerp(self.current_corner_radius, self.target_corner_radius, 0.10)
 
         self.current_eyelid_tired = self.lerp(self.current_eyelid_tired, self.target_eyelid_tired, 0.10)
@@ -176,3 +184,23 @@ class FaceController:
         self.expression_library[self.state] = reset_expression(self.state)
         self.profile = self.expression_library[self.state]
         self.apply_profile()
+
+    def apply_look_deformation(self):
+        look_dx = self.target_offset_x - self.profile.offset_x
+        look_dy = self.target_offset_y - self.profile.offset_y
+
+        horizontal_amount = min(abs(look_dx) / 25.0, 1.0)
+        vertical_amount = min(abs(look_dy) / 20.0, 1.0)
+
+        width_boost = 0.10 * horizontal_amount
+        height_squash = 0.12 * horizontal_amount
+
+        vertical_height_adjust = 0.0
+        if look_dy < 0:
+            vertical_height_adjust = 0.04 * vertical_amount
+        elif look_dy > 0:
+            vertical_height_adjust = -0.06 * vertical_amount
+
+        self.target_width_scale += width_boost
+        self.target_height_scale += vertical_height_adjust
+        self.target_height_scale -= height_squash
