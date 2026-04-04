@@ -50,8 +50,8 @@
   "THINKING": {
     "name": "THINKING",
     "width_scale": 1.1,
-    "height_scale": 0.57,
-    "offset_x": 0.0,
+    "height_scale": 0.56,
+    "offset_x": -28.0,
     "offset_y": 10.0,
     "corner_radius": 24.0,
     "idle_enabled": false,
