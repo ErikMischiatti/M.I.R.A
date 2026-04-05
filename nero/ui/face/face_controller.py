@@ -56,6 +56,16 @@ class FaceController:
         self.idle_change_interval_frames = 60
         self.idle_frame_counter = 0
 
+        self.attention_target_x = 0.5
+        self.attention_target_y = 0.5
+
+        self.look_enter_boost_frames = 0
+        self.look_hold_frames = 0
+
+        self.micro_saccade_x = 1.0
+        self.micro_saccade_y = 1.0
+        self.micro_saccade_timer = 0
+
         self.apply_profile()
 
     def random_blink_interval(self) -> int:
@@ -89,12 +99,21 @@ class FaceController:
         self.blink_interval_frames = self.random_blink_interval()
 
     def set_look_target(self, x_ratio: float, y_ratio: float):
+        x_ratio = max(0.0, min(1.0, x_ratio))
+        y_ratio = max(0.0, min(1.0, y_ratio))
+
+        was_disabled = not self.look_tracking_enabled
+
         self.look_tracking_enabled = True
-        self.look_target_x = max(0.0, min(1.0, x_ratio))
-        self.look_target_y = max(0.0, min(1.0, y_ratio))
+        self.look_target_x = x_ratio
+        self.look_target_y = y_ratio
+
+        if was_disabled:
+            self.look_enter_boost_frames = 10
 
     def clear_look_target(self):
         self.look_tracking_enabled = False
+        self.look_hold_frames = 10
 
     def choose_idle_target(self):
         if not self.profile.idle_enabled:
@@ -145,13 +164,16 @@ class FaceController:
             self.choose_idle_target()
 
     def apply_mouse_look_target(self):
-        look_x = (self.look_target_x - 0.5) * 2.0
-        look_y = (self.look_target_y - 0.5) * 2.0
+        look_x = (self.attention_target_x - 0.5) * 2.0
+        look_y = (self.attention_target_y - 0.5) * 2.0
 
         if abs(look_x) < self.look_deadzone:
             look_x = 0.0
         if abs(look_y) < self.look_deadzone:
             look_y = 0.0
+
+        look_x = math.copysign(abs(look_x) ** 1.35, look_x)
+        look_y = math.copysign(abs(look_y) ** 1.35, look_y)
 
         ellipse_norm = (look_x ** 2) + (look_y ** 2)
         if ellipse_norm > 1.0:
@@ -159,8 +181,13 @@ class FaceController:
             look_x *= scale
             look_y *= scale
 
-        self.target_offset_x = self.profile.offset_x + look_x * self.look_strength_x
-        self.target_offset_y = self.profile.offset_y + look_y * self.look_strength_y
+        look_x += self.micro_saccade_x
+        look_y += self.micro_saccade_y
+
+        weight = self.get_state_look_weight()
+
+        self.target_offset_x = self.profile.offset_x + look_x * self.look_strength_x * weight
+        self.target_offset_y = self.profile.offset_y + look_y * self.look_strength_y * weight
 
     def update_state_animation(self):
         self.target_width_scale = self.profile.width_scale
@@ -178,7 +205,7 @@ class FaceController:
             self.speaking_phase += 0.22
             self.target_height_scale = self.profile.height_scale + 0.16 * abs(math.sin(self.speaking_phase))
 
-        if self.look_tracking_enabled:
+        if self.look_tracking_enabled or self.look_hold_frames > 0:
             self.apply_mouse_look_target()
 
         self.apply_look_deformation()
@@ -199,6 +226,8 @@ class FaceController:
     def update(self):
         self.update_blink()
         self.update_idle_behavior()
+        self.update_attention_target()
+        self.update_micro_saccades()
         self.update_state_animation()
         self.update_interpolation()
 
@@ -241,3 +270,62 @@ class FaceController:
         self.target_width_scale += width_boost
         self.target_height_scale += vertical_height_adjust
         self.target_height_scale -= height_squash
+
+    def get_state_look_weight(self) -> float:
+        if self.state == FaceState.IDLE:
+            return 1.00
+        if self.state == FaceState.LISTENING:
+            return 0.95
+        if self.state == FaceState.THINKING:
+            return 0.45
+        if self.state == FaceState.SPEAKING:
+            return 0.35
+        if self.state == FaceState.HAPPY:
+            return 0.80
+        if self.state == FaceState.CONFUSED:
+            return 0.75
+        if self.state == FaceState.TIRED:
+            return 0.50
+        if self.state == FaceState.ANGRY:
+            return 0.65
+        return 0.75
+
+    def update_attention_target(self):
+        if self.look_tracking_enabled:
+            alpha = 0.18
+            if self.look_enter_boost_frames > 0:
+                alpha = 0.32
+                self.look_enter_boost_frames -= 1
+
+            self.attention_target_x = self.lerp(self.attention_target_x, self.look_target_x, alpha)
+            self.attention_target_y = self.lerp(self.attention_target_y, self.look_target_y, alpha)
+            self.look_hold_frames = 0
+            return
+
+        if self.look_hold_frames > 0:
+            self.look_hold_frames -= 1
+            return
+
+        self.attention_target_x = self.lerp(self.attention_target_x, 0.5, 0.08)
+        self.attention_target_y = self.lerp(self.attention_target_y, 0.5, 0.08)
+
+    def update_micro_saccades(self):
+        moving_x = abs(self.look_target_x - self.attention_target_x)
+        moving_y = abs(self.look_target_y - self.attention_target_y)
+        is_settled = (moving_x + moving_y) < 0.035
+
+        if not self.look_tracking_enabled or not is_settled:
+            self.micro_saccade_x = self.lerp(self.micro_saccade_x, 0.0, 0.20)
+            self.micro_saccade_y = self.lerp(self.micro_saccade_y, 0.0, 0.20)
+            self.micro_saccade_timer = 0
+            return
+
+        self.micro_saccade_timer += 1
+
+        if self.micro_saccade_timer >= random.randint(18, 42):
+            self.micro_saccade_timer = 0
+            self.micro_saccade_x = random.uniform(-0.118, 0.118)
+            self.micro_saccade_y = random.uniform(-0.014, 0.014)
+
+        self.micro_saccade_x = self.lerp(self.micro_saccade_x, 0.0, 0.08)
+        self.micro_saccade_y = self.lerp(self.micro_saccade_y, 0.0, 0.08)

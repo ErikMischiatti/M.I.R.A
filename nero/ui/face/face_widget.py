@@ -67,7 +67,6 @@ class FaceWidget(QWidget):
         return QRectF(x, y, w, h)
     
     def enterEvent(self, event):
-        self.setMouseTracking(True)
         super().enterEvent(event)
 
     def leaveEvent(self, event):
