@@ -13,11 +13,14 @@ class FaceWidget(QWidget):
 
         self.setMinimumSize(700, 450)
         self.setFocusPolicy(Qt.StrongFocus)
+        self.setMouseTracking(True)
+
 
         self.background_color = QColor(10, 10, 10)
         self.eye_color = QColor(245, 245, 245)
 
         self.controller = FaceController()
+
 
         self.left_eye = Eye(
             x_ratio=0.27,
@@ -62,6 +65,24 @@ class FaceWidget(QWidget):
         h = self.height() * eye.height_ratio * self.controller.current_height_scale * asym_h
 
         return QRectF(x, y, w, h)
+    
+    def enterEvent(self, event):
+        self.setMouseTracking(True)
+        super().enterEvent(event)
+
+    def leaveEvent(self, event):
+        self.controller.clear_look_target()
+        super().leaveEvent(event)
+
+    def mouseMoveEvent(self, event):
+        if self.width() <= 0 or self.height() <= 0:
+            return super().mouseMoveEvent(event)
+
+        x_ratio = event.position().x() / self.width()
+        y_ratio = event.position().y() / self.height()
+
+        self.controller.set_look_target(x_ratio, y_ratio)
+        super().mouseMoveEvent(event)
 
     def paintEvent(self, event):
         painter = QPainter(self)

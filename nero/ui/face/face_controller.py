@@ -38,6 +38,14 @@ class FaceController:
         self.current_eyelid_happy = 0.0
         self.target_eyelid_happy = 0.0
 
+        self.look_tracking_enabled = False
+        self.look_target_x = 0.5
+        self.look_target_y = 0.5
+
+        self.look_strength_x = 60.0
+        self.look_strength_y = 60.0
+        self.look_deadzone = 0.06
+
         self.speaking_phase = 0.0
 
         self.blink_interval_frames = 100
@@ -79,6 +87,14 @@ class FaceController:
 
         self.blink_duration_frames = self.profile.blink_duration_frames
         self.blink_interval_frames = self.random_blink_interval()
+
+    def set_look_target(self, x_ratio: float, y_ratio: float):
+        self.look_tracking_enabled = True
+        self.look_target_x = max(0.0, min(1.0, x_ratio))
+        self.look_target_y = max(0.0, min(1.0, y_ratio))
+
+    def clear_look_target(self):
+        self.look_tracking_enabled = False
 
     def choose_idle_target(self):
         if not self.profile.idle_enabled:
@@ -128,6 +144,24 @@ class FaceController:
             self.idle_change_interval_frames = random.randint(40, 90)
             self.choose_idle_target()
 
+    def apply_mouse_look_target(self):
+        look_x = (self.look_target_x - 0.5) * 2.0
+        look_y = (self.look_target_y - 0.5) * 2.0
+
+        if abs(look_x) < self.look_deadzone:
+            look_x = 0.0
+        if abs(look_y) < self.look_deadzone:
+            look_y = 0.0
+
+        ellipse_norm = (look_x ** 2) + (look_y ** 2)
+        if ellipse_norm > 1.0:
+            scale = 1.0 / math.sqrt(ellipse_norm)
+            look_x *= scale
+            look_y *= scale
+
+        self.target_offset_x = self.profile.offset_x + look_x * self.look_strength_x
+        self.target_offset_y = self.profile.offset_y + look_y * self.look_strength_y
+
     def update_state_animation(self):
         self.target_width_scale = self.profile.width_scale
         self.target_height_scale = self.profile.height_scale
@@ -143,6 +177,9 @@ class FaceController:
         if self.profile.speaking_pulse:
             self.speaking_phase += 0.22
             self.target_height_scale = self.profile.height_scale + 0.16 * abs(math.sin(self.speaking_phase))
+
+        if self.look_tracking_enabled:
+            self.apply_mouse_look_target()
 
         self.apply_look_deformation()
 
