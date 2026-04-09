@@ -42,9 +42,9 @@ class FaceController:
         self.look_target_x = 0.5
         self.look_target_y = 0.5
 
-        self.look_strength_x = 60.0
-        self.look_strength_y = 60.0
-        self.look_deadzone = 0.06
+        self.look_strength_x = 82.0
+        self.look_strength_y = 54.0
+        self.look_deadzone = 0.035
 
         self.speaking_phase = 0.0
 
@@ -62,9 +62,13 @@ class FaceController:
         self.look_enter_boost_frames = 0
         self.look_hold_frames = 0
 
-        self.micro_saccade_x = 1.0
-        self.micro_saccade_y = 1.0
-        self.micro_saccade_timer = 0
+        self.scrutiny_phase = 0.0
+        self.scrutiny_offset_x = 0.0
+        self.scrutiny_offset_y = 0.0
+        self.scrutiny_radius_x = 0.12
+        self.scrutiny_radius_y = 0.07
+        self.scrutiny_speed = 0.11
+        self.scrutiny_activation = 0.0
 
         self.apply_profile()
 
@@ -181,8 +185,8 @@ class FaceController:
             look_x *= scale
             look_y *= scale
 
-        look_x += self.micro_saccade_x
-        look_y += self.micro_saccade_y
+        look_x += self.scrutiny_offset_x
+        look_y += self.scrutiny_offset_y
 
         weight = self.get_state_look_weight()
 
@@ -213,8 +217,8 @@ class FaceController:
         self.speaking_phase += 0.05
 
     def update_interpolation(self):
-        self.current_offset_x = self.lerp(self.current_offset_x, self.target_offset_x, 0.05)
-        self.current_offset_y = self.lerp(self.current_offset_y, self.target_offset_y, 0.05)
+        self.current_offset_x = self.lerp(self.current_offset_x, self.target_offset_x, 0.1)
+        self.current_offset_y = self.lerp(self.current_offset_y, self.target_offset_y, 0.1)
         self.current_height_scale = self.lerp(self.current_height_scale, self.target_height_scale, 0.07)
         self.current_width_scale = self.lerp(self.current_width_scale, self.target_width_scale, 0.07)
         self.current_corner_radius = self.lerp(self.current_corner_radius, self.target_corner_radius, 0.10)
@@ -227,7 +231,7 @@ class FaceController:
         self.update_blink()
         self.update_idle_behavior()
         self.update_attention_target()
-        self.update_micro_saccades()
+        self.update_scrutiny_motion()
         self.update_state_animation()
         self.update_interpolation()
 
@@ -309,23 +313,25 @@ class FaceController:
         self.attention_target_x = self.lerp(self.attention_target_x, 0.5, 0.08)
         self.attention_target_y = self.lerp(self.attention_target_y, 0.5, 0.08)
 
-    def update_micro_saccades(self):
+    def update_scrutiny_motion(self):
         moving_x = abs(self.look_target_x - self.attention_target_x)
         moving_y = abs(self.look_target_y - self.attention_target_y)
-        is_settled = (moving_x + moving_y) < 0.035
+        is_settled = (moving_x + moving_y) < 0.05
 
-        if not self.look_tracking_enabled or not is_settled:
-            self.micro_saccade_x = self.lerp(self.micro_saccade_x, 0.0, 0.20)
-            self.micro_saccade_y = self.lerp(self.micro_saccade_y, 0.0, 0.20)
-            self.micro_saccade_timer = 0
+        should_scrutinize = self.look_tracking_enabled and is_settled
+
+        target_activation = 1.0 if should_scrutinize else 0.0
+        self.scrutiny_activation = self.lerp(self.scrutiny_activation, target_activation, 0.08)
+
+        if self.scrutiny_activation < 0.01:
+            self.scrutiny_offset_x = self.lerp(self.scrutiny_offset_x, 0.0, 0.20)
+            self.scrutiny_offset_y = self.lerp(self.scrutiny_offset_y, 0.0, 0.20)
             return
 
-        self.micro_saccade_timer += 1
+        self.scrutiny_phase += self.scrutiny_speed
 
-        if self.micro_saccade_timer >= random.randint(18, 42):
-            self.micro_saccade_timer = 0
-            self.micro_saccade_x = random.uniform(-0.118, 0.118)
-            self.micro_saccade_y = random.uniform(-0.014, 0.014)
+        orbit_x = math.cos(self.scrutiny_phase) * self.scrutiny_radius_x
+        orbit_y = math.sin(self.scrutiny_phase) * self.scrutiny_radius_y
 
-        self.micro_saccade_x = self.lerp(self.micro_saccade_x, 0.0, 0.08)
-        self.micro_saccade_y = self.lerp(self.micro_saccade_y, 0.0, 0.08)
+        self.scrutiny_offset_x = orbit_x * self.scrutiny_activation
+        self.scrutiny_offset_y = orbit_y * self.scrutiny_activation
