@@ -9,6 +9,8 @@ from nero.core.state_manager import StateManager
 from nero.core.brain import Brain
 from nero.core.interaction_manager import InteractionManager
 
+from nero.core.embodied_behavior import EmbodiedBehavior
+
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -23,6 +25,7 @@ class MainWindow(QMainWindow):
         self.state_manager = StateManager(self.event_bus)
         self.brain = Brain(self.event_bus, self.state_manager)
         self.interaction_manager = InteractionManager(self.event_bus, self.state_manager)
+        self.embodied_behavior = EmbodiedBehavior(self.event_bus, self.state_manager)
 
         # --- UI root ---
         central_widget = QWidget()
@@ -74,5 +77,4 @@ class MainWindow(QMainWindow):
         self.chat_panel.add_nero_message(response.text)
         print(f"[NERO] {response.text}")
 
-        self.interaction_manager.restore_post_response_state()
 
