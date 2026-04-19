@@ -42,3 +42,17 @@
 venv/
 __pycache__/
 *.pyc
+
+# Python virtual environment
+.venv/
+venv/
+env/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# IDE
+.vscode/
+.idea/
