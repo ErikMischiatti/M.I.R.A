@@ -8,6 +8,7 @@ from nero.cognition.response_builder import ResponseBuilder
 from nero.cognition.rule_intent_engine import RuleIntentEngine
 from nero.core.events import EventBus
 from nero.core.models import BrainResponse, IntentResult, UserInput
+from nero.core.session_memory import SessionMemory
 from nero.core.state_manager import StateManager
 from nero.ui.face.face_state import FaceState
 
@@ -22,6 +23,7 @@ class Brain:
     ):
         self.event_bus = event_bus
         self.state_manager = state_manager
+        self.memory = SessionMemory()
 
         self.intent_engine = intent_engine or RuleIntentEngine()
         self.response_builder = response_builder or ResponseBuilder()
@@ -32,6 +34,7 @@ class Brain:
 
     def process_text(self, text: str) -> BrainResponse:
         user_input = UserInput(text=text.strip())
+        self.memory.add_user_input(user_input)
 
         self.event_bus.emit("user_input_received", user_input)
         self.state_manager.set_state(FaceState.LISTENING)
@@ -52,6 +55,7 @@ class Brain:
         on_response: Callable[[BrainResponse], None] | None = None,
     ) -> None:
         user_input = UserInput(text=text.strip())
+        self.memory.add_user_input(user_input)
 
         self.event_bus.emit("user_input_received", user_input)
         self.state_manager.set_state(FaceState.LISTENING)
@@ -95,5 +99,21 @@ class Brain:
 
     def _build_response(self, user_input: UserInput) -> BrainResponse:
         intent = self.infer_intent(user_input)
+        self.memory.set_last_intent(intent)
         self.event_bus.emit("intent_inferred", intent)
-        return self.build_response(intent, user_input)
+
+        response = self.build_response(intent, user_input)
+        self.memory.add_response(response)
+
+        self.memory.set_context("last_user_text", user_input.text)
+        self.memory.set_context("last_response_text", response.text)
+        self.memory.set_context("last_face_state", response.face_state.name)
+        self.memory.set_context("last_intent_name", intent.intent)
+
+        return response
+
+    def get_recent_history(self, limit: int | None = None):
+        return self.memory.get_recent_history(limit)
+
+    def get_last_intent(self) -> IntentResult | None:
+        return self.memory.last_intent
