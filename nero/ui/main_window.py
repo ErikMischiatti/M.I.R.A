@@ -7,8 +7,7 @@ from nero.ui.chat_panel import ChatPanel
 from nero.core.events import EventBus
 from nero.core.state_manager import StateManager
 from nero.core.brain import Brain
-from nero.ui.face.face_state import FaceState
-
+from nero.core.interaction_manager import InteractionManager
 
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -23,6 +22,7 @@ class MainWindow(QMainWindow):
         self.event_bus = EventBus()
         self.state_manager = StateManager(self.event_bus)
         self.brain = Brain(self.event_bus, self.state_manager)
+        self.interaction_manager = InteractionManager(self.event_bus, self.state_manager)
 
         # --- UI root ---
         central_widget = QWidget()
@@ -52,9 +52,11 @@ class MainWindow(QMainWindow):
         self.event_bus.subscribe("state_changed", self.on_state_changed)
 
         self.chat_panel.message_submitted.connect(self.on_user_message_submitted)
-        self.chat_panel.input_focused.connect(self.on_input_focused)
-        self.chat_panel.input_unfocused.connect(self.on_input_unfocused)
-        self.chat_panel.input_text_changed.connect(self.on_input_text_changed)
+        self.chat_panel.input_focused.connect(lambda: self.event_bus.emit("input_focused"))
+        self.chat_panel.input_unfocused.connect(lambda: self.event_bus.emit("input_unfocused"))
+        self.chat_panel.input_text_changed.connect(
+            lambda text: self.event_bus.emit("input_text_changed", text)
+)
 
     def on_state_changed(self, payload):
         new_state = payload["new_state"]
@@ -65,53 +67,12 @@ class MainWindow(QMainWindow):
         self.face_widget.update()
 
     def on_user_message_submitted(self, text: str):
-        if self.is_processing:
-            return
-
-        self.is_processing = True
         self.chat_panel.add_user_message(text)
-
         self.brain.process_text_async(text, self.on_brain_response)
 
     def on_brain_response(self, response):
         self.chat_panel.add_nero_message(response.text)
         print(f"[NERO] {response.text}")
-        self.is_processing = False
 
-        self.update_post_response_state()
+        self.interaction_manager.restore_post_response_state()
 
-    def update_post_response_state(self):
-        input_has_focus = self.chat_panel.input_line.hasFocus()
-        input_has_text = bool(self.chat_panel.input_line.text().strip())
-
-        if input_has_focus:
-            self.state_manager.set_state(FaceState.LISTENING)
-        elif input_has_text:
-            self.state_manager.set_state(FaceState.LISTENING)
-        else:
-            self.state_manager.set_state(FaceState.IDLE)
-
-    def on_input_focused(self):
-        if self.is_processing:
-            return
-
-        self.state_manager.set_state(FaceState.LISTENING)
-
-    def on_input_unfocused(self):
-        if self.is_processing:
-            return
-
-        if not self.chat_panel.input_line.text().strip():
-            self.state_manager.set_state(FaceState.IDLE)
-
-    def on_input_text_changed(self, text: str):
-        if self.is_processing:
-            return
-
-        if text.strip():
-            self.state_manager.set_state(FaceState.LISTENING)
-        else:
-            if self.chat_panel.input_line.hasFocus():
-                self.state_manager.set_state(FaceState.LISTENING)
-            else:
-                self.state_manager.set_state(FaceState.IDLE)
