@@ -52,5 +52,15 @@ class RuleIntentEngine(IntentEngine):
 
         if "cancella memoria sessione" in text or "resetta memoria sessione" in text:
             return IntentResult(intent="clear_session_memory", confidence=0.90)
+        
+        if "cosa sai fare" in text or "che azioni sai fare" in text or "lista azioni" in text:
+            return IntentResult(intent="list_actions", confidence=0.90)
+
+        if "quanti messaggi" in text or "dimensione memoria" in text or "quanti dati hai" in text:
+            return IntentResult(intent="memory_size_query", confidence=0.90)
+
+        if "ultimo messaggio" in text or "cosa ho detto prima" in text:
+            return IntentResult(intent="last_user_message_query", confidence=0.90)
 
         return IntentResult(intent="unknown", confidence=0.50)
+        

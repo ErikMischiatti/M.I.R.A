@@ -117,7 +117,29 @@ class ResponseBuilder:
                 face_state=FaceState.HAPPY,
                 metadata={"action_name": action_result.action_name, **action_result.data},
             )
+    
+        if action_result.action_name == "list_available_actions":
+            actions = action_result.data.get("actions", [])
+            return BrainResponse(
+                text=f"Posso eseguire queste azioni: {', '.join(actions)}",
+                face_state=FaceState.SPEAKING,
+                metadata={"action_name": action_result.action_name, **action_result.data},
+            )
 
+        if action_result.action_name == "get_memory_size":
+            return BrainResponse(
+                text=action_result.message,
+                face_state=FaceState.SPEAKING,
+                metadata={"action_name": action_result.action_name, **action_result.data},
+            )
+
+        if action_result.action_name == "get_last_user_message":
+            return BrainResponse(
+                text=action_result.message,
+                face_state=FaceState.SPEAKING,
+                metadata={"action_name": action_result.action_name, **action_result.data},
+            )
+        
         return BrainResponse(
             text=action_result.message,
             face_state=FaceState.SPEAKING,

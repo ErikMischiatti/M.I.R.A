@@ -118,3 +118,50 @@ def make_clear_session_memory_action(memory: SessionMemory):
         )
 
     return handler
+
+def make_list_available_actions_action(registry):
+    def handler(parameters: dict) -> ActionResult:
+        actions = registry.list_actions()
+
+        return ActionResult(
+            success=True,
+            action_name="list_available_actions",
+            message="Elenco azioni disponibili.",
+            data={"actions": actions},
+        )
+
+    return handler
+
+
+def make_get_memory_size_action(memory: SessionMemory):
+    def handler(parameters: dict) -> ActionResult:
+        size = len(memory.history)
+
+        return ActionResult(
+            success=True,
+            action_name="get_memory_size",
+            message=f"La memoria contiene {size} messaggi.",
+            data={"size": size},
+        )
+
+    return handler
+
+
+def make_get_last_user_message_action(memory: SessionMemory):
+    def handler(parameters: dict) -> ActionResult:
+        for msg in reversed(memory.history):
+            if msg.role == "user":
+                return ActionResult(
+                    success=True,
+                    action_name="get_last_user_message",
+                    message=f"Il tuo ultimo messaggio era: {msg.text}",
+                    data={"text": msg.text},
+                )
+
+        return ActionResult(
+            success=False,
+            action_name="get_last_user_message",
+            message="Non ho trovato messaggi utente nella memoria.",
+        )
+
+    return handler

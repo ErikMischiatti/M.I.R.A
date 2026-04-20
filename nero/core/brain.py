@@ -14,6 +14,9 @@ from nero.actions.builtin_actions import (
     make_get_last_intent_action,
     make_get_session_summary_action,
     make_get_time_action,
+    make_list_available_actions_action,
+    make_get_memory_size_action,
+    make_get_last_user_message_action,
 )
 from nero.cognition.response_builder import ResponseBuilder
 from nero.cognition.rule_intent_engine import RuleIntentEngine
@@ -54,6 +57,10 @@ class Brain:
         self.action_registry.register("get_last_intent", make_get_last_intent_action(self.memory))
         self.action_registry.register("get_session_summary", make_get_session_summary_action(self.memory))
         self.action_registry.register("clear_session_memory", make_clear_session_memory_action(self.memory))
+        self.action_registry.register("list_available_actions", make_list_available_actions_action(self.action_registry))
+        self.action_registry.register("get_memory_size", make_get_memory_size_action(self.memory))
+        self.action_registry.register("get_last_user_message", make_get_last_user_message_action(self.memory))
+        
 
     def process_text(self, text: str) -> BrainResponse:
         user_input = UserInput(text=text.strip())
@@ -160,6 +167,23 @@ class Brain:
         if intent.intent == "clear_session_memory":
             return ActionRequest(
                 action_name="clear_session_memory",
+                source_intent=intent.intent,
+            )
+        if intent.intent == "list_actions":
+            return ActionRequest(
+                action_name="list_available_actions",
+                source_intent=intent.intent,
+            )
+
+        if intent.intent == "memory_size_query":
+            return ActionRequest(
+                action_name="get_memory_size",
+                source_intent=intent.intent,
+            )
+
+        if intent.intent == "last_user_message_query":
+            return ActionRequest(
+                action_name="get_last_user_message",
                 source_intent=intent.intent,
             )
 
