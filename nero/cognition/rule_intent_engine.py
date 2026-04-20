@@ -22,4 +22,35 @@ class RuleIntentEngine(IntentEngine):
         if "chi sei" in text:
             return IntentResult(intent="identity_query", confidence=0.95)
 
+        if "che ore sono" in text or "dimmi l'ora" in text or "dimmi ora" in text:
+            return IntentResult(intent="time_query", confidence=0.95)
+
+        if "che giorno è" in text or "che giorno e" in text or "dimmi la data" in text or "data di oggi" in text:
+            return IntentResult(intent="date_query", confidence=0.95)
+
+        if text.startswith("ripeti "):
+            echoed = user_input.text[len("ripeti "):].strip()
+            return IntentResult(
+                intent="echo_request",
+                confidence=0.95,
+                entities={"text": echoed},
+            )
+
+        if text.startswith("echo "):
+            echoed = user_input.text[len("echo "):].strip()
+            return IntentResult(
+                intent="echo_request",
+                confidence=0.95,
+                entities={"text": echoed},
+            )
+
+        if "riassumi la sessione" in text or "cosa ci siamo detti" in text:
+            return IntentResult(intent="session_summary_request", confidence=0.90)
+
+        if "ultimo intent" in text or "qual è stato l'ultimo intent" in text or "qual e stato l'ultimo intent" in text:
+            return IntentResult(intent="last_intent_query", confidence=0.90)
+
+        if "cancella memoria sessione" in text or "resetta memoria sessione" in text:
+            return IntentResult(intent="clear_session_memory", confidence=0.90)
+
         return IntentResult(intent="unknown", confidence=0.50)
