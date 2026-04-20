@@ -61,6 +61,37 @@ class RuleIntentEngine(IntentEngine):
 
         if "ultimo messaggio" in text or "cosa ho detto prima" in text:
             return IntentResult(intent="last_user_message_query", confidence=0.90)
+        if text.startswith("apri ") or text.startswith("vai su "):
+            raw = text.replace("apri ", "").replace("vai su ", "").strip()
+
+            if "." in raw:  # semplice euristica URL
+                return IntentResult(
+                    intent="open_url_request",
+                    confidence=0.90,
+                    entities={"url": raw},
+                )
+        if text.startswith("apri ") and "." not in text:
+            app_name = text.replace("apri ", "").strip()
+
+            return IntentResult(
+                intent="open_app_request",
+                confidence=0.85,
+                entities={"app_name": app_name},
+            )
+        if text.startswith("notificami ") or text.startswith("mostra notifica"):
+            msg = text.replace("notificami ", "").replace("mostra notifica", "").strip()
+
+            return IntentResult(
+                intent="notification_request",
+                confidence=0.85,
+                entities={"text": msg},
+            )
+        if "info sistema" in text or "che sistema stai usando" in text or "system info" in text:
+            return IntentResult(
+                intent="system_info_query",
+                confidence=0.90,
+            )
+
 
         return IntentResult(intent="unknown", confidence=0.50)
         

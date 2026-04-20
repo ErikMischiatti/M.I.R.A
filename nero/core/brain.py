@@ -18,6 +18,13 @@ from nero.actions.builtin_actions import (
     make_get_memory_size_action,
     make_get_last_user_message_action,
 )
+from nero.actions.desktop_actions import (
+    make_open_url_action,
+    make_open_app_action,
+    make_show_notification_action,
+    make_get_system_info_action,
+)
+
 from nero.cognition.response_builder import ResponseBuilder
 from nero.cognition.rule_intent_engine import RuleIntentEngine
 from nero.core.events import EventBus
@@ -61,6 +68,11 @@ class Brain:
         self.action_registry.register("get_memory_size", make_get_memory_size_action(self.memory))
         self.action_registry.register("get_last_user_message", make_get_last_user_message_action(self.memory))
         
+        # --- Desktop actions ---
+        self.action_registry.register("open_url", make_open_url_action())
+        self.action_registry.register("open_app", make_open_app_action())
+        self.action_registry.register("show_notification", make_show_notification_action())
+        self.action_registry.register("get_system_info", make_get_system_info_action())
 
     def process_text(self, text: str) -> BrainResponse:
         user_input = UserInput(text=text.strip())
@@ -184,6 +196,35 @@ class Brain:
         if intent.intent == "last_user_message_query":
             return ActionRequest(
                 action_name="get_last_user_message",
+                source_intent=intent.intent,
+            )
+        if intent.intent == "open_url_request":
+            return ActionRequest(
+                action_name="open_url",
+                parameters={"url": intent.entities.get("url", "")},
+                source_intent=intent.intent,
+            )
+
+        if intent.intent == "open_app_request":
+            return ActionRequest(
+                action_name="open_app",
+                parameters={"app_name": intent.entities.get("app_name", "")},
+                source_intent=intent.intent,
+            )
+
+        if intent.intent == "notification_request":
+            return ActionRequest(
+                action_name="show_notification",
+                parameters={
+                    "title": "N.E.R.O",
+                    "text": intent.entities.get("text", ""),
+                },
+                source_intent=intent.intent,
+            )
+
+        if intent.intent == "system_info_query":
+            return ActionRequest(
+                action_name="get_system_info",
                 source_intent=intent.intent,
             )
 

@@ -139,6 +139,34 @@ class ResponseBuilder:
                 face_state=FaceState.SPEAKING,
                 metadata={"action_name": action_result.action_name, **action_result.data},
             )
+    
+        if action_result.action_name == "open_url":
+            return BrainResponse(
+                text=action_result.message,
+                face_state=FaceState.SPEAKING,
+                metadata={"action_name": action_result.action_name, **action_result.data},
+        )
+
+        if action_result.action_name == "open_app":
+            return BrainResponse(
+                text=action_result.message,
+                face_state=FaceState.SPEAKING,
+                metadata={"action_name": action_result.action_name, **action_result.data},
+            )
+
+        if action_result.action_name == "show_notification":
+            return BrainResponse(
+                text="Notifica inviata.",
+                face_state=FaceState.HAPPY,
+                metadata={"action_name": action_result.action_name, **action_result.data},
+            )
+
+        if action_result.action_name == "get_system_info":
+            return BrainResponse(
+                text=action_result.message,
+                face_state=FaceState.SPEAKING,
+                metadata={"action_name": action_result.action_name, **action_result.data},
+            )
         
         return BrainResponse(
             text=action_result.message,
