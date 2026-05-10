@@ -58,7 +58,7 @@ class ChatPanel(QWidget):
         layout = QHBoxLayout()
 
         self.input_line = ChatInputLine()
-        self.input_line.setPlaceholderText("Scrivi un messaggio a N.E.R.O...")
+        self.input_line.setPlaceholderText("Scrivi un messaggio a M.I.R.A...")
         self.input_line.returnPressed.connect(self.submit_message)
         self.input_line.textChanged.connect(self.input_text_changed.emit)
         self.input_line.focused.connect(self.input_focused.emit)
@@ -85,7 +85,7 @@ class ChatPanel(QWidget):
         self.chat_history.append(f"<b>You:</b> {text}")
 
     def add_mira_message(self, text: str):
-        self.chat_history.append(f"<b>N.E.R.O:</b> {text}")
+        self.chat_history.append(f"<b>M.I.R.A.:</b> {text}")
 
     def add_system_message(self, text: str):
         self.chat_history.append(f"<i>{text}</i>")

@@ -67,7 +67,7 @@ class Brain:
     # ============================================================
 
     def _select_intent_engine(self):
-        engine_type = os.getenv("mira_INTENT_ENGINE", "rule").lower()
+        engine_type = os.getenv("MIRA_INTENT_ENGINE", "rule").lower()
 
         if engine_type == "llm":
             print("[Brain] Using LLMIntentEngine")

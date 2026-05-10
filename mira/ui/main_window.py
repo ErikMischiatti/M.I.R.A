@@ -15,7 +15,7 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
 
-        self.setWindowTitle("N.E.R.O")
+        self.setWindowTitle("M.I.R.A. - Modular Interactive Responsive Agent")
         self.resize(1500, 800)
 
         self.is_processing = False

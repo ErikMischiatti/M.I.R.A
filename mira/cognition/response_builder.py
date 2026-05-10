@@ -26,7 +26,7 @@ class ResponseBuilder:
 
         if intent.intent == "greeting":
             return BrainResponse(
-                text="Ciao. Sono N.E.R.O. Pronto a interagire con te.",
+                text="Ciao. Sono M.I.R.A. Pronto a interagire con te.",
                 face_state=FaceState.HAPPY,
                 metadata={"intent": intent.intent, "confidence": intent.confidence},
             )
