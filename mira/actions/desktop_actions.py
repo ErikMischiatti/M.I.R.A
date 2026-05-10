@@ -7,7 +7,7 @@ import subprocess
 import sys
 import webbrowser
 
-from nero.actions.action_models import ActionResult
+from mira.actions.action_models import ActionResult
 
 
 APP_ALIASES = {

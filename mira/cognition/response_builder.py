@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from nero.actions.action_models import ActionResult
-from nero.core.models import BrainResponse, IntentResult, UserInput
-from nero.ui.face.face_state import FaceState
+from mira.actions.action_models import ActionResult
+from mira.core.models import BrainResponse, IntentResult, UserInput
+from mira.ui.face.face_state import FaceState
 
 
 class ResponseBuilder:

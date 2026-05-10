@@ -1,15 +1,15 @@
 from PySide6.QtWidgets import QMainWindow, QWidget, QHBoxLayout, QVBoxLayout
 
-from nero.ui.face.face_widget import FaceWidget
-from nero.ui.debug_panel import DebugPanel
-from nero.ui.chat_panel import ChatPanel
+from mira.ui.face.face_widget import FaceWidget
+from mira.ui.debug_panel import DebugPanel
+from mira.ui.chat_panel import ChatPanel
 
-from nero.core.events import EventBus
-from nero.core.state_manager import StateManager
-from nero.core.brain import Brain
-from nero.core.interaction_manager import InteractionManager
+from mira.core.events import EventBus
+from mira.core.state_manager import StateManager
+from mira.core.brain import Brain
+from mira.core.interaction_manager import InteractionManager
 
-from nero.core.embodied_behavior import EmbodiedBehavior
+from mira.core.embodied_behavior import EmbodiedBehavior
 
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -74,7 +74,7 @@ class MainWindow(QMainWindow):
         self.brain.process_text_async(text, self.on_brain_response)
 
     def on_brain_response(self, response):
-        self.chat_panel.add_nero_message(response.text)
-        print(f"[NERO] {response.text}")
+        self.chat_panel.add_mira_message(response.text)
+        print(f"[mira] {response.text}")
 
 

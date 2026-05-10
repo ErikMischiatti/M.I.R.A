@@ -5,10 +5,10 @@ from collections.abc import Callable
 
 from PySide6.QtCore import QTimer
 
-from nero.actions.action_executor import ActionExecutor
-from nero.actions.action_models import ActionRequest, ActionResult
-from nero.actions.action_registry import ActionRegistry
-from nero.actions.builtin_actions import (
+from mira.actions.action_executor import ActionExecutor
+from mira.actions.action_models import ActionRequest, ActionResult
+from mira.actions.action_registry import ActionRegistry
+from mira.actions.builtin_actions import (
     make_clear_session_memory_action,
     make_echo_text_action,
     make_get_date_action,
@@ -19,22 +19,22 @@ from nero.actions.builtin_actions import (
     make_get_memory_size_action,
     make_get_last_user_message_action,
 )
-from nero.actions.desktop_actions import (
+from mira.actions.desktop_actions import (
     make_open_url_action,
     make_open_app_action,
     make_show_notification_action,
     make_get_system_info_action,
 )
 
-from nero.cognition.response_builder import ResponseBuilder
-from nero.cognition.rule_intent_engine import RuleIntentEngine
-from nero.cognition.llm_intent_engine import LLMIntentEngine  # ✅ NEW
+from mira.cognition.response_builder import ResponseBuilder
+from mira.cognition.rule_intent_engine import RuleIntentEngine
+from mira.cognition.llm_intent_engine import LLMIntentEngine  # ✅ NEW
 
-from nero.core.events import EventBus
-from nero.core.models import BrainResponse, IntentResult, UserInput
-from nero.core.session_memory import SessionMemory
-from nero.core.state_manager import StateManager
-from nero.ui.face.face_state import FaceState
+from mira.core.events import EventBus
+from mira.core.models import BrainResponse, IntentResult, UserInput
+from mira.core.session_memory import SessionMemory
+from mira.core.state_manager import StateManager
+from mira.ui.face.face_state import FaceState
 
 
 class Brain:
@@ -67,7 +67,7 @@ class Brain:
     # ============================================================
 
     def _select_intent_engine(self):
-        engine_type = os.getenv("NERO_INTENT_ENGINE", "rule").lower()
+        engine_type = os.getenv("mira_INTENT_ENGINE", "rule").lower()
 
         if engine_type == "llm":
             print("[Brain] Using LLMIntentEngine")

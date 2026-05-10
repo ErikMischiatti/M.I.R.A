@@ -84,7 +84,7 @@ class ChatPanel(QWidget):
     def add_user_message(self, text: str):
         self.chat_history.append(f"<b>You:</b> {text}")
 
-    def add_nero_message(self, text: str):
+    def add_mira_message(self, text: str):
         self.chat_history.append(f"<b>N.E.R.O:</b> {text}")
 
     def add_system_message(self, text: str):

@@ -2,10 +2,10 @@ from __future__ import annotations
 
 from PySide6.QtCore import QTimer
 
-from nero.core.events import EventBus
-from nero.core.models import BrainResponse, IntentResult
-from nero.core.state_manager import StateManager
-from nero.ui.face.face_state import FaceState
+from mira.core.events import EventBus
+from mira.core.models import BrainResponse, IntentResult
+from mira.core.state_manager import StateManager
+from mira.ui.face.face_state import FaceState
 
 
 class EmbodiedBehavior:

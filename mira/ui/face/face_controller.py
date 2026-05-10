@@ -1,8 +1,8 @@
 import math
 import random
 
-from nero.ui.face.expression_store import load_expression_library, reset_expression
-from nero.ui.face.face_state import FaceState
+from mira.ui.face.expression_store import load_expression_library, reset_expression
+from mira.ui.face.face_state import FaceState
 
 
 class FaceController:
@@ -242,7 +242,7 @@ class FaceController:
         self.apply_profile()
 
     def save_profiles(self):
-        from nero.ui.face.expression_store import save_expression_library
+        from mira.ui.face.expression_store import save_expression_library
         save_expression_library(self.expression_library)
 
     def reload_profiles(self):

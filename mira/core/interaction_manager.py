@@ -1,7 +1,7 @@
-from nero.core.events import EventBus
-from nero.core.state_manager import StateManager
-from nero.core.models import BrainResponse
-from nero.ui.face.face_state import FaceState
+from mira.core.events import EventBus
+from mira.core.state_manager import StateManager
+from mira.core.models import BrainResponse
+from mira.ui.face.face_state import FaceState
 
 
 class InteractionManager:

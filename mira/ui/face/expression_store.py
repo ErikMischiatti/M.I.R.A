@@ -1,12 +1,12 @@
 import json
 from pathlib import Path
 
-from nero.ui.face.expression_library import DEFAULT_EXPRESSION_LIBRARY, make_expression_library
-from nero.ui.face.expression_profile import ExpressionProfile
-from nero.ui.face.face_state import FaceState
+from mira.ui.face.expression_library import DEFAULT_EXPRESSION_LIBRARY, make_expression_library
+from mira.ui.face.expression_profile import ExpressionProfile
+from mira.ui.face.face_state import FaceState
 
 
-EXPRESSIONS_FILE = Path("nero/config/expression_profiles.json")
+EXPRESSIONS_FILE = Path("mira/config/expression_profiles.json")
 
 
 def save_expression_library(library: dict[FaceState, ExpressionProfile], filepath: Path = EXPRESSIONS_FILE):

@@ -13,7 +13,7 @@ from PySide6.QtWidgets import (
     QMessageBox,
 )
 
-from nero.ui.face.face_state import FaceState
+from mira.ui.face.face_state import FaceState
 
 
 class DebugPanel(QWidget):

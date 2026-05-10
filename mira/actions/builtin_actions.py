@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from nero.actions.action_models import ActionResult
-from nero.core.session_memory import SessionMemory
+from mira.actions.action_models import ActionResult
+from mira.core.session_memory import SessionMemory
 
 
 def make_get_time_action():

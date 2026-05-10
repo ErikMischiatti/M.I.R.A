@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 
-from nero.core.models import IntentResult, UserInput
+from mira.core.models import IntentResult, UserInput
 
 
 class IntentEngine(ABC):

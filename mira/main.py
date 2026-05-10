@@ -1,6 +1,6 @@
 import sys
 from PySide6.QtWidgets import QApplication
-from nero.ui.main_window import MainWindow
+from mira.ui.main_window import MainWindow
 
 
 def main():

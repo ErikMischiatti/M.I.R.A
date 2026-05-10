@@ -1,7 +1,7 @@
 import copy
 
-from nero.ui.face.expression_profile import ExpressionProfile
-from nero.ui.face.face_state import FaceState
+from mira.ui.face.expression_profile import ExpressionProfile
+from mira.ui.face.face_state import FaceState
 
 
 DEFAULT_EXPRESSION_LIBRARY = {

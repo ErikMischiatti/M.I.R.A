@@ -1,5 +1,5 @@
-from nero.ui.face.face_state import FaceState
-from nero.core.events import EventBus
+from mira.ui.face.face_state import FaceState
+from mira.core.events import EventBus
 
 
 class StateManager:

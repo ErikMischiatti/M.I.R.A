@@ -1,6 +1,6 @@
-from nero.actions.action_models import ActionRequest, ActionResult
-from nero.actions.action_registry import ActionRegistry
-from nero.core.events import EventBus
+from mira.actions.action_models import ActionRequest, ActionResult
+from mira.actions.action_registry import ActionRegistry
+from mira.core.events import EventBus
 
 
 class ActionExecutor:

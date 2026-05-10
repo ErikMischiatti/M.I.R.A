@@ -2,9 +2,9 @@ from PySide6.QtCore import Qt, QRectF, QTimer, QPointF
 from PySide6.QtWidgets import QWidget
 from PySide6.QtGui import QColor, QPainter, QBrush
 
-from nero.ui.face.eye import Eye
-from nero.ui.face.face_controller import FaceController
-from nero.ui.face.face_state import FaceState
+from mira.ui.face.eye import Eye
+from mira.ui.face.face_controller import FaceController
+from mira.ui.face.face_state import FaceState
 
 
 class FaceWidget(QWidget):

@@ -3,11 +3,11 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from nero.cognition.intent_engine import IntentEngine
-from nero.cognition.llm_client import LLMClientError, OllamaClient
-from nero.cognition.llm_schema import ALLOWED_ACTIONS, ALLOWED_INTENTS, LLM_INTENT_SCHEMA
-from nero.cognition.rule_intent_engine import RuleIntentEngine
-from nero.core.models import IntentResult, UserInput
+from mira.cognition.intent_engine import IntentEngine
+from mira.cognition.llm_client import LLMClientError, OllamaClient
+from mira.cognition.llm_schema import ALLOWED_ACTIONS, ALLOWED_INTENTS, LLM_INTENT_SCHEMA
+from mira.cognition.rule_intent_engine import RuleIntentEngine
+from mira.core.models import IntentResult, UserInput
 
 
 class LLMIntentEngine(IntentEngine):
