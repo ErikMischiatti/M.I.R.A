@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from collections.abc import Callable
 
 from PySide6.QtCore import QTimer
@@ -27,6 +28,8 @@ from nero.actions.desktop_actions import (
 
 from nero.cognition.response_builder import ResponseBuilder
 from nero.cognition.rule_intent_engine import RuleIntentEngine
+from nero.cognition.llm_intent_engine import LLMIntentEngine  # ✅ NEW
+
 from nero.core.events import EventBus
 from nero.core.models import BrainResponse, IntentResult, UserInput
 from nero.core.session_memory import SessionMemory
@@ -46,7 +49,9 @@ class Brain:
         self.state_manager = state_manager
         self.memory = SessionMemory()
 
-        self.intent_engine = intent_engine or RuleIntentEngine()
+        # ✅ ENGINE SELECTION
+        self.intent_engine = intent_engine or self._select_intent_engine()
+
         self.response_builder = response_builder or ResponseBuilder()
 
         self.action_registry = ActionRegistry()
@@ -57,22 +62,47 @@ class Brain:
         self.thinking_delay_ms = 900
         self.speaking_reset_delay_ms = 1200
 
+    # ============================================================
+    # ENGINE SELECTION
+    # ============================================================
+
+    def _select_intent_engine(self):
+        engine_type = os.getenv("NERO_INTENT_ENGINE", "rule").lower()
+
+        if engine_type == "llm":
+            print("[Brain] Using LLMIntentEngine")
+            return LLMIntentEngine()
+
+        print("[Brain] Using RuleIntentEngine")
+        return RuleIntentEngine()
+
+    # ============================================================
+    # ACTION REGISTRATION
+    # ============================================================
+
     def _register_builtin_actions(self) -> None:
+        # Core
         self.action_registry.register("get_time", make_get_time_action())
         self.action_registry.register("get_date", make_get_date_action())
         self.action_registry.register("echo_text", make_echo_text_action())
         self.action_registry.register("get_last_intent", make_get_last_intent_action(self.memory))
         self.action_registry.register("get_session_summary", make_get_session_summary_action(self.memory))
         self.action_registry.register("clear_session_memory", make_clear_session_memory_action(self.memory))
+
+        # Introspection
         self.action_registry.register("list_available_actions", make_list_available_actions_action(self.action_registry))
         self.action_registry.register("get_memory_size", make_get_memory_size_action(self.memory))
         self.action_registry.register("get_last_user_message", make_get_last_user_message_action(self.memory))
-        
-        # --- Desktop actions ---
+
+        # Desktop
         self.action_registry.register("open_url", make_open_url_action())
         self.action_registry.register("open_app", make_open_app_action())
         self.action_registry.register("show_notification", make_show_notification_action())
         self.action_registry.register("get_system_info", make_get_system_info_action())
+
+    # ============================================================
+    # PUBLIC API
+    # ============================================================
 
     def process_text(self, text: str) -> BrainResponse:
         user_input = UserInput(text=text.strip())
@@ -133,6 +163,10 @@ class Brain:
         if on_response is not None:
             on_response(response)
 
+    # ============================================================
+    # CORE LOGIC
+    # ============================================================
+
     def infer_intent(self, user_input: UserInput) -> IntentResult:
         return self.intent_engine.infer(user_input)
 
@@ -145,88 +179,67 @@ class Brain:
         return self.response_builder.build(intent, user_input, action_result)
 
     def build_action_request(self, intent: IntentResult) -> ActionRequest | None:
-        if intent.intent == "time_query":
+        # --- LLM override support ---
+        llm_action = intent.entities.get("llm_action_name")
+
+        if llm_action:
             return ActionRequest(
-                action_name="get_time",
+                action_name=llm_action,
+                parameters={k: v for k, v in intent.entities.items() if k not in ["llm_action_name", "llm_response_text", "llm_emotion", "llm_raw"]},
                 source_intent=intent.intent,
             )
 
+        # --- Rule-based mapping fallback ---
+        if intent.intent == "time_query":
+            return ActionRequest(action_name="get_time")
+
         if intent.intent == "date_query":
-            return ActionRequest(
-                action_name="get_date",
-                source_intent=intent.intent,
-            )
+            return ActionRequest(action_name="get_date")
 
         if intent.intent == "echo_request":
             return ActionRequest(
                 action_name="echo_text",
                 parameters={"text": intent.entities.get("text", "")},
-                source_intent=intent.intent,
             )
 
         if intent.intent == "session_summary_request":
-            return ActionRequest(
-                action_name="get_session_summary",
-                source_intent=intent.intent,
-            )
+            return ActionRequest(action_name="get_session_summary")
 
         if intent.intent == "last_intent_query":
-            return ActionRequest(
-                action_name="get_last_intent",
-                source_intent=intent.intent,
-            )
+            return ActionRequest(action_name="get_last_intent")
 
         if intent.intent == "clear_session_memory":
-            return ActionRequest(
-                action_name="clear_session_memory",
-                source_intent=intent.intent,
-            )
+            return ActionRequest(action_name="clear_session_memory")
+
         if intent.intent == "list_actions":
-            return ActionRequest(
-                action_name="list_available_actions",
-                source_intent=intent.intent,
-            )
+            return ActionRequest(action_name="list_available_actions")
 
         if intent.intent == "memory_size_query":
-            return ActionRequest(
-                action_name="get_memory_size",
-                source_intent=intent.intent,
-            )
+            return ActionRequest(action_name="get_memory_size")
 
         if intent.intent == "last_user_message_query":
-            return ActionRequest(
-                action_name="get_last_user_message",
-                source_intent=intent.intent,
-            )
+            return ActionRequest(action_name="get_last_user_message")
+
         if intent.intent == "open_url_request":
             return ActionRequest(
                 action_name="open_url",
                 parameters={"url": intent.entities.get("url", "")},
-                source_intent=intent.intent,
             )
 
         if intent.intent == "open_app_request":
             return ActionRequest(
                 action_name="open_app",
                 parameters={"app_name": intent.entities.get("app_name", "")},
-                source_intent=intent.intent,
             )
 
         if intent.intent == "notification_request":
             return ActionRequest(
                 action_name="show_notification",
-                parameters={
-                    "title": "N.E.R.O",
-                    "text": intent.entities.get("text", ""),
-                },
-                source_intent=intent.intent,
+                parameters={"text": intent.entities.get("text", "")},
             )
 
         if intent.intent == "system_info_query":
-            return ActionRequest(
-                action_name="get_system_info",
-                source_intent=intent.intent,
-            )
+            return ActionRequest(action_name="get_system_info")
 
         return None
 
@@ -244,16 +257,11 @@ class Brain:
         response = self.build_response(intent, user_input, action_result)
         self.memory.add_response(response)
 
-        self.memory.set_context("last_user_text", user_input.text)
-        self.memory.set_context("last_response_text", response.text)
-        self.memory.set_context("last_face_state", response.face_state.name)
-        self.memory.set_context("last_intent_name", intent.intent)
-
-        if action_result is not None:
-            self.memory.set_context("last_action_name", action_result.action_name)
-            self.memory.set_context("last_action_success", action_result.success)
-
         return response
+
+    # ============================================================
+    # MEMORY HELPERS
+    # ============================================================
 
     def get_recent_history(self, limit: int | None = None):
         return self.memory.get_recent_history(limit)
