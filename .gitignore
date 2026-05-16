@@ -1,58 +1,33 @@
-# Prerequisites
-*.d
-
-# Compiled Object files
-*.slo
-*.lo
-*.o
-*.obj
-
-# Precompiled Headers
-*.gch
-*.pch
-
-# Linker files
-*.ilk
-
-# Debugger Files
-*.pdb
-
-# Compiled Dynamic libraries
-*.so
-*.dylib
-*.dll
-
-# Fortran module files
-*.mod
-*.smod
-
-# Compiled Static libraries
-*.lai
-*.la
-*.a
-*.lib
-
-# Executables
-*.exe
-*.out
-*.app
-
-# debug information files
-*.dwo
-venv/
+# Python bytecode/cache
 __pycache__/
-*.pyc
+*.py[cod]
+*.pyo
+*.pyd
 
-# Python virtual environment
-.venv/
+# Python tooling cache
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Virtual environments
 venv/
+.venv/
 env/
 
-# Python cache
-__pycache__/
-*.pyc
-*.pyo
+# Environment variables and secrets
+.env
+.env.*
+*.key
+*.pem
 
-# IDE
+# Logs
+*.log
+
+# Local tree dumps
+tree.txt
+new_tree.txt
+
+# OS/editor files
+.DS_Store
 .vscode/
 .idea/

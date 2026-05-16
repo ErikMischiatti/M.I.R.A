@@ -3,6 +3,7 @@
 M.I.R.A. is a **software-first embodied AI assistant prototype** built in Python and PySide6.
 
 The project explores how an assistant can feel more present by combining:
+
 - an expressive animated face,
 - text-based interaction,
 - modular cognition,
@@ -32,6 +33,7 @@ M.I.R.A. is designed around the idea that an intelligent interface should not on
 - and **embodied** through motion and visible state changes.
 
 The current implementation is a desktop application with:
+
 - animated eyes,
 - a chat interface,
 - a live debug panel,
@@ -49,6 +51,7 @@ The long-term goal is to reuse this software core as the interaction layer of a 
 **Active software prototype**
 
 The project currently focuses on the desktop software layer:
+
 - interaction,
 - cognition,
 - expressive behavior,
@@ -61,7 +64,9 @@ Hardware integration is intentionally planned for a later stage, after the softw
 ## Main Features
 
 ### Expressive Face
+
 Animated eyes with:
+
 - blinking,
 - idle motion,
 - smooth state transitions,
@@ -72,6 +77,7 @@ Animated eyes with:
 - and cursor-aware gaze behavior.
 
 Supported expressive states currently include:
+
 - `IDLE`
 - `LISTENING`
 - `THINKING`
@@ -82,7 +88,9 @@ Supported expressive states currently include:
 - `CONFUSED`
 
 ### Event-Driven Interaction
+
 A central event bus coordinates:
+
 - user input,
 - focus changes,
 - processing state,
@@ -92,21 +100,27 @@ A central event bus coordinates:
 - and visual feedback.
 
 ### Modular Cognitive Layer
+
 The system supports interchangeable intent engines:
+
 - a deterministic **rule-based engine**,
 - and an optional **local LLM-backed engine** through Ollama.
 
 Both produce the same normalized intent format, allowing the rest of the architecture to remain unchanged.
 
 ### Session Memory
+
 The assistant stores:
+
 - recent user messages,
 - recent assistant responses,
 - the last inferred intent,
 - and lightweight contextual data for the current session.
 
 ### Local Action System
+
 M.I.R.A. already supports a registry/executor pattern for local actions such as:
+
 - retrieving current time and date,
 - repeating text,
 - inspecting session memory,
@@ -116,7 +130,9 @@ M.I.R.A. already supports a registry/executor pattern for local actions such as:
 - retrieving basic system information.
 
 ### Live Debug Panel
+
 A dedicated runtime tuning panel allows direct editing of:
+
 - expression profiles,
 - eye geometry,
 - animation flags,
@@ -203,6 +219,7 @@ This creates a tight link between cognition and embodiment: the system does not 
 M.I.R.A. includes an optional LLM-based intent engine using a local Ollama model.
 
 The LLM path currently:
+
 - receives natural language input,
 - converts it into a structured JSON result,
 - selects a normalized intent,
@@ -210,6 +227,7 @@ The LLM path currently:
 - preserves compatibility with the same backend contract used by the rule-based engine.
 
 The LLM integration is still under active development. Current work focuses on:
+
 - reducing response latency,
 - making inference non-blocking,
 - extending the use of LLM-generated responses,
@@ -241,79 +259,110 @@ Without the environment variable, the system defaults to the rule-based engine.
 
 ---
 
+## Requirements
+
+- Python 3.12 or newer
+- PySide6
+- Requests
+- Ollama, only required when using the optional local LLM-backed intent engine
+
+---
+
 ## Project Structure
 
 ```text
-mira/
-├── actions/
-│   ├── action_executor.py
-│   ├── action_models.py
-│   ├── action_registry.py
-│   ├── builtin_actions.py
-│   └── desktop_actions.py
+.
+├── assets/
+│   └── mira_record.gif
 │
-├── cognition/
-│   ├── intent_engine.py
-│   ├── llm_client.py
-│   ├── llm_intent_engine.py
-│   ├── llm_schema.py
-│   ├── response_builder.py
-│   └── rule_intent_engine.py
+├── mira/
+│   ├── actions/
+│   │   ├── action_executor.py
+│   │   ├── action_models.py
+│   │   ├── action_registry.py
+│   │   ├── builtin_actions.py
+│   │   └── desktop_actions.py
+│   │
+│   ├── cognition/
+│   │   ├── intent_engine.py
+│   │   ├── llm_client.py
+│   │   ├── llm_intent_engine.py
+│   │   ├── llm_schema.py
+│   │   ├── response_builder.py
+│   │   └── rule_intent_engine.py
+│   │
+│   ├── config/
+│   │   ├── __init__.py
+│   │   └── expression_profiles.json
+│   │
+│   ├── core/
+│   │   ├── brain.py
+│   │   ├── embodied_behavior.py
+│   │   ├── events.py
+│   │   ├── __init__.py
+│   │   ├── interaction_manager.py
+│   │   ├── models.py
+│   │   ├── session_memory.py
+│   │   └── state_manager.py
+│   │
+│   ├── ui/
+│   │   ├── chat_panel.py
+│   │   ├── debug_panel.py
+│   │   ├── main_window.py
+│   │   └── face/
+│   │       ├── __init__.py
+│   │       ├── expression_library.py
+│   │       ├── expression_profile.py
+│   │       ├── expression_store.py
+│   │       ├── eye.py
+│   │       ├── face_controller.py
+│   │       ├── face_state.py
+│   │       └── face_widget.py
+│   │
+│   ├── __init__.py
+│   └── main.py
 │
-├── config/
-│   └── expression_profiles.json
-│
-├── core/
-│   ├── brain.py
-│   ├── embodied_behavior.py
-│   ├── events.py
-│   ├── interaction_manager.py
-│   ├── models.py
-│   ├── session_memory.py
-│   └── state_manager.py
-│
-├── ui/
-│   ├── chat_panel.py
-│   ├── debug_panel.py
-│   ├── main_window.py
-│   └── face/
-│       ├── expression_library.py
-│       ├── expression_profile.py
-│       ├── expression_store.py
-│       ├── eye.py
-│       ├── face_controller.py
-│       ├── face_state.py
-│       └── face_widget.py
-│
-└── main.py
+├── LICENSE
+├── README.md
+├── requirements.txt
+└── .gitignore
 ```
 
 ---
 
 ## Running the Project
 
-### 1. Create and activate a virtual environment
+### 1. Clone the repository
 
 ```bash
-python3 -m venv .venv
-source .venv/bin/activate
+git clone https://github.com/ErikMischiatti/MIRA.git
+cd M.I.R.A.
 ```
 
-### 2. Install dependencies
+> Replace `MIRA` with the actual repository name if different.
+
+### 2. Create and activate a virtual environment
 
 ```bash
-pip install PySide6
+python3 -m venv venv
+source venv/bin/activate
 ```
 
-### 3. Run the default rule-based version
+### 3. Install dependencies
+
+```bash
+pip install -r requirements.txt
+```
+
+### 4. Run the default rule-based version
 
 ```bash
 python -m mira.main
 ```
 
-### 4. Run with the local LLM-backed intent engine
+### 5. Run with the local LLM-backed intent engine
 
-Make sure Ollama is running and the configured model is available, then launch:
+Make sure Ollama is installed, running, and that the configured model is available.
 
 ```bash
 MIRA_INTENT_ENGINE=llm python -m mira.main
@@ -324,6 +373,7 @@ MIRA_INTENT_ENGINE=llm python -m mira.main
 ## Roadmap
 
 ### Current
+
 - PySide6 desktop application
 - Expressive animated face
 - Chat interface
@@ -336,12 +386,14 @@ MIRA_INTENT_ENGINE=llm python -m mira.main
 - Optional Ollama-backed LLM intent engine
 
 ### In Progress
+
 - Improve LLM response latency
 - Make LLM inference non-blocking
 - Expand use of LLM-generated responses
 - Better integration between cognitive output and expressive behavior
 
 ### Next
+
 - Voice input and speech output
 - Wake interaction
 - Richer contextual memory
@@ -349,6 +401,7 @@ MIRA_INTENT_ENGINE=llm python -m mira.main
 - Webcam-based presence awareness
 
 ### Future
+
 - Physical embodiment
 - Sensors and actuators
 - Audio hardware
@@ -362,8 +415,9 @@ MIRA_INTENT_ENGINE=llm python -m mira.main
 **Erik Mischiatti**  
 M.Sc. Mechatronics Engineering
 
+---
 
 ## License
 
-This project is licensed under the MIT License.
+This project is licensed under the MIT License.  
 See the [LICENSE](LICENSE) file for details.
