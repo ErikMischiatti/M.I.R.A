@@ -1,9 +1,16 @@
 from __future__ import annotations
 
 import json
+import os
+import socket
 import urllib.error
 import urllib.request
 from typing import Any
+
+
+DEFAULT_OLLAMA_MODEL = "llama3.2:3b"
+DEFAULT_OLLAMA_BASE_URL = "http://localhost:11434"
+DEFAULT_OLLAMA_TIMEOUT_S = 10.0
 
 
 class LLMClientError(RuntimeError):
@@ -13,13 +20,25 @@ class LLMClientError(RuntimeError):
 class OllamaClient:
     def __init__(
         self,
-        model: str = "llama3.2:3b",
-        base_url: str = "http://localhost:11434",
-        timeout_s: float = 60.0,
+        model: str | None = None,
+        base_url: str | None = None,
+        timeout_s: float | None = None,
     ):
-        self.model = model
-        self.base_url = base_url.rstrip("/")
-        self.timeout_s = timeout_s
+        self.model = (
+            model
+            if model is not None
+            else os.getenv("MIRA_OLLAMA_MODEL", DEFAULT_OLLAMA_MODEL)
+        )
+        self.base_url = (
+            base_url
+            if base_url is not None
+            else os.getenv("MIRA_OLLAMA_BASE_URL", DEFAULT_OLLAMA_BASE_URL)
+        ).rstrip("/")
+        self.timeout_s = (
+            timeout_s
+            if timeout_s is not None
+            else self._timeout_from_environment()
+        )
 
     def generate_structured(
         self,
@@ -65,12 +84,37 @@ class OllamaClient:
                 timeout=self.timeout_s,
             ) as response:
                 response_body = response.read().decode("utf-8")
-        except urllib.error.URLError as exc:
-            raise LLMClientError(f"Could not connect to Ollama: {exc}") from exc
-        except TimeoutError as exc:
+        except (TimeoutError, socket.timeout) as exc:
             raise LLMClientError("Ollama request timed out.") from exc
+        except urllib.error.URLError as exc:
+            if isinstance(exc.reason, (TimeoutError, socket.timeout)):
+                raise LLMClientError("Ollama request timed out.") from exc
+            raise LLMClientError(f"Could not connect to Ollama: {exc}") from exc
 
         try:
             return json.loads(response_body)
         except json.JSONDecodeError as exc:
             raise LLMClientError(f"Ollama API returned invalid JSON: {exc}") from exc
+
+    def _timeout_from_environment(self) -> float:
+        raw_timeout = os.getenv("MIRA_OLLAMA_TIMEOUT_S")
+        if raw_timeout is None:
+            return DEFAULT_OLLAMA_TIMEOUT_S
+
+        try:
+            timeout = float(raw_timeout)
+        except ValueError:
+            print(
+                "[LLM] Invalid MIRA_OLLAMA_TIMEOUT_S; "
+                f"using {DEFAULT_OLLAMA_TIMEOUT_S}s."
+            )
+            return DEFAULT_OLLAMA_TIMEOUT_S
+
+        if timeout <= 0:
+            print(
+                "[LLM] MIRA_OLLAMA_TIMEOUT_S must be positive; "
+                f"using {DEFAULT_OLLAMA_TIMEOUT_S}s."
+            )
+            return DEFAULT_OLLAMA_TIMEOUT_S
+
+        return timeout
