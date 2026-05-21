@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import os
 from collections.abc import Callable
+from dataclasses import dataclass
 
-from PySide6.QtCore import QTimer
+from PySide6.QtCore import QObject, QRunnable, QThreadPool, QTimer, Signal, Slot
 
 from mira.actions.action_executor import ActionExecutor
 from mira.actions.action_models import ActionRequest, ActionResult
@@ -37,6 +38,74 @@ from mira.core.state_manager import StateManager
 from mira.ui.face.face_state import FaceState
 
 
+@dataclass
+class BrainComputationResult:
+    request_id: int
+    user_input: UserInput
+    intent: IntentResult
+    action_request: ActionRequest | None
+    error_response: BrainResponse | None = None
+
+
+class _BrainWorkerSignals(QObject):
+    completed = Signal(object)
+
+
+class _BrainResponseWorker(QRunnable):
+    def __init__(
+        self,
+        request_id: int,
+        user_input: UserInput,
+        compute_response: Callable[[int, UserInput], BrainComputationResult],
+    ):
+        super().__init__()
+        self.request_id = request_id
+        self.user_input = user_input
+        self.compute_response = compute_response
+        self.signals = _BrainWorkerSignals()
+
+    @Slot()
+    def run(self) -> None:
+        try:
+            result = self.compute_response(self.request_id, self.user_input)
+        except Exception as exc:
+            intent = IntentResult(
+                intent="processing_error",
+                confidence=0.0,
+                entities={"error": str(exc)},
+            )
+            response = BrainResponse(
+                text="Si è verificato un errore durante l'elaborazione.",
+                face_state=FaceState.CONFUSED,
+                metadata={"intent": intent.intent, "error": str(exc)},
+            )
+            result = BrainComputationResult(
+                request_id=self.request_id,
+                user_input=self.user_input,
+                intent=intent,
+                action_request=None,
+                error_response=response,
+            )
+
+        self.signals.completed.emit(result)
+
+
+class _BrainResultReceiver(QObject):
+    def __init__(
+        self,
+        brain: "Brain",
+        on_response: Callable[[BrainResponse], None] | None,
+    ):
+        super().__init__()
+        self.brain = brain
+        self.on_response = on_response
+
+    @Slot(object)
+    def handle_completed(self, result: BrainComputationResult) -> None:
+        self.brain._finalize_async_response(result, self.on_response)
+        self.brain._release_async_receiver(result.request_id)
+
+
 class Brain:
     def __init__(
         self,
@@ -61,6 +130,10 @@ class Brain:
         self.listening_delay_ms = 500
         self.thinking_delay_ms = 900
         self.speaking_reset_delay_ms = 1200
+        self._thread_pool = QThreadPool.globalInstance()
+        self._next_request_id = 0
+        self._latest_request_id = 0
+        self._async_receivers: dict[int, _BrainResultReceiver] = {}
 
     # ============================================================
     # ENGINE SELECTION
@@ -126,6 +199,7 @@ class Brain:
         text: str,
         on_response: Callable[[BrainResponse], None] | None = None,
     ) -> None:
+        request_id = self._new_request_id()
         user_input = UserInput(text=text.strip())
         self.memory.add_user_input(user_input)
 
@@ -134,28 +208,50 @@ class Brain:
 
         QTimer.singleShot(
             self.listening_delay_ms,
-            lambda: self._continue_after_listening(user_input, on_response),
+            lambda: self._continue_after_listening(request_id, user_input, on_response),
         )
 
     def _continue_after_listening(
         self,
+        request_id: int,
         user_input: UserInput,
         on_response: Callable[[BrainResponse], None] | None,
     ) -> None:
+        if request_id != self._latest_request_id:
+            print(f"[Brain] Ignoring stale async request {request_id}")
+            return
+
         self.event_bus.emit("processing_started", user_input)
         self.state_manager.set_state(FaceState.THINKING)
 
-        QTimer.singleShot(
-            self.thinking_delay_ms,
-            lambda: self._finalize_response(user_input, on_response),
-        )
+        self._start_response_worker(request_id, user_input, on_response)
 
-    def _finalize_response(
+    def _start_response_worker(
         self,
+        request_id: int,
         user_input: UserInput,
         on_response: Callable[[BrainResponse], None] | None,
     ) -> None:
-        response = self._build_response(user_input)
+        worker = _BrainResponseWorker(
+            request_id=request_id,
+            user_input=user_input,
+            compute_response=self._compute_response_for_worker,
+        )
+        receiver = _BrainResultReceiver(self, on_response)
+        self._async_receivers[request_id] = receiver
+        worker.signals.completed.connect(receiver.handle_completed)
+        self._thread_pool.start(worker)
+
+    def _finalize_async_response(
+        self,
+        result: BrainComputationResult,
+        on_response: Callable[[BrainResponse], None] | None,
+    ) -> None:
+        if result.request_id != self._latest_request_id:
+            print(f"[Brain] Ignoring stale async result {result.request_id}")
+            return
+
+        response = self._finalize_computation_result(result)
 
         self.event_bus.emit("response_ready", response)
         self.state_manager.set_state(response.face_state)
@@ -243,6 +339,14 @@ class Brain:
 
         return None
 
+    def _new_request_id(self) -> int:
+        self._next_request_id += 1
+        self._latest_request_id = self._next_request_id
+        return self._next_request_id
+
+    def _release_async_receiver(self, request_id: int) -> None:
+        self._async_receivers.pop(request_id, None)
+
     def _build_response(self, user_input: UserInput) -> BrainResponse:
         intent = self.infer_intent(user_input)
         self.memory.set_last_intent(intent)
@@ -255,6 +359,42 @@ class Brain:
             action_result = self.action_executor.execute(action_request)
 
         response = self.build_response(intent, user_input, action_result)
+        self.memory.add_response(response)
+
+        return response
+
+    def _compute_response_for_worker(
+        self,
+        request_id: int,
+        user_input: UserInput,
+    ) -> BrainComputationResult:
+        intent = self.infer_intent(user_input)
+        action_request = self.build_action_request(intent)
+
+        return BrainComputationResult(
+            request_id=request_id,
+            user_input=user_input,
+            intent=intent,
+            action_request=action_request,
+        )
+
+    def _finalize_computation_result(
+        self,
+        result: BrainComputationResult,
+    ) -> BrainResponse:
+        self.memory.set_last_intent(result.intent)
+        self.event_bus.emit("intent_inferred", result.intent)
+
+        action_result = None
+
+        if result.action_request is not None:
+            action_result = self.action_executor.execute(result.action_request)
+
+        response = result.error_response or self.build_response(
+            result.intent,
+            result.user_input,
+            action_result,
+        )
         self.memory.add_response(response)
 
         return response
