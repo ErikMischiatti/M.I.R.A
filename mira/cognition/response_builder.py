@@ -24,6 +24,18 @@ class ResponseBuilder:
                 metadata={"intent": intent.intent, "confidence": intent.confidence},
             )
 
+        llm_response_text = self._get_llm_response_text(intent)
+        if llm_response_text:
+            return BrainResponse(
+                text=llm_response_text,
+                face_state=FaceState.SPEAKING,
+                metadata={
+                    "intent": intent.intent,
+                    "confidence": intent.confidence,
+                    "llm_response_used": True,
+                },
+            )
+
         if intent.intent == "greeting":
             return BrainResponse(
                 text="Ciao. Sono M.I.R.A. Pronto a interagire con te.",
@@ -57,6 +69,17 @@ class ResponseBuilder:
             face_state=FaceState.CONFUSED,
             metadata={"intent": intent.intent, "confidence": intent.confidence},
         )
+
+    def _get_llm_response_text(self, intent: IntentResult) -> str | None:
+        response_text = intent.entities.get("llm_response_text")
+        if not isinstance(response_text, str):
+            return None
+
+        response_text = response_text.strip()
+        if not response_text:
+            return None
+
+        return response_text
 
     def _build_action_response(self, action_result: ActionResult) -> BrainResponse:
         if not action_result.success:
