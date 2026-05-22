@@ -1,4 +1,4 @@
-from PySide6.QtWidgets import QMainWindow, QWidget, QHBoxLayout, QVBoxLayout
+from PySide6.QtWidgets import QMainWindow, QWidget, QHBoxLayout, QVBoxLayout, QPushButton
 
 from mira.ui.face.face_widget import FaceWidget
 from mira.ui.debug_panel import DebugPanel
@@ -16,7 +16,7 @@ class MainWindow(QMainWindow):
         super().__init__()
 
         self.setWindowTitle("M.I.R.A. - Modular Interactive Responsive Agent")
-        self.resize(1500, 800)
+        self.resize(860, 680)
 
         self.is_processing = False
 
@@ -30,24 +30,43 @@ class MainWindow(QMainWindow):
         # --- UI root ---
         central_widget = QWidget()
         root_layout = QHBoxLayout()
+        root_layout.setContentsMargins(12, 12, 12, 12)
+        root_layout.setSpacing(12)
         central_widget.setLayout(root_layout)
 
-        # --- Left side: face ---
+        # --- Compact companion area ---
+        main_panel = QWidget()
+        main_layout = QVBoxLayout()
+        main_layout.setContentsMargins(0, 0, 0, 0)
+        main_layout.setSpacing(10)
+        main_panel.setLayout(main_layout)
+
+        top_bar = QWidget()
+        top_bar_layout = QHBoxLayout()
+        top_bar_layout.setContentsMargins(0, 0, 0, 0)
+        top_bar.setLayout(top_bar_layout)
+
+        self.debug_toggle = QPushButton("Debug")
+        self.debug_toggle.setCheckable(True)
+
+        top_bar_layout.addStretch()
+        top_bar_layout.addWidget(self.debug_toggle)
+        main_layout.addWidget(top_bar)
+
         self.face_widget = FaceWidget()
-        root_layout.addWidget(self.face_widget, stretch=3)
-
-        # --- Right side: chat + debug ---
-        right_panel = QWidget()
-        right_layout = QVBoxLayout()
-        right_panel.setLayout(right_layout)
-
         self.chat_panel = ChatPanel()
+
+        main_layout.addWidget(self.face_widget, stretch=3)
+        main_layout.addWidget(self.chat_panel, stretch=2)
+
+        root_layout.addWidget(main_panel, stretch=1)
+
+        # --- Hidden developer drawer ---
         self.debug_panel = DebugPanel(self.face_widget)
+        self.debug_panel.setVisible(False)
+        self.debug_toggle.toggled.connect(self.on_debug_toggled)
 
-        right_layout.addWidget(self.chat_panel, stretch=3)
-        right_layout.addWidget(self.debug_panel, stretch=2)
-
-        root_layout.addWidget(right_panel, stretch=2)
+        root_layout.addWidget(self.debug_panel)
 
         self.setCentralWidget(central_widget)
 
@@ -59,7 +78,10 @@ class MainWindow(QMainWindow):
         self.chat_panel.input_unfocused.connect(lambda: self.event_bus.emit("input_unfocused"))
         self.chat_panel.input_text_changed.connect(
             lambda text: self.event_bus.emit("input_text_changed", text)
-)
+        )
+
+    def on_debug_toggled(self, checked: bool):
+        self.debug_panel.setVisible(checked)
 
     def on_state_changed(self, payload):
         new_state = payload["new_state"]
