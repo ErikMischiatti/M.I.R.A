@@ -11,6 +11,7 @@ from PySide6.QtWidgets import (
     QPushButton,
     QHBoxLayout,
     QMessageBox,
+    QScrollArea,
 )
 
 from mira.ui.face.face_state import FaceState
@@ -23,10 +24,25 @@ class DebugPanel(QWidget):
         self.face_widget = face_widget
         self.controller = face_widget.controller
 
-        self.setMinimumWidth(360)
+        self.setMinimumWidth(320)
 
+        outer_layout = QVBoxLayout()
+        outer_layout.setContentsMargins(0, 0, 0, 0)
+        outer_layout.setSpacing(0)
+        self.setLayout(outer_layout)
+
+        self.scroll_area = QScrollArea()
+        self.scroll_area.setWidgetResizable(True)
+        self.scroll_area.setFrameShape(QScrollArea.NoFrame)
+
+        content_widget = QWidget()
         self.main_layout = QVBoxLayout()
-        self.setLayout(self.main_layout)
+        self.main_layout.setContentsMargins(6, 6, 6, 6)
+        self.main_layout.setSpacing(6)
+        content_widget.setLayout(self.main_layout)
+
+        self.scroll_area.setWidget(content_widget)
+        outer_layout.addWidget(self.scroll_area)
 
         self.build_state_selector()
         self.build_expression_controls()
@@ -41,6 +57,8 @@ class DebugPanel(QWidget):
     def build_state_selector(self):
         group = QGroupBox("State")
         layout = QVBoxLayout()
+        layout.setContentsMargins(8, 8, 8, 8)
+        layout.setSpacing(4)
 
         self.state_combo = QComboBox()
         for state in FaceState:
@@ -57,6 +75,8 @@ class DebugPanel(QWidget):
     def build_expression_controls(self):
         group = QGroupBox("Expression Tuning")
         form = QFormLayout()
+        form.setContentsMargins(8, 8, 8, 8)
+        form.setSpacing(4)
 
         self.width_slider = self.make_slider(50, 200, 100, self.on_slider_changed)
         self.height_slider = self.make_slider(20, 200, 100, self.on_slider_changed)
@@ -76,6 +96,8 @@ class DebugPanel(QWidget):
     def build_animation_controls(self):
         group = QGroupBox("Animation Controls")
         form = QFormLayout()
+        form.setContentsMargins(8, 8, 8, 8)
+        form.setSpacing(4)
 
         self.idle_checkbox = QCheckBox()
         self.idle_checkbox.stateChanged.connect(self.on_checkbox_changed)
@@ -112,6 +134,8 @@ class DebugPanel(QWidget):
     def build_asymmetry_controls(self):
         group = QGroupBox("Asymmetry")
         form = QFormLayout()
+        form.setContentsMargins(8, 8, 8, 8)
+        form.setSpacing(4)
 
         self.asym_offset_left_slider = self.make_slider(-50, 50, 0, self.on_slider_changed)
         self.asym_offset_right_slider = self.make_slider(-50, 50, 0, self.on_slider_changed)
@@ -129,6 +153,8 @@ class DebugPanel(QWidget):
     def build_action_buttons(self):
         group = QGroupBox("Profile Actions")
         layout = QHBoxLayout()
+        layout.setContentsMargins(8, 8, 8, 8)
+        layout.setSpacing(6)
 
         self.save_button = QPushButton("Save")
         self.save_button.clicked.connect(self.on_save_clicked)
