@@ -5,6 +5,15 @@ from mira.core.models import BrainResponse, IntentResult, UserInput
 from mira.ui.face.face_state import FaceState
 
 
+LLM_EMOTION_FACE_STATES = {
+    "neutral": FaceState.SPEAKING,
+    "speaking": FaceState.SPEAKING,
+    "happy": FaceState.HAPPY,
+    "confused": FaceState.CONFUSED,
+    "thinking": FaceState.SPEAKING,
+}
+
+
 class ResponseBuilder:
     """Builds UI-facing brain responses from normalized intent results."""
 
@@ -26,14 +35,19 @@ class ResponseBuilder:
 
         llm_response_text = self._get_llm_response_text(intent)
         if llm_response_text:
+            face_state, llm_emotion_used = self._get_llm_face_state(intent)
+            metadata = {
+                "intent": intent.intent,
+                "confidence": intent.confidence,
+                "llm_response_used": True,
+            }
+            if llm_emotion_used is not None:
+                metadata["llm_emotion_used"] = llm_emotion_used
+
             return BrainResponse(
                 text=llm_response_text,
-                face_state=FaceState.SPEAKING,
-                metadata={
-                    "intent": intent.intent,
-                    "confidence": intent.confidence,
-                    "llm_response_used": True,
-                },
+                face_state=face_state,
+                metadata=metadata,
             )
 
         if intent.intent == "greeting":
@@ -80,6 +94,21 @@ class ResponseBuilder:
             return None
 
         return response_text
+
+    def _get_llm_face_state(self, intent: IntentResult) -> tuple[FaceState, str | None]:
+        emotion = intent.entities.get("llm_emotion")
+        if not isinstance(emotion, str):
+            return FaceState.SPEAKING, None
+
+        normalized_emotion = emotion.strip().lower()
+        if not normalized_emotion:
+            return FaceState.SPEAKING, None
+
+        face_state = LLM_EMOTION_FACE_STATES.get(normalized_emotion)
+        if face_state is None:
+            return FaceState.SPEAKING, None
+
+        return face_state, normalized_emotion
 
     def _build_action_response(self, action_result: ActionResult) -> BrainResponse:
         if not action_result.success:
