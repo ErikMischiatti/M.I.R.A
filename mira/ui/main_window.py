@@ -1,4 +1,5 @@
-from PySide6.QtWidgets import QMainWindow, QWidget, QHBoxLayout, QVBoxLayout, QPushButton
+from PySide6.QtCore import QSize, Qt
+from PySide6.QtWidgets import QMainWindow, QWidget, QHBoxLayout, QVBoxLayout, QPushButton, QSplitter
 
 from mira.ui.face.face_widget import FaceWidget
 from mira.ui.debug_panel import DebugPanel
@@ -16,7 +17,9 @@ class MainWindow(QMainWindow):
         super().__init__()
 
         self.setWindowTitle("M.I.R.A. - Modular Interactive Responsive Agent")
-        self.resize(860, 680)
+        self.compact_size = QSize(860, 680)
+        self.debug_drawer_width = 340
+        self.resize(self.compact_size)
 
         self.is_processing = False
 
@@ -33,6 +36,10 @@ class MainWindow(QMainWindow):
         root_layout.setContentsMargins(12, 12, 12, 12)
         root_layout.setSpacing(12)
         central_widget.setLayout(root_layout)
+
+        self.content_splitter = QSplitter(Qt.Horizontal)
+        self.content_splitter.setChildrenCollapsible(False)
+        root_layout.addWidget(self.content_splitter)
 
         # --- Compact companion area ---
         main_panel = QWidget()
@@ -54,19 +61,24 @@ class MainWindow(QMainWindow):
         main_layout.addWidget(top_bar)
 
         self.face_widget = FaceWidget()
+        self.face_widget.setMinimumSize(420, 300)
         self.chat_panel = ChatPanel()
 
         main_layout.addWidget(self.face_widget, stretch=3)
         main_layout.addWidget(self.chat_panel, stretch=2)
 
-        root_layout.addWidget(main_panel, stretch=1)
+        self.content_splitter.addWidget(main_panel)
 
         # --- Hidden developer drawer ---
         self.debug_panel = DebugPanel(self.face_widget)
+        self.debug_panel.setMinimumWidth(320)
+        self.debug_panel.setMaximumWidth(self.debug_drawer_width)
         self.debug_panel.setVisible(False)
         self.debug_toggle.toggled.connect(self.on_debug_toggled)
 
-        root_layout.addWidget(self.debug_panel)
+        self.content_splitter.addWidget(self.debug_panel)
+        self.content_splitter.setStretchFactor(0, 1)
+        self.content_splitter.setStretchFactor(1, 0)
 
         self.setCentralWidget(central_widget)
 
@@ -82,6 +94,14 @@ class MainWindow(QMainWindow):
 
     def on_debug_toggled(self, checked: bool):
         self.debug_panel.setVisible(checked)
+        self.debug_toggle.setText("Hide Debug" if checked else "Debug")
+
+        splitter_width = max(self.content_splitter.width(), self.width())
+        if checked:
+            drawer_width = min(self.debug_drawer_width, max(260, splitter_width // 3))
+            self.content_splitter.setSizes([splitter_width - drawer_width, drawer_width])
+        else:
+            self.content_splitter.setSizes([splitter_width, 0])
 
     def on_state_changed(self, payload):
         new_state = payload["new_state"]
