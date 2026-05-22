@@ -21,8 +21,6 @@ class MainWindow(QMainWindow):
         self.debug_drawer_width = 340
         self.resize(self.compact_size)
 
-        self.is_processing = False
-
         # --- Core systems ---
         self.event_bus = EventBus()
         self.state_manager = StateManager(self.event_bus)
@@ -32,9 +30,10 @@ class MainWindow(QMainWindow):
 
         # --- UI root ---
         central_widget = QWidget()
+        central_widget.setObjectName("AppRoot")
         root_layout = QHBoxLayout()
-        root_layout.setContentsMargins(12, 12, 12, 12)
-        root_layout.setSpacing(12)
+        root_layout.setContentsMargins(10, 10, 10, 10)
+        root_layout.setSpacing(10)
         central_widget.setLayout(root_layout)
 
         self.content_splitter = QSplitter(Qt.Horizontal)
@@ -43,6 +42,7 @@ class MainWindow(QMainWindow):
 
         # --- Compact companion area ---
         main_panel = QWidget()
+        main_panel.setObjectName("CompanionPanel")
         main_layout = QVBoxLayout()
         main_layout.setContentsMargins(0, 0, 0, 0)
         main_layout.setSpacing(10)
@@ -54,6 +54,7 @@ class MainWindow(QMainWindow):
         top_bar.setLayout(top_bar_layout)
 
         self.debug_toggle = QPushButton("Debug")
+        self.debug_toggle.setObjectName("DebugToggle")
         self.debug_toggle.setCheckable(True)
 
         top_bar_layout.addStretch()
@@ -61,7 +62,6 @@ class MainWindow(QMainWindow):
         main_layout.addWidget(top_bar)
 
         self.face_widget = FaceWidget()
-        self.face_widget.setMinimumSize(420, 300)
         self.chat_panel = ChatPanel()
 
         main_layout.addWidget(self.face_widget, stretch=3)
@@ -81,6 +81,7 @@ class MainWindow(QMainWindow):
         self.content_splitter.setStretchFactor(1, 0)
 
         self.setCentralWidget(central_widget)
+        self.apply_visual_style()
 
         # --- Event wiring ---
         self.event_bus.subscribe("state_changed", self.on_state_changed)
@@ -102,6 +103,35 @@ class MainWindow(QMainWindow):
             self.content_splitter.setSizes([splitter_width - drawer_width, drawer_width])
         else:
             self.content_splitter.setSizes([splitter_width, 0])
+
+    def apply_visual_style(self):
+        self.setStyleSheet("""
+            QWidget#AppRoot {
+                background: #121417;
+            }
+
+            QWidget#CompanionPanel {
+                background: transparent;
+            }
+
+            QPushButton#DebugToggle {
+                padding: 5px 12px;
+                border: 1px solid #3a4048;
+                border-radius: 6px;
+                background: #1c2026;
+                color: #d8dde4;
+            }
+
+            QPushButton#DebugToggle:checked {
+                background: #27313d;
+                border-color: #566274;
+            }
+
+            QSplitter::handle {
+                background: #20242a;
+                width: 1px;
+            }
+        """)
 
     def on_state_changed(self, payload):
         new_state = payload["new_state"]
