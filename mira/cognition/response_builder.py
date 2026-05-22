@@ -169,7 +169,7 @@ class ResponseBuilder:
                 face_state=FaceState.HAPPY,
                 metadata={"action_name": action_result.action_name, **action_result.data},
             )
-    
+
         if action_result.action_name == "list_available_actions":
             actions = action_result.data.get("actions", [])
             return BrainResponse(
@@ -191,13 +191,13 @@ class ResponseBuilder:
                 face_state=FaceState.SPEAKING,
                 metadata={"action_name": action_result.action_name, **action_result.data},
             )
-    
+
         if action_result.action_name == "open_url":
             return BrainResponse(
                 text=action_result.message,
                 face_state=FaceState.SPEAKING,
                 metadata={"action_name": action_result.action_name, **action_result.data},
-        )
+            )
 
         if action_result.action_name == "open_app":
             return BrainResponse(
@@ -219,7 +219,7 @@ class ResponseBuilder:
                 face_state=FaceState.SPEAKING,
                 metadata={"action_name": action_result.action_name, **action_result.data},
             )
-        
+
         return BrainResponse(
             text=action_result.message,
             face_state=FaceState.SPEAKING,
