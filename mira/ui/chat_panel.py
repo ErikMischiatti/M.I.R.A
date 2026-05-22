@@ -41,6 +41,7 @@ class ChatPanel(QWidget):
         self.setLayout(self.main_layout)
 
         self.build_chat_history()
+        self.build_action_status()
         self.build_input_row()
         self.apply_visual_style()
 
@@ -60,6 +61,14 @@ class ChatPanel(QWidget):
         layout.addWidget(self.chat_history)
 
         self.main_layout.addLayout(layout, stretch=1)
+
+    def build_action_status(self):
+        self.action_status = QLabel("")
+        self.action_status.setObjectName("ActionStatus")
+        self.action_status.setWordWrap(True)
+        self.action_status.setVisible(False)
+
+        self.main_layout.addWidget(self.action_status)
 
     def build_input_row(self):
         layout = QHBoxLayout()
@@ -105,6 +114,15 @@ class ChatPanel(QWidget):
                 padding: 6px;
             }
 
+            QLabel#ActionStatus {
+                border: 1px solid #2f3844;
+                border-radius: 6px;
+                background: #1a2028;
+                color: #cbd5e1;
+                padding: 5px 7px;
+                font-size: 11px;
+            }
+
             QLineEdit#ChatInput {
                 border: 1px solid #343a43;
                 border-radius: 6px;
@@ -142,3 +160,30 @@ class ChatPanel(QWidget):
 
     def add_system_message(self, text: str):
         self.chat_history.append(f"<i>{text}</i>")
+
+    def set_action_status(self, text: str, success: bool | None = None):
+        if not text:
+            self.action_status.clear()
+            self.action_status.setVisible(False)
+            return
+
+        colors = {
+            True: ("#183325", "#2c8f5a", "#c8f7dc"),
+            False: ("#351f24", "#9b3d4c", "#ffd7dc"),
+            None: ("#1a2028", "#2f3844", "#cbd5e1"),
+        }
+        background, border, foreground = colors[success]
+        self.action_status.setStyleSheet(
+            f"""
+            QLabel#ActionStatus {{
+                border: 1px solid {border};
+                border-radius: 6px;
+                background: {background};
+                color: {foreground};
+                padding: 5px 7px;
+                font-size: 11px;
+            }}
+            """
+        )
+        self.action_status.setText(text)
+        self.action_status.setVisible(True)

@@ -135,6 +135,14 @@ Rules:
 - `llm_emotion` must be mapped to `FaceState` through an explicit allowlist.
 - Do not use unchecked dynamic enum lookup for emotions.
 - Do not expose raw LLM JSON or internal metadata in the UI.
+- Successful actions should produce clear user-facing feedback.
+- Failed or unsupported actions must fail safely and produce clear user-facing feedback.
+
+## Local desktop actions
+
+- All desktop actions must be registered through `ActionRegistry` and executed through `ActionExecutor`.
+- Keep desktop actions narrow, explicit, and safe by default.
+- UI classes may display action lifecycle feedback from events, but must not execute actions directly.
 
 ## GUI rules
 

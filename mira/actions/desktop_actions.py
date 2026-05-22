@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import platform
+from pathlib import Path
 import shutil
 import socket
 import subprocess
@@ -35,6 +36,21 @@ APP_COMMANDS = {
     "files": ["xdg-open", "."],
 }
 
+DIRECTORY_ALIASES = {
+    "home": Path.home(),
+    "casa": Path.home(),
+    "desktop": Path.home() / "Desktop",
+    "scrivania": Path.home() / "Desktop",
+    "downloads": Path.home() / "Downloads",
+    "download": Path.home() / "Downloads",
+    "documenti": Path.home() / "Documents",
+    "documents": Path.home() / "Documents",
+    "progetto": Path.cwd(),
+    "project": Path.cwd(),
+    "cartella corrente": Path.cwd(),
+    "current": Path.cwd(),
+}
+
 
 def _normalize_url(raw_url: str) -> str:
     url = raw_url.strip()
@@ -45,6 +61,43 @@ def _normalize_url(raw_url: str) -> str:
         url = f"https://{url}"
 
     return url
+
+
+def _is_allowed_directory(path: Path) -> bool:
+    allowed_roots = [Path.home().resolve(), Path.cwd().resolve()]
+    for root in allowed_roots:
+        try:
+            path.relative_to(root)
+            return True
+        except ValueError:
+            continue
+
+    return False
+
+
+def _resolve_directory_path(raw_directory: str) -> tuple[str | None, Path | None]:
+    normalized = raw_directory.strip().lower()
+    if not normalized:
+        return None, None
+
+    candidate = DIRECTORY_ALIASES.get(normalized)
+    if candidate is None:
+        candidate = Path(raw_directory).expanduser()
+        if not candidate.is_absolute():
+            candidate = Path.cwd() / candidate
+
+    try:
+        resolved = candidate.resolve()
+    except OSError:
+        return raw_directory, None
+
+    if not resolved.exists() or not resolved.is_dir():
+        return raw_directory, None
+
+    if not _is_allowed_directory(resolved):
+        return raw_directory, None
+
+    return raw_directory, resolved
 
 
 def _resolve_app_command(app_name: str) -> tuple[str | None, list[str] | None]:
@@ -190,6 +243,72 @@ def make_show_notification_action():
             action_name="show_notification",
             message="Ho mostrato una notifica locale.",
             data={"title": title, "text": text},
+        )
+
+    return handler
+
+
+def make_open_directory_action():
+    def handler(parameters: dict) -> ActionResult:
+        raw_directory = str(parameters.get("directory", "")).strip()
+
+        if not raw_directory:
+            return ActionResult(
+                success=False,
+                action_name="open_directory",
+                message="Nessuna cartella specificata.",
+            )
+
+        requested_directory, directory_path = _resolve_directory_path(raw_directory)
+        if directory_path is None:
+            available = ", ".join(sorted(DIRECTORY_ALIASES.keys()))
+            return ActionResult(
+                success=False,
+                action_name="open_directory",
+                message=(
+                    f"Cartella '{raw_directory}' non disponibile o non consentita. "
+                    f"Puoi chiedere: {available}."
+                ),
+                data={"requested_directory": raw_directory},
+            )
+
+        xdg_open = shutil.which("xdg-open")
+        if xdg_open is None:
+            return ActionResult(
+                success=False,
+                action_name="open_directory",
+                message="Il comando 'xdg-open' non è disponibile su questo sistema.",
+                data={
+                    "requested_directory": requested_directory,
+                    "path": str(directory_path),
+                },
+            )
+
+        try:
+            subprocess.Popen(
+                [xdg_open, str(directory_path)],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+        except Exception as exc:
+            return ActionResult(
+                success=False,
+                action_name="open_directory",
+                message=f"Errore durante l'apertura della cartella: {exc}",
+                data={
+                    "requested_directory": requested_directory,
+                    "path": str(directory_path),
+                },
+            )
+
+        return ActionResult(
+            success=True,
+            action_name="open_directory",
+            message=f"Ho aperto la cartella {directory_path}.",
+            data={
+                "requested_directory": requested_directory,
+                "path": str(directory_path),
+            },
         )
 
     return handler

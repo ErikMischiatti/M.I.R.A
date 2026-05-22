@@ -67,6 +67,7 @@ Rules:
 - If no action is needed, set action_name to null and parameters to {{}}.
 - If the user asks to open a website, use intent "open_url_request" and action "open_url".
 - If the user asks to open a local app, use intent "open_app_request" and action "open_app".
+- If the user asks to open a local folder or directory, use intent "open_directory_request" and action "open_directory".
 - If the user asks for time, use intent "time_query" and action "get_time".
 - If the user asks for date, use intent "date_query" and action "get_date".
 - If the user asks for a notification, use intent "notification_request" and action "show_notification".
@@ -79,6 +80,7 @@ Rules:
 Entity extraction:
 - For open_url, parameters must contain: {{"url": "..."}}
 - For open_app, parameters must contain: {{"app_name": "..."}}
+- For open_directory, parameters must contain: {{"directory": "..."}}
 - For echo_text, parameters must contain: {{"text": "..."}}
 - For show_notification, parameters must contain: {{"text": "..."}}
 
