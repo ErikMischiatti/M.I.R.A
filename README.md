@@ -32,11 +32,11 @@ M.I.R.A. is designed around the idea that an intelligent interface should not on
 - **expressive** in its responses,
 - and **embodied** through motion and visible state changes.
 
-The current implementation is a desktop application with:
+The current implementation is a compact desktop application with:
 
-- animated eyes,
-- a chat interface,
-- a live debug panel,
+- animated eyes in an embodied companion layout,
+- a compact chat interface,
+- a hidden-by-default debug drawer for expression tuning,
 - intent recognition,
 - session memory,
 - action execution,
@@ -129,9 +129,9 @@ M.I.R.A. already supports a registry/executor pattern for local actions such as:
 - showing system notifications,
 - retrieving basic system information.
 
-### Live Debug Panel
+### Debug Drawer
 
-A dedicated runtime tuning panel allows direct editing of:
+A developer debug drawer is available from the GUI, but hidden by default so the normal experience stays compact. It allows direct editing of:
 
 - expression profiles,
 - eye geometry,
@@ -234,13 +234,27 @@ The LLM integration is still under active development. Current work focuses on:
 - incorporating session context,
 - and linking LLM-derived emotional output more directly to embodied behavior.
 
-To start the application with the LLM-backed intent engine:
+Run the rule-based intent engine explicitly:
 
 ```bash
-MIRA_INTENT_ENGINE=llm python -m mira.main
+MIRA_INTENT_ENGINE=rule python3 -m mira.main
 ```
 
-Without the environment variable, the system defaults to the rule-based engine.
+Run the LLM-backed intent engine:
+
+```bash
+MIRA_INTENT_ENGINE=llm python3 -m mira.main
+```
+
+Useful Ollama configuration variables:
+
+```bash
+MIRA_OLLAMA_MODEL=llama3.2:3b
+MIRA_OLLAMA_BASE_URL=http://localhost:11434
+MIRA_OLLAMA_TIMEOUT_S=10
+```
+
+Without `MIRA_INTENT_ENGINE`, the system defaults to the rule-based engine.
 
 ---
 
@@ -357,7 +371,13 @@ pip install -r requirements.txt
 ### 4. Run the default rule-based version
 
 ```bash
-python -m mira.main
+python3 -m mira.main
+```
+
+You can also select the rule engine explicitly:
+
+```bash
+MIRA_INTENT_ENGINE=rule python3 -m mira.main
 ```
 
 ### 5. Run with the local LLM-backed intent engine
@@ -365,7 +385,15 @@ python -m mira.main
 Make sure Ollama is installed, running, and that the configured model is available.
 
 ```bash
-MIRA_INTENT_ENGINE=llm python -m mira.main
+MIRA_INTENT_ENGINE=llm python3 -m mira.main
+```
+
+Optional Ollama configuration:
+
+```bash
+MIRA_OLLAMA_MODEL=llama3.2:3b
+MIRA_OLLAMA_BASE_URL=http://localhost:11434
+MIRA_OLLAMA_TIMEOUT_S=10
 ```
 
 ---
@@ -377,7 +405,7 @@ MIRA_INTENT_ENGINE=llm python -m mira.main
 - PySide6 desktop application
 - Expressive animated face
 - Chat interface
-- Debug panel
+- Compact embodied GUI with a hidden-by-default debug drawer
 - Event bus and state manager
 - Brain orchestration layer
 - Session memory

@@ -7,7 +7,6 @@ from PySide6.QtWidgets import (
     QTextEdit,
     QLineEdit,
     QPushButton,
-    QGroupBox,
 )
 
 
@@ -33,31 +32,43 @@ class ChatPanel(QWidget):
     def __init__(self):
         super().__init__()
 
-        self.setMinimumWidth(420)
+        self.setObjectName("ChatPanel")
+        self.setMinimumWidth(320)
 
         self.main_layout = QVBoxLayout()
+        self.main_layout.setContentsMargins(0, 0, 0, 0)
+        self.main_layout.setSpacing(6)
         self.setLayout(self.main_layout)
 
-        self.build_chat_group()
-        self.build_input_group()
+        self.build_chat_history()
+        self.build_input_row()
+        self.apply_visual_style()
 
-    def build_chat_group(self):
-        group = QGroupBox("Conversation")
+    def build_chat_history(self):
+        label = QLabel("Conversation")
+        label.setObjectName("ChatSectionLabel")
         layout = QVBoxLayout()
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(4)
 
         self.chat_history = QTextEdit()
+        self.chat_history.setObjectName("ChatHistory")
         self.chat_history.setReadOnly(True)
+        self.chat_history.setMinimumHeight(110)
 
+        layout.addWidget(label)
         layout.addWidget(self.chat_history)
-        group.setLayout(layout)
 
-        self.main_layout.addWidget(group, stretch=1)
+        self.main_layout.addLayout(layout, stretch=1)
 
-    def build_input_group(self):
-        group = QGroupBox("Input")
+    def build_input_row(self):
         layout = QHBoxLayout()
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(6)
 
         self.input_line = ChatInputLine()
+        self.input_line.setObjectName("ChatInput")
+        self.input_line.setMinimumHeight(34)
         self.input_line.setPlaceholderText("Scrivi un messaggio a M.I.R.A...")
         self.input_line.returnPressed.connect(self.submit_message)
         self.input_line.textChanged.connect(self.input_text_changed.emit)
@@ -65,13 +76,55 @@ class ChatPanel(QWidget):
         self.input_line.unfocused.connect(self.input_unfocused.emit)
 
         self.send_button = QPushButton("Send")
+        self.send_button.setObjectName("SendButton")
+        self.send_button.setMinimumHeight(34)
         self.send_button.clicked.connect(self.submit_message)
 
         layout.addWidget(self.input_line, stretch=1)
         layout.addWidget(self.send_button)
 
-        group.setLayout(layout)
-        self.main_layout.addWidget(group)
+        self.main_layout.addLayout(layout)
+
+    def apply_visual_style(self):
+        self.setStyleSheet("""
+            QWidget#ChatPanel {
+                background: transparent;
+            }
+
+            QLabel#ChatSectionLabel {
+                color: #aeb6c2;
+                font-size: 11px;
+                font-weight: 600;
+            }
+
+            QTextEdit#ChatHistory {
+                border: 1px solid #2b3038;
+                border-radius: 6px;
+                background: #171a1f;
+                color: #e7eaee;
+                padding: 6px;
+            }
+
+            QLineEdit#ChatInput {
+                border: 1px solid #343a43;
+                border-radius: 6px;
+                background: #1b1f25;
+                color: #eef1f5;
+                padding: 5px 8px;
+            }
+
+            QPushButton#SendButton {
+                padding: 5px 12px;
+                border: 1px solid #3a4048;
+                border-radius: 6px;
+                background: #242a32;
+                color: #eef1f5;
+            }
+
+            QPushButton#SendButton:hover {
+                background: #2b333e;
+            }
+        """)
 
     def submit_message(self):
         text = self.input_line.text().strip()
