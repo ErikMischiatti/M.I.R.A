@@ -7,7 +7,6 @@ from PySide6.QtWidgets import (
     QTextEdit,
     QLineEdit,
     QPushButton,
-    QGroupBox,
 )
 
 
@@ -33,29 +32,35 @@ class ChatPanel(QWidget):
     def __init__(self):
         super().__init__()
 
-        self.setMinimumWidth(420)
+        self.setMinimumWidth(320)
 
         self.main_layout = QVBoxLayout()
+        self.main_layout.setContentsMargins(0, 0, 0, 0)
+        self.main_layout.setSpacing(6)
         self.setLayout(self.main_layout)
 
-        self.build_chat_group()
-        self.build_input_group()
+        self.build_chat_history()
+        self.build_input_row()
 
-    def build_chat_group(self):
-        group = QGroupBox("Conversation")
+    def build_chat_history(self):
+        label = QLabel("Conversation")
         layout = QVBoxLayout()
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(4)
 
         self.chat_history = QTextEdit()
         self.chat_history.setReadOnly(True)
+        self.chat_history.setMinimumHeight(110)
 
+        layout.addWidget(label)
         layout.addWidget(self.chat_history)
-        group.setLayout(layout)
 
-        self.main_layout.addWidget(group, stretch=1)
+        self.main_layout.addLayout(layout, stretch=1)
 
-    def build_input_group(self):
-        group = QGroupBox("Input")
+    def build_input_row(self):
         layout = QHBoxLayout()
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(6)
 
         self.input_line = ChatInputLine()
         self.input_line.setPlaceholderText("Scrivi un messaggio a M.I.R.A...")
@@ -70,8 +75,7 @@ class ChatPanel(QWidget):
         layout.addWidget(self.input_line, stretch=1)
         layout.addWidget(self.send_button)
 
-        group.setLayout(layout)
-        self.main_layout.addWidget(group)
+        self.main_layout.addLayout(layout)
 
     def submit_message(self):
         text = self.input_line.text().strip()
