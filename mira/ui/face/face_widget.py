@@ -1,5 +1,5 @@
-from PySide6.QtCore import Qt, QRectF, QTimer, QPointF
-from PySide6.QtWidgets import QWidget
+from PySide6.QtCore import Qt, QRectF, QTimer, QPointF, QSize
+from PySide6.QtWidgets import QWidget, QSizePolicy
 from PySide6.QtGui import QColor, QPainter, QBrush
 
 from mira.ui.face.eye import Eye
@@ -8,19 +8,21 @@ from mira.ui.face.face_state import FaceState
 
 
 class FaceWidget(QWidget):
+    DESIGN_WIDTH = 700.0
+    DESIGN_HEIGHT = 450.0
+
     def __init__(self):
         super().__init__()
 
-        self.setMinimumSize(700, 450)
+        self.setMinimumSize(420, 300)
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.setFocusPolicy(Qt.StrongFocus)
         self.setMouseTracking(True)
-
 
         self.background_color = QColor(10, 10, 10)
         self.eye_color = QColor(245, 245, 245)
 
         self.controller = FaceController()
-
 
         self.left_eye = Eye(
             x_ratio=0.27,
@@ -42,12 +44,38 @@ class FaceWidget(QWidget):
         self.frame_timer.timeout.connect(self.on_frame)
         self.frame_timer.start(30)
 
+    def sizeHint(self) -> QSize:
+        return QSize(620, 360)
+
     def on_frame(self):
         self.controller.update()
         self.update()
 
+    def get_face_canvas_rect(self) -> QRectF:
+        if self.width() <= 0 or self.height() <= 0:
+            return QRectF()
+
+        scale = min(
+            self.width() / self.DESIGN_WIDTH,
+            self.height() / self.DESIGN_HEIGHT,
+        )
+        canvas_width = self.DESIGN_WIDTH * scale
+        canvas_height = self.DESIGN_HEIGHT * scale
+        canvas_x = (self.width() - canvas_width) / 2.0
+        canvas_y = (self.height() - canvas_height) / 2.0
+
+        return QRectF(canvas_x, canvas_y, canvas_width, canvas_height)
+
+    def get_canvas_scale(self) -> float:
+        canvas = self.get_face_canvas_rect()
+        if canvas.isNull():
+            return 1.0
+        return canvas.width() / self.DESIGN_WIDTH
+
     def get_eye_rect(self, eye: Eye, side: str) -> QRectF:
         profile = self.controller.profile
+        canvas = self.get_face_canvas_rect()
+        scale = self.get_canvas_scale()
 
         asym_y = 0.0
         asym_h = 1.0
@@ -59,13 +87,13 @@ class FaceWidget(QWidget):
             asym_y = profile.asymmetry_offset_y_right
             asym_h = profile.asymmetry_height_right
 
-        x = self.width() * eye.x_ratio + self.controller.current_offset_x
-        y = self.height() * eye.y_ratio + self.controller.current_offset_y + asym_y
-        w = self.width() * eye.width_ratio * self.controller.current_width_scale
-        h = self.height() * eye.height_ratio * self.controller.current_height_scale * asym_h
+        x = canvas.x() + (self.DESIGN_WIDTH * eye.x_ratio + self.controller.current_offset_x) * scale
+        y = canvas.y() + (self.DESIGN_HEIGHT * eye.y_ratio + self.controller.current_offset_y + asym_y) * scale
+        w = self.DESIGN_WIDTH * eye.width_ratio * self.controller.current_width_scale * scale
+        h = self.DESIGN_HEIGHT * eye.height_ratio * self.controller.current_height_scale * asym_h * scale
 
         return QRectF(x, y, w, h)
-    
+
     def enterEvent(self, event):
         super().enterEvent(event)
 
@@ -74,11 +102,12 @@ class FaceWidget(QWidget):
         super().leaveEvent(event)
 
     def mouseMoveEvent(self, event):
-        if self.width() <= 0 or self.height() <= 0:
+        canvas = self.get_face_canvas_rect()
+        if canvas.width() <= 0 or canvas.height() <= 0:
             return super().mouseMoveEvent(event)
 
-        x_ratio = event.position().x() / self.width()
-        y_ratio = event.position().y() / self.height()
+        x_ratio = (event.position().x() - canvas.x()) / canvas.width()
+        y_ratio = (event.position().y() - canvas.y()) / canvas.height()
 
         self.controller.set_look_target(x_ratio, y_ratio)
         super().mouseMoveEvent(event)
@@ -108,11 +137,12 @@ class FaceWidget(QWidget):
             self.draw_happy_eyelid(painter, right_rect)
 
     def draw_eye(self, painter: QPainter, rect: QRectF, is_closed: bool):
-        radius = self.controller.current_corner_radius
+        scale = self.get_canvas_scale()
+        radius = self.controller.current_corner_radius * scale
         painter.setBrush(QBrush(self.eye_color))
 
         if is_closed:
-            closed_height = max(6, rect.height() * 0.08)
+            closed_height = max(6 * scale, rect.height() * 0.08)
             closed_y = rect.y() + (rect.height() - closed_height) / 2
             painter.drawRoundedRect(
                 rect.x(),
@@ -184,8 +214,8 @@ class FaceWidget(QWidget):
             rect.bottom() - bottom_cover + 1,
             rect.width() + 2,
             rect.height(),
-            self.controller.current_corner_radius,
-            self.controller.current_corner_radius,
+            self.controller.current_corner_radius * self.get_canvas_scale(),
+            self.controller.current_corner_radius * self.get_canvas_scale(),
         )
 
     def keyPressEvent(self, event):

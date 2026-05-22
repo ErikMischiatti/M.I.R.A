@@ -1,9 +1,9 @@
 {
   "IDLE": {
     "name": "IDLE",
-    "width_scale": 0.65,
-    "height_scale": 1.2,
-    "offset_x": 2.0,
+    "width_scale": 0.56,
+    "height_scale": 1.43,
+    "offset_x": -3.0,
     "offset_y": 0.0,
     "corner_radius": 28.0,
     "idle_enabled": true,
