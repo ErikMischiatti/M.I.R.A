@@ -11,6 +11,12 @@ class ActionRegistry:
         self._handlers: dict[str, ActionHandler] = {}
 
     def register(self, name: str, handler: ActionHandler) -> None:
+        if not isinstance(name, str) or not name.strip():
+            raise ValueError("Action name must be a non-empty string.")
+
+        if not callable(handler):
+            raise TypeError("Action handler must be callable.")
+
         self._handlers[name] = handler
 
     def get(self, name: str) -> ActionHandler | None:
