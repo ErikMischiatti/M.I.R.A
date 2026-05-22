@@ -18,6 +18,7 @@ ALLOWED_INTENTS = [
     "open_url_request",
     "open_app_request",
     "notification_request",
+    "open_directory_request",
     "system_info_query",
     "unknown",
 ]
@@ -36,6 +37,7 @@ ALLOWED_ACTIONS = [
     "open_url",
     "open_app",
     "show_notification",
+    "open_directory",
     "get_system_info",
 ]
 

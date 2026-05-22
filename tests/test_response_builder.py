@@ -111,6 +111,59 @@ def test_action_result_has_priority_over_llm_response_text():
     assert response.metadata == {"action_name": "get_time", "time": "12:00"}
 
 
+def test_successful_action_result_produces_user_facing_response():
+    intent = IntentResult(intent="system_info_query", confidence=0.9)
+    action_result = ActionResult(
+        success=True,
+        action_name="get_system_info",
+        message="Sistema: Linux.",
+        data={"platform": "Linux"},
+    )
+
+    response = build_response(intent, action_result)
+
+    assert response.text == "Sistema: Linux."
+    assert response.face_state is FaceState.SPEAKING
+    assert response.metadata == {"action_name": "get_system_info", "platform": "Linux"}
+
+
+def test_failed_action_result_produces_user_facing_failure_response():
+    intent = IntentResult(intent="open_app_request", confidence=0.9)
+    action_result = ActionResult(
+        success=False,
+        action_name="open_app",
+        message="Applicazione non disponibile.",
+        data={"requested_app": "missing"},
+    )
+
+    response = build_response(intent, action_result)
+
+    assert response.text == "Applicazione non disponibile."
+    assert response.face_state is FaceState.CONFUSED
+    assert response.metadata == {
+        "action_name": "open_app",
+        "requested_app": "missing",
+    }
+
+
+def test_unsupported_action_result_produces_safe_failure_response():
+    intent = IntentResult(
+        intent="unknown",
+        entities={"llm_response_text": "I should not override the action."},
+    )
+    action_result = ActionResult(
+        success=False,
+        action_name="missing_action",
+        message="Azione 'missing_action' non disponibile.",
+    )
+
+    response = build_response(intent, action_result)
+
+    assert response.text == "Azione 'missing_action' non disponibile."
+    assert response.face_state is FaceState.CONFUSED
+    assert response.metadata == {"action_name": "missing_action"}
+
+
 def test_non_empty_llm_response_text_is_used_for_non_action_response():
     intent = IntentResult(
         intent="unknown",

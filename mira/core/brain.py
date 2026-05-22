@@ -24,6 +24,7 @@ from mira.actions.desktop_actions import (
     make_open_url_action,
     make_open_app_action,
     make_show_notification_action,
+    make_open_directory_action,
     make_get_system_info_action,
 )
 
@@ -171,6 +172,7 @@ class Brain:
         self.action_registry.register("open_url", make_open_url_action())
         self.action_registry.register("open_app", make_open_app_action())
         self.action_registry.register("show_notification", make_show_notification_action())
+        self.action_registry.register("open_directory", make_open_directory_action())
         self.action_registry.register("get_system_info", make_get_system_info_action())
 
     # ============================================================
@@ -332,6 +334,12 @@ class Brain:
             return ActionRequest(
                 action_name="show_notification",
                 parameters={"text": intent.entities.get("text", "")},
+            )
+
+        if intent.intent == "open_directory_request":
+            return ActionRequest(
+                action_name="open_directory",
+                parameters={"directory": intent.entities.get("directory", "")},
             )
 
         if intent.intent == "system_info_query":

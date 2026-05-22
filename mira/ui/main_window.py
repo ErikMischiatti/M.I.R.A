@@ -85,6 +85,9 @@ class MainWindow(QMainWindow):
 
         # --- Event wiring ---
         self.event_bus.subscribe("state_changed", self.on_state_changed)
+        self.event_bus.subscribe("action_started", self.on_action_started)
+        self.event_bus.subscribe("action_completed", self.on_action_completed)
+        self.event_bus.subscribe("action_failed", self.on_action_failed)
 
         self.chat_panel.message_submitted.connect(self.on_user_message_submitted)
         self.chat_panel.input_focused.connect(lambda: self.event_bus.emit("input_focused"))
@@ -140,6 +143,26 @@ class MainWindow(QMainWindow):
 
         self.face_widget.controller.set_state(new_state)
         self.face_widget.update()
+
+    def on_action_started(self, payload):
+        action_name = getattr(payload, "action_name", "azione")
+        self.chat_panel.set_action_status(f"Esecuzione azione: {action_name}")
+
+    def on_action_completed(self, payload):
+        action_name = getattr(payload, "action_name", "azione")
+        message = getattr(payload, "message", "Azione completata.")
+        self.chat_panel.set_action_status(
+            f"Completata: {action_name} - {message}",
+            success=True,
+        )
+
+    def on_action_failed(self, payload):
+        action_name = getattr(payload, "action_name", "azione")
+        message = getattr(payload, "message", "Azione non riuscita.")
+        self.chat_panel.set_action_status(
+            f"Non riuscita: {action_name} - {message}",
+            success=False,
+        )
 
     def on_user_message_submitted(self, text: str):
         self.chat_panel.add_user_message(text)

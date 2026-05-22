@@ -61,6 +61,30 @@ class RuleIntentEngine(IntentEngine):
 
         if "ultimo messaggio" in text or "cosa ho detto prima" in text:
             return IntentResult(intent="last_user_message_query", confidence=0.90)
+
+        directory_prefixes = [
+            "apri cartella ",
+            "apri directory ",
+            "apri la cartella ",
+            "apri il folder ",
+        ]
+        for prefix in directory_prefixes:
+            if text.startswith(prefix):
+                directory = user_input.text[len(prefix):].strip()
+                return IntentResult(
+                    intent="open_directory_request",
+                    confidence=0.88,
+                    entities={"directory": directory},
+                )
+
+        if text in ["apri desktop", "apri download", "apri documenti", "apri home"]:
+            directory = user_input.text[len("apri "):].strip()
+            return IntentResult(
+                intent="open_directory_request",
+                confidence=0.88,
+                entities={"directory": directory},
+            )
+
         if text.startswith("apri ") or text.startswith("vai su "):
             raw = text.replace("apri ", "").replace("vai su ", "").strip()
 
