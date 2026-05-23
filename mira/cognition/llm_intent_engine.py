@@ -42,6 +42,9 @@ class LLMIntentEngine(IntentEngine):
             print(f"[LLM] Falling back to rule engine: {exc}")
             return self.fallback_engine.infer(user_input)
 
+        if not isinstance(raw_result, dict):
+            return self.fallback_engine.infer(user_input)
+
         return self._to_intent_result(raw_result, user_input)
 
     def _build_prompt(self, user_input: UserInput) -> str:
@@ -103,6 +106,7 @@ User input:
         if intent not in ALLOWED_INTENTS:
             intent = "unknown"
             confidence = 0.25
+            action_name = None
 
         if not isinstance(parameters, dict):
             parameters = {}
