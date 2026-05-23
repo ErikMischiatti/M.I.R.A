@@ -17,6 +17,9 @@ class LLMClientError(RuntimeError):
     pass
 
 
+RAW_RESPONSE_PREVIEW_CHARS = 180
+
+
 class OllamaClient:
     def __init__(
         self,
@@ -62,10 +65,15 @@ class OllamaClient:
         if not response_text:
             raise LLMClientError("Ollama returned an empty response.")
 
+        response_text = self._clean_structured_response(response_text)
+
         try:
             return json.loads(response_text)
         except json.JSONDecodeError as exc:
-            raise LLMClientError(f"Ollama returned invalid JSON: {exc}") from exc
+            preview = self._preview_text(response_text)
+            raise LLMClientError(
+                f"Ollama returned invalid JSON: {exc}. Raw preview: {preview}"
+            ) from exc
 
     def _post_json(self, path: str, payload: dict[str, Any]) -> dict[str, Any]:
         url = f"{self.base_url}{path}"
@@ -118,3 +126,68 @@ class OllamaClient:
             return DEFAULT_OLLAMA_TIMEOUT_S
 
         return timeout
+
+    def _clean_structured_response(self, response_text: str) -> str:
+        cleaned = response_text.strip()
+        fenced = self._strip_json_code_fence(cleaned)
+        if fenced is not None:
+            cleaned = fenced.strip()
+
+        extracted = self._extract_first_json_object(cleaned)
+        if extracted is not None:
+            return extracted
+
+        return cleaned
+
+    def _strip_json_code_fence(self, text: str) -> str | None:
+        if not text.startswith("```"):
+            return None
+
+        lines = text.splitlines()
+        if len(lines) < 3:
+            return None
+
+        opening = lines[0].strip().lower()
+        closing = lines[-1].strip()
+        if opening not in {"```", "```json"} or closing != "```":
+            return None
+
+        return "\n".join(lines[1:-1])
+
+    def _extract_first_json_object(self, text: str) -> str | None:
+        start = text.find("{")
+        if start == -1:
+            return None
+
+        depth = 0
+        in_string = False
+        escaped = False
+
+        for index in range(start, len(text)):
+            char = text[index]
+
+            if in_string:
+                if escaped:
+                    escaped = False
+                elif char == "\\":
+                    escaped = True
+                elif char == '"':
+                    in_string = False
+                continue
+
+            if char == '"':
+                in_string = True
+            elif char == "{":
+                depth += 1
+            elif char == "}":
+                depth -= 1
+                if depth == 0:
+                    return text[start : index + 1]
+
+        return None
+
+    def _preview_text(self, text: str) -> str:
+        normalized = " ".join(text.split())
+        if len(normalized) <= RAW_RESPONSE_PREVIEW_CHARS:
+            return repr(normalized)
+        return repr(normalized[:RAW_RESPONSE_PREVIEW_CHARS].rstrip() + "...")

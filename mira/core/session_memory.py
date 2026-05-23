@@ -65,6 +65,41 @@ class SessionMemory:
             return list(self.history)
         return self.history[-limit:]
 
+    def get_llm_context(
+        self,
+        history_limit: int = 8,
+        max_message_chars: int = 320,
+        min_last_intent_confidence: float = 0.5,
+    ) -> dict[str, Any]:
+        """
+        Return a bounded, deterministic snapshot suitable for an LLM prompt.
+
+        The snapshot intentionally excludes message metadata and arbitrary
+        session context values so internal state is not exposed to the model.
+        """
+        bounded_history = [
+            {
+                "role": message.role,
+                "text": self._truncate_text(message.text, max_message_chars),
+            }
+            for message in self.get_recent_history(history_limit)
+        ]
+
+        last_intent = None
+        if (
+            self.last_intent is not None
+            and self.last_intent.confidence >= min_last_intent_confidence
+        ):
+            last_intent = {
+                "intent": self.last_intent.intent,
+                "confidence": round(self.last_intent.confidence, 3),
+            }
+
+        return {
+            "history": bounded_history,
+            "last_intent": last_intent,
+        }
+
     def clear(self) -> None:
         self.history.clear()
         self.last_intent = None
@@ -76,3 +111,16 @@ class SessionMemory:
         if len(self.history) > self.max_history:
             overflow = len(self.history) - self.max_history
             self.history = self.history[overflow:]
+
+    def _truncate_text(self, text: str, max_chars: int) -> str:
+        normalized_text = " ".join(str(text).split())
+        if max_chars <= 0:
+            return ""
+        if len(normalized_text) <= max_chars:
+            return normalized_text
+
+        suffix = "..."
+        if max_chars <= len(suffix):
+            return suffix[:max_chars]
+
+        return normalized_text[: max_chars - len(suffix)].rstrip() + suffix

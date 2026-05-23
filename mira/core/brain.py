@@ -57,18 +57,24 @@ class _BrainResponseWorker(QRunnable):
         self,
         request_id: int,
         user_input: UserInput,
-        compute_response: Callable[[int, UserInput], BrainComputationResult],
+        inference_input: UserInput,
+        compute_response: Callable[[int, UserInput, UserInput], BrainComputationResult],
     ):
         super().__init__()
         self.request_id = request_id
         self.user_input = user_input
+        self.inference_input = inference_input
         self.compute_response = compute_response
         self.signals = _BrainWorkerSignals()
 
     @Slot()
     def run(self) -> None:
         try:
-            result = self.compute_response(self.request_id, self.user_input)
+            result = self.compute_response(
+                self.request_id,
+                self.user_input,
+                self.inference_input,
+            )
         except Exception as exc:
             intent = IntentResult(
                 intent="processing_error",
@@ -181,6 +187,7 @@ class Brain:
 
     def process_text(self, text: str) -> BrainResponse:
         user_input = UserInput(text=text.strip())
+        inference_input = self._with_session_context(user_input)
         self.memory.add_user_input(user_input)
 
         self.event_bus.emit("user_input_received", user_input)
@@ -189,7 +196,7 @@ class Brain:
         self.event_bus.emit("processing_started", user_input)
         self.state_manager.set_state(FaceState.THINKING)
 
-        response = self._build_response(user_input)
+        response = self._build_response(user_input, inference_input)
 
         self.event_bus.emit("response_ready", response)
         self.state_manager.set_state(response.face_state)
@@ -203,6 +210,7 @@ class Brain:
     ) -> None:
         request_id = self._new_request_id()
         user_input = UserInput(text=text.strip())
+        inference_input = self._with_session_context(user_input)
         self.memory.add_user_input(user_input)
 
         self.event_bus.emit("user_input_received", user_input)
@@ -210,13 +218,19 @@ class Brain:
 
         QTimer.singleShot(
             self.listening_delay_ms,
-            lambda: self._continue_after_listening(request_id, user_input, on_response),
+            lambda: self._continue_after_listening(
+                request_id,
+                user_input,
+                inference_input,
+                on_response,
+            ),
         )
 
     def _continue_after_listening(
         self,
         request_id: int,
         user_input: UserInput,
+        inference_input: UserInput,
         on_response: Callable[[BrainResponse], None] | None,
     ) -> None:
         if request_id != self._latest_request_id:
@@ -226,17 +240,19 @@ class Brain:
         self.event_bus.emit("processing_started", user_input)
         self.state_manager.set_state(FaceState.THINKING)
 
-        self._start_response_worker(request_id, user_input, on_response)
+        self._start_response_worker(request_id, user_input, inference_input, on_response)
 
     def _start_response_worker(
         self,
         request_id: int,
         user_input: UserInput,
+        inference_input: UserInput,
         on_response: Callable[[BrainResponse], None] | None,
     ) -> None:
         worker = _BrainResponseWorker(
             request_id=request_id,
             user_input=user_input,
+            inference_input=inference_input,
             compute_response=self._compute_response_for_worker,
         )
         receiver = _BrainResultReceiver(self, on_response)
@@ -264,6 +280,15 @@ class Brain:
     # ============================================================
     # CORE LOGIC
     # ============================================================
+
+    def _with_session_context(self, user_input: UserInput) -> UserInput:
+        metadata = dict(user_input.metadata)
+        metadata["session_context"] = self.memory.get_llm_context()
+        return UserInput(
+            text=user_input.text,
+            source=user_input.source,
+            metadata=metadata,
+        )
 
     def infer_intent(self, user_input: UserInput) -> IntentResult:
         return self.intent_engine.infer(user_input)
@@ -355,8 +380,12 @@ class Brain:
     def _release_async_receiver(self, request_id: int) -> None:
         self._async_receivers.pop(request_id, None)
 
-    def _build_response(self, user_input: UserInput) -> BrainResponse:
-        intent = self.infer_intent(user_input)
+    def _build_response(
+        self,
+        user_input: UserInput,
+        inference_input: UserInput | None = None,
+    ) -> BrainResponse:
+        intent = self.infer_intent(inference_input or user_input)
         self.memory.set_last_intent(intent)
         self.event_bus.emit("intent_inferred", intent)
 
@@ -375,8 +404,9 @@ class Brain:
         self,
         request_id: int,
         user_input: UserInput,
+        inference_input: UserInput,
     ) -> BrainComputationResult:
-        intent = self.infer_intent(user_input)
+        intent = self.infer_intent(inference_input)
         action_request = self.build_action_request(intent)
 
         return BrainComputationResult(

@@ -66,6 +66,7 @@ LLM_INTENT_SCHEMA = {
         },
         "action_name": {
             "type": ["string", "null"],
+            "enum": [*ALLOWED_ACTIONS, None],
         },
         "parameters": {
             "type": "object",
@@ -75,6 +76,7 @@ LLM_INTENT_SCHEMA = {
             "type": "string",
         },
     },
+    "additionalProperties": False,
     "required": [
         "intent",
         "confidence",
