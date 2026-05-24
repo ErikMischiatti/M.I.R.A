@@ -2,6 +2,9 @@ from __future__ import annotations
 
 from typing import Any
 
+from mira.actions.action_contracts import build_action_contract_registry
+from mira.actions.action_registry import ActionRegistry
+
 
 ALLOWED_INTENTS = [
     "empty_input",
@@ -26,62 +29,47 @@ ALLOWED_INTENTS = [
 ]
 
 
-ALLOWED_ACTIONS = [
-    "get_time",
-    "get_date",
-    "echo_text",
-    "get_session_summary",
-    "get_last_intent",
-    "clear_session_memory",
-    "list_available_actions",
-    "get_memory_size",
-    "get_last_user_message",
-    "open_url",
-    "open_app",
-    "show_notification",
-    "open_directory",
-    "get_system_info",
-]
+_ACTION_CONTRACT_REGISTRY = build_action_contract_registry()
+
+ALLOWED_ACTIONS = _ACTION_CONTRACT_REGISTRY.list_contract_names()
 
 
-ALLOWED_ACTIONS_BY_INTENT = {
-    "empty_input": set(),
-    "greeting": set(),
-    "status_query": set(),
-    "identity_query": set(),
-    "time_query": {"get_time"},
-    "date_query": {"get_date"},
-    "echo_request": {"echo_text"},
-    "session_summary_request": {"get_session_summary"},
-    "last_intent_query": {"get_last_intent"},
-    "clear_session_memory": {"clear_session_memory"},
-    "list_actions": {"list_available_actions"},
-    "memory_size_query": {"get_memory_size"},
-    "last_user_message_query": {"get_last_user_message"},
-    "open_url_request": {"open_url"},
-    "open_app_request": {"open_app"},
-    "notification_request": {"show_notification"},
-    "open_directory_request": {"open_directory"},
-    "system_info_query": {"get_system_info"},
-    "unknown": set(),
-}
+def describe_action_intent_compatibility(registry: ActionRegistry | None = None) -> list[str]:
+    action_registry = registry or _ACTION_CONTRACT_REGISTRY
+    descriptions = []
+
+    for contract in action_registry.list_contracts():
+        for intent in sorted(contract.compatible_intents):
+            descriptions.append(f"- {intent}: {contract.name}")
+
+    return descriptions
 
 
-REQUIRED_ACTION_PARAMS = {
-    "echo_text": {"text": str},
-    "open_url": {"url": str},
-    "open_app": {"app_name": str},
-    "show_notification": {"text": str},
-    "open_directory": {"directory": str},
-}
+def describe_required_action_params(registry: ActionRegistry | None = None) -> list[str]:
+    action_registry = registry or _ACTION_CONTRACT_REGISTRY
+    descriptions = []
+
+    for contract in action_registry.list_contracts():
+        if not contract.required_params:
+            continue
+
+        param_names = ", ".join(
+            f"\"{param_name}\"" for param_name in sorted(contract.required_params.keys())
+        )
+        descriptions.append(f"- For {contract.name}, parameters must contain: {{{param_names}}}")
+
+    return descriptions
 
 
 def validate_llm_action_for_intent(
     intent: str,
     action_name: Any,
     parameters: Any,
+    registry: ActionRegistry | None = None,
 ) -> tuple[str | None, dict[str, Any], str | None]:
     """Validate the LLM action contract without executing anything."""
+    action_registry = registry or _ACTION_CONTRACT_REGISTRY
+
     if not isinstance(parameters, dict):
         return None, {}, "parameters_type"
 
@@ -93,13 +81,13 @@ def validate_llm_action_for_intent(
 
     action = action_name.strip()
 
-    if action not in ALLOWED_ACTIONS:
+    if not action_registry.has_contract(action):
         return None, parameters, "action_unknown"
 
-    if action not in ALLOWED_ACTIONS_BY_INTENT.get(intent, set()):
+    if not action_registry.is_action_compatible_with_intent(action, intent):
         return None, parameters, "intent_action_mismatch"
 
-    required_params = REQUIRED_ACTION_PARAMS.get(action, {})
+    required_params = action_registry.required_params_for(action)
     for param_name, param_type in required_params.items():
         value = parameters.get(param_name)
         if not isinstance(value, param_type):

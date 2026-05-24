@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import unittest
 
+from mira.actions.action_contracts import ACTION_CONTRACTS, build_action_contract_registry
 from mira.actions.action_executor import ActionExecutor
-from mira.actions.action_models import ActionRequest, ActionResult
+from mira.actions.action_models import ActionContract, ActionRequest, ActionResult
 from mira.actions.action_registry import ActionRegistry
 
 
@@ -141,6 +142,40 @@ class ActionExecutorTests(unittest.TestCase):
         self.assertTrue(result.success)
         self.assertEqual(result.action_name, "registered_action")
         self.assertEqual(result.data, {"value": 1})
+
+    def test_registry_exposes_action_contract_metadata(self):
+        registry = ActionRegistry()
+        contract = ActionContract(
+            name="echo",
+            compatible_intents=frozenset({"echo_request"}),
+            required_params={"text": str},
+        )
+
+        registry.register(
+            "echo",
+            lambda parameters: ActionResult(True, "echo", "ok"),
+            contract=contract,
+        )
+
+        self.assertTrue(registry.has_contract("echo"))
+        self.assertEqual(registry.list_contract_names(), ["echo"])
+        self.assertEqual(registry.actions_for_intent("echo_request"), {"echo"})
+        self.assertEqual(registry.required_params_for("echo"), {"text": str})
+        self.assertTrue(registry.is_action_compatible_with_intent("echo", "echo_request"))
+
+    def test_builtin_action_contracts_keep_required_params_and_intent_compatibility(self):
+        registry = build_action_contract_registry()
+
+        self.assertEqual(registry.required_params_for("echo_text"), {"text": str})
+        self.assertEqual(registry.required_params_for("open_url"), {"url": str})
+        self.assertEqual(registry.required_params_for("open_app"), {"app_name": str})
+        self.assertEqual(registry.required_params_for("show_notification"), {"text": str})
+        self.assertEqual(registry.required_params_for("open_directory"), {"directory": str})
+        self.assertEqual(registry.actions_for_intent("unknown"), set())
+        self.assertEqual(registry.actions_for_intent("time_query"), {"get_time"})
+        self.assertEqual(registry.actions_for_intent("open_url_request"), {"open_url"})
+        self.assertEqual(set(registry.list_contract_names()), set(ACTION_CONTRACTS.keys()))
+
 
     def test_registry_rejects_invalid_registration(self):
         registry = ActionRegistry()

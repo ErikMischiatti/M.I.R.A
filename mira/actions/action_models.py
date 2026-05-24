@@ -10,6 +10,14 @@ class ActionRequest:
     source_intent: str | None = None
 
 
+@dataclass(frozen=True)
+class ActionContract:
+    name: str
+    compatible_intents: frozenset[str] = field(default_factory=frozenset)
+    required_params: dict[str, type] = field(default_factory=dict)
+    requires_confirmation: bool = False
+
+
 @dataclass
 class ActionResult:
     success: bool

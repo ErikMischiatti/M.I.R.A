@@ -5,10 +5,13 @@ from typing import Any
 
 from mira.cognition.intent_engine import IntentEngine
 from mira.cognition.llm_client import LLMClientError, OllamaClient
+from mira.actions.action_contracts import build_action_contract_registry
+from mira.actions.action_registry import ActionRegistry
 from mira.cognition.llm_schema import (
-    ALLOWED_ACTIONS,
     ALLOWED_INTENTS,
     LLM_INTENT_SCHEMA,
+    describe_action_intent_compatibility,
+    describe_required_action_params,
     validate_llm_action_for_intent,
 )
 from mira.cognition.rule_intent_engine import RuleIntentEngine
@@ -27,9 +30,11 @@ class LLMIntentEngine(IntentEngine):
         self,
         client: OllamaClient | None = None,
         fallback_engine: IntentEngine | None = None,
+        action_registry: ActionRegistry | None = None,
     ):
         self.client = client or OllamaClient()
         self.fallback_engine = fallback_engine or RuleIntentEngine()
+        self.action_registry = action_registry or build_action_contract_registry()
 
     def infer(self, user_input: UserInput) -> IntentResult:
         if not user_input.text.strip():
@@ -54,7 +59,11 @@ class LLMIntentEngine(IntentEngine):
 
     def _build_prompt(self, user_input: UserInput) -> str:
         allowed_intents = ", ".join(ALLOWED_INTENTS)
-        allowed_actions = ", ".join(ALLOWED_ACTIONS)
+        allowed_actions = ", ".join(self.action_registry.list_contract_names())
+        compatibility = "\n".join(
+            describe_action_intent_compatibility(self.action_registry)
+        )
+        required_params = "\n".join(describe_required_action_params(self.action_registry))
 
         return f"""
 You are the intent parser for N.E.R.O, a modular embodied robotic assistant.
@@ -73,24 +82,24 @@ Rules:
 - Do not invent intents outside the allowed list.
 - Do not invent actions outside the allowed list.
 - If no action is needed, set action_name to null and parameters to {{}}.
-- If the user asks to open a website, use intent "open_url_request" and action "open_url".
-- If the user asks to open a local app, use intent "open_app_request" and action "open_app".
-- If the user asks to open a local folder or directory, use intent "open_directory_request" and action "open_directory".
-- If the user asks for time, use intent "time_query" and action "get_time".
-- If the user asks for date, use intent "date_query" and action "get_date".
-- If the user asks for a notification, use intent "notification_request" and action "show_notification".
-- If the user asks about available actions/capabilities, use intent "list_actions" and action "list_available_actions".
-- If the user asks for system information, use intent "system_info_query" and action "get_system_info".
-- If the user asks to repeat something, use intent "echo_request" and action "echo_text".
-- If the user asks about session memory, use the most appropriate memory-related intent/action.
+- If the user asks to open a website, use intent "open_url_request".
+- If the user asks to open a local app, use intent "open_app_request".
+- If the user asks to open a local folder or directory, use intent "open_directory_request".
+- If the user asks for time, use intent "time_query".
+- If the user asks for date, use intent "date_query".
+- If the user asks for a notification, use intent "notification_request".
+- If the user asks about available actions/capabilities, use intent "list_actions".
+- If the user asks for system information, use intent "system_info_query".
+- If the user asks to repeat something, use intent "echo_request".
+- If the user asks about session memory, use the most appropriate memory-related intent.
+- Use only actions compatible with the selected intent.
 - For unknown or unsupported requests, use intent "unknown", action_name null, and parameters {{}}.
 
+Action compatibility:
+{compatibility}
+
 Entity extraction:
-- For open_url, parameters must contain: {{"url": "..."}}
-- For open_app, parameters must contain: {{"app_name": "..."}}
-- For open_directory, parameters must contain: {{"directory": "..."}}
-- For echo_text, parameters must contain: {{"text": "..."}}
-- For show_notification, parameters must contain: {{"text": "..."}}
+{required_params}
 
 User input:
 {user_input.text}
@@ -123,6 +132,7 @@ User input:
                 intent,
                 action_name,
                 parameters,
+                self.action_registry,
             )
         elif not isinstance(parameters, dict):
             parameters = {}
