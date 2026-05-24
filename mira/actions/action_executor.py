@@ -36,6 +36,7 @@ class ActionExecutor:
                 success=False,
                 action_name=action_name,
                 message=f"Azione '{action_name}' non disponibile.",
+                data={"reason": "action_unknown"},
             )
 
             logger.warning("Action failed: %s is not registered", action_name)
@@ -60,6 +61,7 @@ class ActionExecutor:
                 success=False,
                 action_name=action_name,
                 message=f"Errore durante l'esecuzione di '{action_name}': {exc}",
+                data={"reason": "action_exception"},
             )
 
             logger.exception("Action failed with exception: %s", action_name)

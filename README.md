@@ -126,8 +126,10 @@ M.I.R.A. already supports a registry/executor pattern for local actions such as:
 - inspecting session memory,
 - opening URLs,
 - launching selected desktop applications,
+- opening allowed local directories,
 - showing system notifications,
-- retrieving basic system information.
+- retrieving basic system information,
+- and reporting the current project path.
 
 ### Debug Drawer
 

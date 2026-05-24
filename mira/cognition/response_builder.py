@@ -220,6 +220,13 @@ class ResponseBuilder:
                 metadata={"action_name": action_result.action_name, **action_result.data},
             )
 
+        if action_result.action_name == "get_project_path":
+            return BrainResponse(
+                text=action_result.message,
+                face_state=FaceState.SPEAKING,
+                metadata={"action_name": action_result.action_name, **action_result.data},
+            )
+
         return BrainResponse(
             text=action_result.message,
             face_state=FaceState.SPEAKING,

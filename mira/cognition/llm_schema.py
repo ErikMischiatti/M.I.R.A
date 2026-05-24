@@ -25,6 +25,7 @@ ALLOWED_INTENTS = [
     "notification_request",
     "open_directory_request",
     "system_info_query",
+    "project_path_query",
     "unknown",
 ]
 

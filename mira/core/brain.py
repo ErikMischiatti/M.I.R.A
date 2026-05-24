@@ -27,6 +27,7 @@ from mira.actions.desktop_actions import (
     make_show_notification_action,
     make_open_directory_action,
     make_get_system_info_action,
+    make_get_project_path_action,
 )
 
 from mira.cognition.response_builder import ResponseBuilder
@@ -182,6 +183,7 @@ class Brain:
         register_builtin("show_notification", make_show_notification_action())
         register_builtin("open_directory", make_open_directory_action())
         register_builtin("get_system_info", make_get_system_info_action())
+        register_builtin("get_project_path", make_get_project_path_action())
 
     # ============================================================
     # PUBLIC API
@@ -367,6 +369,9 @@ class Brain:
 
         if intent.intent == "system_info_query":
             return ActionRequest(action_name="get_system_info")
+
+        if intent.intent == "project_path_query":
+            return ActionRequest(action_name="get_project_path")
 
         return None
 
