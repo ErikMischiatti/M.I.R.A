@@ -174,3 +174,37 @@ def test_current_async_result_finalization_emits_response_and_invokes_callback()
         "response_ready",
     ]
     assert brain.state_manager.states == [FaceState.SPEAKING]
+
+
+def test_invalid_llm_action_marker_prevents_rule_based_action_fallback():
+    intent = IntentResult(
+        intent="open_url_request",
+        confidence=0.8,
+        entities={
+            "url": "example.com",
+            "llm_action_name": None,
+            "llm_action_validation_failed": True,
+            "llm_action_validation_reason": "intent_action_mismatch",
+        },
+    )
+    brain = make_brain(intent)
+
+    request = brain.build_action_request(intent)
+
+    assert request is None
+
+
+def test_rule_based_action_fallback_still_builds_request_without_llm_failure_marker():
+    intent = IntentResult(
+        intent="open_url_request",
+        confidence=0.9,
+        entities={"url": "example.com"},
+    )
+    brain = make_brain(intent)
+
+    request = brain.build_action_request(intent)
+
+    assert request == ActionRequest(
+        action_name="open_url",
+        parameters={"url": "example.com"},
+    )

@@ -5,7 +5,12 @@ from typing import Any
 
 from mira.cognition.intent_engine import IntentEngine
 from mira.cognition.llm_client import LLMClientError, OllamaClient
-from mira.cognition.llm_schema import ALLOWED_ACTIONS, ALLOWED_INTENTS, LLM_INTENT_SCHEMA
+from mira.cognition.llm_schema import (
+    ALLOWED_ACTIONS,
+    ALLOWED_INTENTS,
+    LLM_INTENT_SCHEMA,
+    validate_llm_action_for_intent,
+)
 from mira.cognition.rule_intent_engine import RuleIntentEngine
 from mira.core.models import IntentResult, UserInput
 
@@ -103,16 +108,24 @@ User input:
         response_text = str(raw_result.get("response_text", "")).strip()
         emotion = str(raw_result.get("emotion", "neutral")).strip()
 
+        validation_reason = None
+        raw_action_requested = action_name is not None
+
         if intent not in ALLOWED_INTENTS:
             intent = "unknown"
             confidence = 0.25
+            if raw_action_requested:
+                validation_reason = "intent_unknown"
             action_name = None
 
-        if not isinstance(parameters, dict):
+        if validation_reason is None:
+            action_name, parameters, validation_reason = validate_llm_action_for_intent(
+                intent,
+                action_name,
+                parameters,
+            )
+        elif not isinstance(parameters, dict):
             parameters = {}
-
-        if action_name is not None and action_name not in ALLOWED_ACTIONS:
-            action_name = None
 
         entities = {
             **parameters,
@@ -121,6 +134,10 @@ User input:
             "llm_emotion": emotion,
             "llm_raw": json.dumps(raw_result, ensure_ascii=False),
         }
+
+        if validation_reason is not None:
+            entities["llm_action_validation_failed"] = True
+            entities["llm_action_validation_reason"] = validation_reason
 
         return IntentResult(
             intent=intent,

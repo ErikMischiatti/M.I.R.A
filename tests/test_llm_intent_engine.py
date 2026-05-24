@@ -83,6 +83,8 @@ def test_unknown_or_disallowed_intent_is_normalized_and_cannot_execute_action():
     assert result.intent == "unknown"
     assert result.confidence == 0.25
     assert result.entities["llm_action_name"] is None
+    assert result.entities["llm_action_validation_failed"] is True
+    assert result.entities["llm_action_validation_reason"] == "intent_unknown"
 
 
 def test_unknown_or_disallowed_action_name_is_removed():
@@ -100,10 +102,68 @@ def test_unknown_or_disallowed_action_name_is_removed():
     assert result.intent == "open_url_request"
     assert result.entities["url"] == "example.com"
     assert result.entities["llm_action_name"] is None
+    assert result.entities["llm_action_validation_failed"] is True
+    assert result.entities["llm_action_validation_reason"] == "action_unknown"
+
+
+def test_incompatible_action_for_intent_is_rejected():
+    result, _, _ = infer_with(
+        {
+            "intent": "open_url_request",
+            "confidence": 0.8,
+            "emotion": "neutral",
+            "action_name": "get_time",
+            "parameters": {"url": "example.com"},
+            "response_text": "",
+        }
+    )
+
+    assert result.intent == "open_url_request"
+    assert result.entities["url"] == "example.com"
+    assert result.entities["llm_action_name"] is None
+    assert result.entities["llm_action_validation_failed"] is True
+    assert result.entities["llm_action_validation_reason"] == "intent_action_mismatch"
+
+
+def test_allowed_action_with_wrong_param_type_is_rejected():
+    result, _, _ = infer_with(
+        {
+            "intent": "echo_request",
+            "confidence": 0.8,
+            "emotion": "neutral",
+            "action_name": "echo_text",
+            "parameters": {"text": 123},
+            "response_text": "",
+        }
+    )
+
+    assert result.intent == "echo_request"
+    assert result.entities["text"] == 123
+    assert result.entities["llm_action_name"] is None
+    assert result.entities["llm_action_validation_failed"] is True
+    assert result.entities["llm_action_validation_reason"] == "missing_or_invalid_param:text"
+
+
+def test_known_unknown_intent_with_allowed_action_is_rejected():
+    result, _, _ = infer_with(
+        {
+            "intent": "unknown",
+            "confidence": 0.5,
+            "emotion": "neutral",
+            "action_name": "get_time",
+            "parameters": {},
+            "response_text": "",
+        }
+    )
+
+    assert result.intent == "unknown"
+    assert result.entities["llm_action_name"] is None
+    assert result.entities["llm_action_validation_failed"] is True
+    assert result.entities["llm_action_validation_reason"] == "intent_action_mismatch"
 
 
 @pytest.mark.parametrize("parameters", [None, [], "url=example.com", 3])
-def test_non_dict_action_params_are_dropped(parameters):
+def test_non_dict_action_params_reject_action(parameters):
     result, _, _ = infer_with(
         {
             "intent": "open_url_request",
@@ -116,10 +176,12 @@ def test_non_dict_action_params_are_dropped(parameters):
     )
 
     assert "url" not in result.entities
-    assert result.entities["llm_action_name"] == "open_url"
+    assert result.entities["llm_action_name"] is None
+    assert result.entities["llm_action_validation_failed"] is True
+    assert result.entities["llm_action_validation_reason"] == "parameters_type"
 
 
-def test_missing_action_params_are_left_for_action_validation():
+def test_missing_action_params_reject_action():
     result, _, _ = infer_with(
         {
             "intent": "echo_request",
@@ -132,8 +194,10 @@ def test_missing_action_params_are_left_for_action_validation():
     )
 
     assert result.intent == "echo_request"
-    assert result.entities["llm_action_name"] == "echo_text"
+    assert result.entities["llm_action_name"] is None
     assert "text" not in result.entities
+    assert result.entities["llm_action_validation_failed"] is True
+    assert result.entities["llm_action_validation_reason"] == "missing_or_invalid_param:text"
 
 
 def test_invalid_schema_object_falls_back_to_rule_engine():
