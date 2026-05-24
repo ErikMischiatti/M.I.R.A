@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import pytest
 
+from mira.actions.action_models import ActionContract
+from mira.actions.action_registry import ActionRegistry
 from mira.cognition.llm_client import LLMClientError
 from mira.cognition.llm_intent_engine import LLMIntentEngine
 from mira.core.models import IntentResult, UserInput
@@ -67,6 +69,74 @@ def test_valid_llm_json_is_converted_to_intent_result():
     assert client.calls
     assert fallback.calls == []
 
+
+
+def test_llm_action_validation_uses_supplied_action_metadata():
+    registry = ActionRegistry()
+    registry.register_contract(
+        ActionContract(
+            name="custom_echo",
+            compatible_intents=frozenset({"echo_request"}),
+            required_params={"text": str},
+        )
+    )
+    client = FakeClient(
+        {
+            "intent": "echo_request",
+            "confidence": 0.8,
+            "emotion": "neutral",
+            "action_name": "custom_echo",
+            "parameters": {"text": "ciao"},
+            "response_text": "",
+        }
+    )
+    engine = LLMIntentEngine(
+        client=client,
+        fallback_engine=FakeFallbackEngine(),
+        action_registry=registry,
+    )
+
+    result = engine.infer(UserInput(text="ripeti ciao"))
+
+    assert result.intent == "echo_request"
+    assert result.entities["llm_action_name"] == "custom_echo"
+    assert result.entities["text"] == "ciao"
+    assert "llm_action_validation_failed" not in result.entities
+
+
+def test_prompt_action_list_and_required_params_come_from_action_metadata():
+    registry = ActionRegistry()
+    registry.register_contract(
+        ActionContract(
+            name="custom_echo",
+            compatible_intents=frozenset({"echo_request"}),
+            required_params={"text": str},
+        )
+    )
+    client = FakeClient(
+        {
+            "intent": "unknown",
+            "confidence": 0.5,
+            "emotion": "neutral",
+            "action_name": None,
+            "parameters": {},
+            "response_text": "",
+        }
+    )
+    engine = LLMIntentEngine(
+        client=client,
+        fallback_engine=FakeFallbackEngine(),
+        action_registry=registry,
+    )
+
+    engine.infer(UserInput(text="ripeti ciao"))
+
+    prompt = client.calls[0]["prompt"]
+    allowed_actions_section = prompt.split("Allowed actions:\n", 1)[1].split("\n\nRules:", 1)[0]
+    assert allowed_actions_section == "custom_echo"
+    assert "- echo_request: custom_echo" in prompt
+    assert "- For custom_echo, parameters must contain: {\"text\"}" in prompt
+    assert "open_url" not in allowed_actions_section
 
 def test_unknown_or_disallowed_intent_is_normalized_and_cannot_execute_action():
     result, _, _ = infer_with(

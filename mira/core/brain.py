@@ -6,6 +6,7 @@ from dataclasses import dataclass
 
 from PySide6.QtCore import QObject, QRunnable, QThreadPool, QTimer, Signal, Slot
 
+from mira.actions.action_contracts import get_builtin_action_contract
 from mira.actions.action_executor import ActionExecutor
 from mira.actions.action_models import ActionRequest, ActionResult
 from mira.actions.action_registry import ActionRegistry
@@ -155,25 +156,32 @@ class Brain:
     # ============================================================
 
     def _register_builtin_actions(self) -> None:
+        def register_builtin(name, handler):
+            self.action_registry.register(
+                name,
+                handler,
+                contract=get_builtin_action_contract(name),
+            )
+
         # Core
-        self.action_registry.register("get_time", make_get_time_action())
-        self.action_registry.register("get_date", make_get_date_action())
-        self.action_registry.register("echo_text", make_echo_text_action())
-        self.action_registry.register("get_last_intent", make_get_last_intent_action(self.memory))
-        self.action_registry.register("get_session_summary", make_get_session_summary_action(self.memory))
-        self.action_registry.register("clear_session_memory", make_clear_session_memory_action(self.memory))
+        register_builtin("get_time", make_get_time_action())
+        register_builtin("get_date", make_get_date_action())
+        register_builtin("echo_text", make_echo_text_action())
+        register_builtin("get_last_intent", make_get_last_intent_action(self.memory))
+        register_builtin("get_session_summary", make_get_session_summary_action(self.memory))
+        register_builtin("clear_session_memory", make_clear_session_memory_action(self.memory))
 
         # Introspection
-        self.action_registry.register("list_available_actions", make_list_available_actions_action(self.action_registry))
-        self.action_registry.register("get_memory_size", make_get_memory_size_action(self.memory))
-        self.action_registry.register("get_last_user_message", make_get_last_user_message_action(self.memory))
+        register_builtin("list_available_actions", make_list_available_actions_action(self.action_registry))
+        register_builtin("get_memory_size", make_get_memory_size_action(self.memory))
+        register_builtin("get_last_user_message", make_get_last_user_message_action(self.memory))
 
         # Desktop
-        self.action_registry.register("open_url", make_open_url_action())
-        self.action_registry.register("open_app", make_open_app_action())
-        self.action_registry.register("show_notification", make_show_notification_action())
-        self.action_registry.register("open_directory", make_open_directory_action())
-        self.action_registry.register("get_system_info", make_get_system_info_action())
+        register_builtin("open_url", make_open_url_action())
+        register_builtin("open_app", make_open_app_action())
+        register_builtin("show_notification", make_show_notification_action())
+        register_builtin("open_directory", make_open_directory_action())
+        register_builtin("get_system_info", make_get_system_info_action())
 
     # ============================================================
     # PUBLIC API
