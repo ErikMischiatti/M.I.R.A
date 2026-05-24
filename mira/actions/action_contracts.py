@@ -66,6 +66,10 @@ ACTION_CONTRACTS = {
         name="get_system_info",
         compatible_intents=frozenset({"system_info_query"}),
     ),
+    "get_project_path": ActionContract(
+        name="get_project_path",
+        compatible_intents=frozenset({"project_path_query"}),
+    ),
 }
 
 

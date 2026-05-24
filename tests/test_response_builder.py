@@ -269,3 +269,22 @@ def test_rule_style_intent_without_llm_response_text_behaves_as_before():
     assert response.text == "Sto funzionando correttamente. Il mio layer cognitivo è attivo."
     assert response.face_state is FaceState.SPEAKING
     assert response.metadata == {"intent": "status_query", "confidence": 1.0}
+
+
+def test_project_path_action_result_produces_user_facing_response():
+    intent = IntentResult(intent="project_path_query", confidence=0.9)
+    action_result = ActionResult(
+        success=True,
+        action_name="get_project_path",
+        message="La cartella del progetto è /tmp/project.",
+        data={"path": "/tmp/project"},
+    )
+
+    response = build_response(intent, action_result)
+
+    assert response.text == "La cartella del progetto è /tmp/project."
+    assert response.face_state is FaceState.SPEAKING
+    assert response.metadata == {
+        "action_name": "get_project_path",
+        "path": "/tmp/project",
+    }

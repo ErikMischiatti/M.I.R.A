@@ -87,8 +87,9 @@ class RuleIntentEngine(IntentEngine):
 
         if text.startswith("apri ") or text.startswith("vai su "):
             raw = text.replace("apri ", "").replace("vai su ", "").strip()
+            explicit_url_like = "://" in raw or raw.startswith("javascript:")
 
-            if "." in raw:  # semplice euristica URL
+            if "." in raw or explicit_url_like:  # semplice euristica URL
                 return IntentResult(
                     intent="open_url_request",
                     confidence=0.90,
@@ -116,6 +117,54 @@ class RuleIntentEngine(IntentEngine):
                 confidence=0.90,
             )
 
+        project_path_blocked_prefixes = (
+            "cambia ",
+            "cancella ",
+            "sposta ",
+            "rinomina ",
+            "elimina ",
+            "esegui ",
+            "scrivi ",
+        )
+        if any(text.startswith(prefix) for prefix in project_path_blocked_prefixes):
+            return IntentResult(intent="unknown", confidence=0.50)
+
+        project_path_patterns = [
+            "dove si trova il progetto",
+            "dov'è il progetto",
+            "dove e il progetto",
+            "qual è la cartella del progetto",
+            "qual e la cartella del progetto",
+            "qual è il project path",
+            "qual e il project path",
+            "mostra path progetto",
+            "mostrami il path del progetto",
+            "path del progetto",
+            "path progetto",
+            "mostra la directory del progetto",
+            "cartella progetto",
+            "dimmi la cartella del progetto",
+            "dove è salvato il progetto",
+            "dove e salvato il progetto",
+            "dove si trova mira",
+            "dove si trova m.i.r.a.",
+            "mostrami la root del progetto",
+            "root del progetto",
+            "project root",
+            "project directory",
+            "show project path",
+            "show project directory",
+            "where is the project",
+            "where is the project folder",
+            "what is the project path",
+            "what is the project directory",
+            "cartella corrente",
+            "current working directory",
+        ]
+        if any(pattern in text for pattern in project_path_patterns):
+            return IntentResult(
+                intent="project_path_query",
+                confidence=0.90,
+            )
 
         return IntentResult(intent="unknown", confidence=0.50)
-        

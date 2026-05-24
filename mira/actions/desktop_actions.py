@@ -7,6 +7,7 @@ import socket
 import subprocess
 import sys
 import webbrowser
+from urllib.parse import urlparse
 
 from mira.actions.action_models import ActionResult
 
@@ -57,8 +58,22 @@ def _normalize_url(raw_url: str) -> str:
     if not url:
         return ""
 
-    if not url.startswith(("http://", "https://")):
+    parsed_raw = urlparse(url)
+    if parsed_raw.scheme and parsed_raw.scheme not in {"http", "https"}:
+        return ""
+
+    if not parsed_raw.scheme:
         url = f"https://{url}"
+
+    parsed = urlparse(url)
+    if parsed.scheme not in {"http", "https"}:
+        return ""
+
+    if not parsed.netloc or any(char.isspace() for char in parsed.netloc):
+        return ""
+
+    if "." not in parsed.netloc and parsed.netloc != "localhost":
+        return ""
 
     return url
 
@@ -128,6 +143,7 @@ def make_open_url_action():
                 success=False,
                 action_name="open_url",
                 message="Nessun URL valido fornito.",
+                data={"reason": "invalid_url", "requested_url": raw_url},
             )
 
         try:
@@ -334,6 +350,20 @@ def make_get_system_info_action():
             action_name="get_system_info",
             message=message,
             data=info,
+        )
+
+    return handler
+
+
+def make_get_project_path_action():
+    def handler(parameters: dict) -> ActionResult:
+        project_path = Path.cwd().resolve()
+
+        return ActionResult(
+            success=True,
+            action_name="get_project_path",
+            message=f"La cartella del progetto è {project_path}.",
+            data={"path": str(project_path)},
         )
 
     return handler

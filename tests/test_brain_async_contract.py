@@ -208,3 +208,12 @@ def test_rule_based_action_fallback_still_builds_request_without_llm_failure_mar
         action_name="open_url",
         parameters={"url": "example.com"},
     )
+
+
+def test_rule_based_project_path_intent_builds_action_request():
+    intent = IntentResult(intent="project_path_query", confidence=0.9)
+    brain = make_brain(intent)
+
+    request = brain.build_action_request(intent)
+
+    assert request == ActionRequest(action_name="get_project_path")

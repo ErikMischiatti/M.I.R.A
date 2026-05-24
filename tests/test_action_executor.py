@@ -58,6 +58,7 @@ class ActionExecutorTests(unittest.TestCase):
         self.assertFalse(result.success)
         self.assertEqual(result.action_name, "missing_action")
         self.assertIn("non disponibile", result.message)
+        self.assertEqual(result.data["reason"], "action_unknown")
         self.assertEqual(
             [event_name for event_name, _ in event_bus.events],
             ["action_started", "action_failed"],
@@ -78,6 +79,7 @@ class ActionExecutorTests(unittest.TestCase):
         self.assertFalse(result.success)
         self.assertEqual(result.action_name, "explode")
         self.assertIn("boom", result.message)
+        self.assertEqual(result.data["reason"], "action_exception")
         self.assertEqual(
             [event_name for event_name, _ in event_bus.events],
             ["action_started", "action_failed"],
@@ -174,6 +176,7 @@ class ActionExecutorTests(unittest.TestCase):
         self.assertEqual(registry.actions_for_intent("unknown"), set())
         self.assertEqual(registry.actions_for_intent("time_query"), {"get_time"})
         self.assertEqual(registry.actions_for_intent("open_url_request"), {"open_url"})
+        self.assertEqual(registry.actions_for_intent("project_path_query"), {"get_project_path"})
         self.assertEqual(set(registry.list_contract_names()), set(ACTION_CONTRACTS.keys()))
 
 
