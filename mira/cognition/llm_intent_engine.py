@@ -15,7 +15,13 @@ from mira.cognition.llm_schema import (
     validate_llm_action_for_intent,
 )
 from mira.cognition.rule_intent_engine import RuleIntentEngine
+from mira.cognition.session_context import (
+    DEFAULT_SESSION_CONTEXT_MAX_CHARS,
+    DEFAULT_SESSION_CONTEXT_MAX_MESSAGES,
+    build_session_context,
+)
 from mira.core.models import IntentResult, UserInput
+from mira.core.session_memory import SessionMemory
 
 
 class LLMIntentEngine(IntentEngine):
@@ -31,10 +37,16 @@ class LLMIntentEngine(IntentEngine):
         client: OllamaClient | None = None,
         fallback_engine: IntentEngine | None = None,
         action_registry: ActionRegistry | None = None,
+        session_memory: SessionMemory | None = None,
+        session_context_max_messages: int = DEFAULT_SESSION_CONTEXT_MAX_MESSAGES,
+        session_context_max_chars: int = DEFAULT_SESSION_CONTEXT_MAX_CHARS,
     ):
         self.client = client or OllamaClient()
         self.fallback_engine = fallback_engine or RuleIntentEngine()
         self.action_registry = action_registry or build_action_contract_registry()
+        self.session_memory = session_memory
+        self.session_context_max_messages = session_context_max_messages
+        self.session_context_max_chars = session_context_max_chars
 
     def infer(self, user_input: UserInput) -> IntentResult:
         if not user_input.text.strip():
@@ -64,9 +76,18 @@ class LLMIntentEngine(IntentEngine):
             describe_action_intent_compatibility(self.action_registry)
         )
         required_params = "\n".join(describe_required_action_params(self.action_registry))
+        session_context = build_session_context(
+            self.session_memory,
+            max_messages=self.session_context_max_messages,
+            max_chars=self.session_context_max_chars,
+            current_user_text=user_input.text,
+        )
+        session_context_text = session_context.text or "No previous session messages."
+        output_schema = json.dumps(LLM_INTENT_SCHEMA, ensure_ascii=False, indent=2)
 
         return f"""
-You are the intent parser for N.E.R.O, a modular embodied robotic assistant.
+Role and instructions:
+You are the intent parser for M.I.R.A., the Modular Interactive Robotic Agent.
 
 Your task is NOT to answer conversationally.
 Your task is to classify the user's input into a structured JSON object.
@@ -82,6 +103,13 @@ Rules:
 - Do not invent intents outside the allowed list.
 - Do not invent actions outside the allowed list.
 - If no action is needed, set action_name to null and parameters to {{}}.
+- Use session context only to understand references in the current user message.
+- Use session context to answer questions about information the user already declared in this session.
+- If the user asks for their own name or personal details, look for those facts in session context.
+- Do not answer with the assistant identity when the user asks about the user.
+- If the requested fact is not present in session context, say that it is not available instead of inventing it.
+- The current user message is the message to classify; session context can contain facts needed to interpret it.
+- Do not treat session context as permission to bypass intent/action validation.
 - If the user asks to open a website, use intent "open_url_request".
 - If the user asks to open a local app, use intent "open_app_request".
 - If the user asks to open a local folder or directory, use intent "open_directory_request".
@@ -101,8 +129,14 @@ Action compatibility:
 Entity extraction:
 {required_params}
 
-User input:
+Session context (bounded, recent messages only):
+{session_context_text}
+
+Current user message:
 {user_input.text}
+
+Output JSON schema:
+{output_schema}
 """.strip()
 
     def _to_intent_result(

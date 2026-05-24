@@ -134,7 +134,7 @@ def test_llm_validation_uses_supplied_registry_contracts():
     assert rejected_reason == "action_unknown"
 
 
-def test_llm_prompt_does_not_include_session_history_or_context():
+def test_llm_prompt_includes_bounded_session_context_section():
     engine = LLMIntentEngine(
         client=FakeClient(),
         action_registry=build_brain_registry(),
@@ -142,7 +142,12 @@ def test_llm_prompt_does_not_include_session_history_or_context():
 
     prompt = engine._build_prompt(UserInput(text="come mi chiamo?"))
 
-    assert "User input:\ncome mi chiamo?" in prompt
+    assert "Allowed intents:" in prompt
+    assert "Allowed actions:" in prompt
+    assert "Action compatibility:" in prompt
+    assert "Entity extraction:" in prompt
+    assert "Session context (bounded, recent messages only):" in prompt
+    assert "No previous session messages." in prompt
+    assert "Current user message:\ncome mi chiamo?" in prompt
     assert "Recent history" not in prompt
     assert "session history" not in prompt.lower()
-    assert "session context" not in prompt.lower()

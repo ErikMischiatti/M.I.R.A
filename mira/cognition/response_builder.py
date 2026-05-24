@@ -66,7 +66,7 @@ class ResponseBuilder:
 
         if intent.intent == "identity_query":
             return BrainResponse(
-                text="Sono N.E.R.O, il nucleo cognitivo embodied progettato per H.A.R.O.",
+                text="Sono M.I.R.A., Modular Interactive Robotic Agent.",
                 face_state=FaceState.SPEAKING,
                 metadata={"intent": intent.intent, "confidence": intent.confidence},
             )

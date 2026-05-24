@@ -192,6 +192,17 @@ def test_empty_llm_response_text_falls_back_to_deterministic_behavior():
     assert "llm_response_used" not in response.metadata
 
 
+def test_identity_query_uses_mira_identity():
+    intent = IntentResult(intent="identity_query", confidence=0.95)
+
+    response = build_response(intent)
+
+    assert response.text == "Sono M.I.R.A., Modular Interactive Robotic Agent."
+    assert "N.E.R.O." not in response.text
+    assert "H.A.R.O." not in response.text
+    assert response.face_state is FaceState.SPEAKING
+
+
 def test_empty_input_ignores_llm_response_text():
     intent = IntentResult(
         intent="empty_input",

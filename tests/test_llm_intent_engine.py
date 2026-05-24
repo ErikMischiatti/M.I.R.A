@@ -7,6 +7,7 @@ from mira.actions.action_registry import ActionRegistry
 from mira.cognition.llm_client import LLMClientError
 from mira.cognition.llm_intent_engine import LLMIntentEngine
 from mira.core.models import IntentResult, UserInput
+from mira.core.session_memory import MemoryMessage, SessionMemory
 
 
 class FakeClient:
@@ -363,7 +364,7 @@ def test_invalid_emotion_is_preserved_only_as_metadata_for_response_builder_safe
     assert result.entities["llm_response_text"] == "Va bene."
 
 
-def test_prompt_does_not_include_session_history_context():
+def test_prompt_includes_empty_session_context_section_without_memory():
     _, client, _ = infer_with(
         {
             "intent": "unknown",
@@ -377,6 +378,96 @@ def test_prompt_does_not_include_session_history_context():
     )
 
     prompt = client.calls[0]["prompt"]
-    assert "User input:\ncome mi chiamo?" in prompt
-    assert "Recent history" not in prompt
-    assert "session context" not in prompt.lower()
+    assert "You are the intent parser for M.I.R.A." in prompt
+    assert "Modular Interactive Robotic Agent" in prompt
+    assert "N.E.R.O." not in prompt
+    assert "H.A.R.O." not in prompt
+    assert "Session context (bounded, recent messages only):\nNo previous session messages." in prompt
+    assert "Current user message:\ncome mi chiamo?" in prompt
+    assert "Output JSON schema:" in prompt
+
+
+def test_prompt_includes_bounded_session_context_when_memory_has_messages():
+    memory = SessionMemory(max_history=20)
+    memory.history.extend(
+        [
+            MemoryMessage(role="user", text="messaggio vecchio"),
+            MemoryMessage(role="assistant", text="risposta vecchia"),
+            MemoryMessage(
+                role="user",
+                text="Mi chiamo Erik",
+                metadata={"llm_raw": "internal raw payload"},
+            ),
+            MemoryMessage(role="assistant", text="Piacere, Erik."),
+            MemoryMessage(role="user", text="Come mi chiamo?"),
+        ]
+    )
+    client = FakeClient(
+        {
+            "intent": "unknown",
+            "confidence": 0.5,
+            "emotion": "neutral",
+            "action_name": None,
+            "parameters": {},
+            "response_text": "",
+        }
+    )
+    engine = LLMIntentEngine(
+        client=client,
+        fallback_engine=FakeFallbackEngine(),
+        session_memory=memory,
+        session_context_max_messages=2,
+        session_context_max_chars=200,
+    )
+
+    engine.infer(UserInput(text="Come mi chiamo?"))
+
+    prompt = client.calls[0]["prompt"]
+    context_section = prompt.split(
+        "Session context (bounded, recent messages only):\n", 1
+    )[1].split("\n\nCurrent user message:", 1)[0]
+    assert "- user: Mi chiamo Erik" in context_section
+    assert "- assistant: Piacere, Erik." in context_section
+    assert "Come mi chiamo?" not in context_section
+    assert "messaggio vecchio" not in context_section
+    assert "llm_raw" not in prompt
+    assert "internal raw payload" not in prompt
+    assert "Current user message:\nCome mi chiamo?" in prompt
+    assert "Use session context to answer questions about information the user already declared" in prompt
+    assert "If the user asks for their own name or personal details" in prompt
+    assert "Do not answer with the assistant identity when the user asks about the user" in prompt
+    assert "not present in session context" in prompt
+
+
+def test_prompt_does_not_explode_with_long_memory():
+    memory = SessionMemory(max_history=100)
+    for index in range(40):
+        memory.history.append(
+            MemoryMessage(role="user", text=f"messaggio {index} " + "x" * 200)
+        )
+    client = FakeClient(
+        {
+            "intent": "unknown",
+            "confidence": 0.5,
+            "emotion": "neutral",
+            "action_name": None,
+            "parameters": {},
+            "response_text": "",
+        }
+    )
+    engine = LLMIntentEngine(
+        client=client,
+        fallback_engine=FakeFallbackEngine(),
+        session_memory=memory,
+        session_context_max_messages=6,
+        session_context_max_chars=180,
+    )
+
+    engine.infer(UserInput(text="riassumi"))
+
+    prompt = client.calls[0]["prompt"]
+    context_section = prompt.split(
+        "Session context (bounded, recent messages only):\n", 1
+    )[1].split("\n\nCurrent user message:", 1)[0]
+    assert len(context_section) <= 180
+    assert "Current user message:\nriassumi" in prompt
