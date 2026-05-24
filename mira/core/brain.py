@@ -278,12 +278,27 @@ class Brain:
 
     def build_action_request(self, intent: IntentResult) -> ActionRequest | None:
         # --- LLM override support ---
+        if intent.entities.get("llm_action_validation_failed"):
+            return None
+
         llm_action = intent.entities.get("llm_action_name")
 
         if llm_action:
+            llm_metadata_keys = {
+                "llm_action_name",
+                "llm_response_text",
+                "llm_emotion",
+                "llm_raw",
+                "llm_action_validation_failed",
+                "llm_action_validation_reason",
+            }
             return ActionRequest(
                 action_name=llm_action,
-                parameters={k: v for k, v in intent.entities.items() if k not in ["llm_action_name", "llm_response_text", "llm_emotion", "llm_raw"]},
+                parameters={
+                    k: v
+                    for k, v in intent.entities.items()
+                    if k not in llm_metadata_keys
+                },
                 source_intent=intent.intent,
             )
 
