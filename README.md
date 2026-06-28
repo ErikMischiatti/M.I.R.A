@@ -225,17 +225,40 @@ M.I.R.A. includes an optional LLM-based intent engine using a local Ollama model
 The LLM path currently:
 
 - receives natural language input,
+- includes bounded, sanitized recent conversation context through `SessionContextBuilder`,
+- keeps the current user input separate from previous conversation context in the prompt,
 - converts it into a structured JSON result,
 - selects a normalized intent,
 - optionally proposes an available action and parameters,
+- suppresses low-confidence proposed actions using `MIRA_LLM_ACTION_MIN_CONFIDENCE`,
+- exposes safe fallback diagnostics through `llm_fallback_used` and `llm_fallback_reason`,
 - preserves compatibility with the same backend contract used by the rule-based engine.
 
-The LLM integration is still under active development. Current work focuses on:
+LLM-proposed actions are gated by `MIRA_LLM_ACTION_MIN_CONFIDENCE`. The default threshold is `0.65`; invalid values fall back to the default, and numeric values are clamped to the `0.0..1.0` range. When an LLM action is suppressed because its confidence is below the configured threshold, the intent metadata includes:
+
+- `action_suppressed_reason = "low_confidence"`
+- `action_min_confidence = <threshold>`
+
+Implemented LLM fallback reasons are:
+
+- `client_error`
+- `invalid_response`
+- `invalid_json`
+- `unsupported_intent`
+- `unknown_action`
+- `intent_action_mismatch`
+- `invalid_parameters`
+- `low_confidence_action`
+- `invalid_schema`
+
+The LLM integration is still under active development. Future work focuses on:
 
 - reducing response latency,
 - making inference non-blocking,
 - extending the use of LLM-generated responses,
-- incorporating session context,
+- adding persistent memory,
+- adding UI confirmation flow for actions,
+- replacing lightweight schema checks with a full JSON-schema validator dependency if needed,
 - and linking LLM-derived emotional output more directly to embodied behavior.
 
 Run the rule-based intent engine explicitly:
@@ -256,6 +279,7 @@ Useful Ollama configuration variables:
 MIRA_OLLAMA_MODEL=llama3.2:3b
 MIRA_OLLAMA_BASE_URL=http://localhost:11434
 MIRA_OLLAMA_TIMEOUT_S=10
+MIRA_LLM_ACTION_MIN_CONFIDENCE=0.65
 ```
 
 Without `MIRA_INTENT_ENGINE`, the system defaults to the rule-based engine.
@@ -398,6 +422,7 @@ Optional Ollama configuration:
 MIRA_OLLAMA_MODEL=llama3.2:3b
 MIRA_OLLAMA_BASE_URL=http://localhost:11434
 MIRA_OLLAMA_TIMEOUT_S=10
+MIRA_LLM_ACTION_MIN_CONFIDENCE=0.65
 ```
 
 ---
