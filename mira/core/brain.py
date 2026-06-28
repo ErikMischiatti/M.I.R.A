@@ -147,7 +147,7 @@ class Brain:
 
         if engine_type == "llm":
             print("[Brain] Using LLMIntentEngine")
-            return LLMIntentEngine()
+            return LLMIntentEngine(session_memory=self.memory)
 
         print("[Brain] Using RuleIntentEngine")
         return RuleIntentEngine()

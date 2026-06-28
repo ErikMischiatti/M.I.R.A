@@ -15,7 +15,9 @@ from mira.cognition.llm_schema import (
     validate_llm_action_for_intent,
 )
 from mira.cognition.rule_intent_engine import RuleIntentEngine
+from mira.cognition.session_context_builder import SessionContextBuilder
 from mira.core.models import IntentResult, UserInput
+from mira.core.session_memory import SessionMemory
 
 
 class LLMIntentEngine(IntentEngine):
@@ -31,10 +33,15 @@ class LLMIntentEngine(IntentEngine):
         client: OllamaClient | None = None,
         fallback_engine: IntentEngine | None = None,
         action_registry: ActionRegistry | None = None,
+        session_memory: SessionMemory | None = None,
+        context_builder: SessionContextBuilder | None = None,
     ):
         self.client = client or OllamaClient()
         self.fallback_engine = fallback_engine or RuleIntentEngine()
         self.action_registry = action_registry or build_action_contract_registry()
+        self.context_builder = context_builder
+        if self.context_builder is None and session_memory is not None:
+            self.context_builder = SessionContextBuilder(session_memory)
 
     def infer(self, user_input: UserInput) -> IntentResult:
         if not user_input.text.strip():
@@ -64,6 +71,7 @@ class LLMIntentEngine(IntentEngine):
             describe_action_intent_compatibility(self.action_registry)
         )
         required_params = "\n".join(describe_required_action_params(self.action_registry))
+        session_context = self._build_session_context_block(user_input)
 
         return f"""
 You are the intent parser for N.E.R.O, a modular embodied robotic assistant.
@@ -101,9 +109,23 @@ Action compatibility:
 Entity extraction:
 {required_params}
 
-User input:
+Recent conversation context:
+{session_context}
+
+Current user input:
 {user_input.text}
 """.strip()
+
+    def _build_session_context_block(self, user_input: UserInput) -> str:
+        if self.context_builder is None:
+            return "(no previous conversation context)"
+
+        snapshot = self.context_builder.build(current_input=user_input)
+        if not snapshot.text:
+            return "(no previous conversation context)"
+
+        suffix = "\n[context truncated]" if snapshot.truncated else ""
+        return f"{snapshot.text}{suffix}"
 
     def _to_intent_result(
         self,

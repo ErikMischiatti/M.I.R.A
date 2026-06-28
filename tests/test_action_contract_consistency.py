@@ -12,6 +12,7 @@ from mira.cognition.llm_schema import (
 from mira.core.brain import Brain
 from mira.core.events import EventBus
 from mira.core.models import UserInput
+from mira.core.session_memory import MemoryMessage, SessionMemory
 from mira.ui.face.face_state import FaceState
 
 
@@ -134,15 +135,16 @@ def test_llm_validation_uses_supplied_registry_contracts():
     assert rejected_reason == "action_unknown"
 
 
-def test_llm_prompt_does_not_include_session_history_or_context():
+def test_llm_prompt_includes_session_context_when_memory_is_supplied():
+    memory = SessionMemory()
+    memory.history.append(MemoryMessage(role="user", text="mi chiamo Erik"))
     engine = LLMIntentEngine(
         client=FakeClient(),
         action_registry=build_brain_registry(),
+        session_memory=memory,
     )
 
     prompt = engine._build_prompt(UserInput(text="come mi chiamo?"))
 
-    assert "User input:\ncome mi chiamo?" in prompt
-    assert "Recent history" not in prompt
-    assert "session history" not in prompt.lower()
-    assert "session context" not in prompt.lower()
+    assert "Recent conversation context:\nUser: mi chiamo Erik" in prompt
+    assert "Current user input:\ncome mi chiamo?" in prompt
