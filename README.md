@@ -148,6 +148,8 @@ Profiles can be saved and reloaded from configuration files without modifying th
 
 ## Architecture Overview
 
+For a complete technical analysis of the current architecture, see [`docs/MIRA_technical_analysis.md`](docs/MIRA_technical_analysis.md).
+
 ```text
 User Input
    ↓
