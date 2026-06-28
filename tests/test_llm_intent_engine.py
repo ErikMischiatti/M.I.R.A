@@ -509,6 +509,101 @@ def test_invalid_emotion_is_preserved_only_as_metadata_for_response_builder_safe
     assert result.entities["llm_response_text"] == "Va bene."
 
 
+def test_prompt_includes_empty_context_marker_without_session_memory():
+    _, client, _ = infer_with(
+        {
+            "intent": "open_url_request",
+            "confidence": 0.64,
+            "emotion": "speaking",
+            "action_name": "open_url",
+            "parameters": {"url": "example.com"},
+            "response_text": "Posso aprire quel sito.",
+        },
+        text="apri example.com",
+    )
+
+    prompt = client.calls[0]["prompt"]
+    assert "Recent conversation context:\n(no previous conversation context)" in prompt
+    assert "Current user input:\napri example.com" in prompt
+
+
+def test_prompt_includes_sanitized_recent_session_context_separate_from_current_input():
+    memory = SessionMemory()
+    memory.set_context_value("user_name", "Erik")
+    memory.history.append(MemoryMessage(role="user", text="mi chiamo Erik"))
+    memory.history.append(
+        MemoryMessage(
+            role="assistant",
+            text="Va bene, Erik.",
+            metadata={"llm_raw": "{secret}", "action_name": "get_system_info"},
+        )
+    )
+    memory.history.append(MemoryMessage(role="user", text="come mi chiamo?"))
+    client = FakeClient(
+        {
+            "intent": "unknown",
+            "confidence": 0.5,
+            "emotion": "neutral",
+            "action_name": None,
+            "parameters": {},
+            "response_text": "",
+        }
+    )
+    engine = LLMIntentEngine(
+        client=client,
+        fallback_engine=FakeFallbackEngine(),
+        session_memory=memory,
+    )
+
+    engine.infer(UserInput(text="come mi chiamo?"))
+
+    prompt = client.calls[0]["prompt"]
+    context_section = prompt.split("Recent conversation context:\n", 1)[1].split(
+        "\n\nCurrent user input:", 1
+    )[0]
+    assert "User name: Erik" in context_section
+    assert "User: mi chiamo Erik" in context_section
+    assert "Assistant: Va bene, Erik." in context_section
+    assert "come mi chiamo?" not in context_section
+    assert "llm_raw" not in context_section
+    assert "secret" not in context_section
+    assert "get_system_info" not in context_section
+    assert "Current user input:\ncome mi chiamo?" in prompt
+
+
+def test_prompt_session_context_is_bounded():
+    memory = SessionMemory()
+    for index in range(6):
+        memory.history.append(
+            MemoryMessage(role="user", text=f"message-{index} " + ("x" * 40))
+        )
+    client = FakeClient(
+        {
+            "intent": "unknown",
+            "confidence": 0.5,
+            "emotion": "neutral",
+            "action_name": None,
+            "parameters": {},
+            "response_text": "",
+        }
+    )
+    engine = LLMIntentEngine(
+        client=client,
+        fallback_engine=FakeFallbackEngine(),
+        context_builder=SessionContextBuilder(memory, max_messages=2, max_chars=90),
+    )
+
+    engine.infer(UserInput(text="continua"))
+
+    prompt = client.calls[0]["prompt"]
+    context_section = prompt.split("Recent conversation context:\n", 1)[1].split(
+        "\n\nCurrent user input:", 1
+    )[0]
+    assert "message-0" not in context_section
+    assert "message-5" in context_section
+    assert len(context_section) <= 110
+
+
 def test_low_confidence_llm_action_is_suppressed_with_default_threshold(monkeypatch):
     monkeypatch.delenv("MIRA_LLM_ACTION_MIN_CONFIDENCE", raising=False)
 
