@@ -147,7 +147,7 @@ class Brain:
 
         if engine_type == "llm":
             print("[Brain] Using LLMIntentEngine")
-            return LLMIntentEngine()
+            return LLMIntentEngine(session_memory=self.memory)
 
         print("[Brain] Using RuleIntentEngine")
         return RuleIntentEngine()
@@ -288,7 +288,10 @@ class Brain:
 
     def build_action_request(self, intent: IntentResult) -> ActionRequest | None:
         # --- LLM override support ---
-        if intent.entities.get("llm_action_validation_failed"):
+        if (
+            intent.entities.get("llm_action_validation_failed")
+            or intent.entities.get("action_suppressed_reason")
+        ):
             return None
 
         llm_action = intent.entities.get("llm_action_name")

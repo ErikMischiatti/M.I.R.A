@@ -6,7 +6,9 @@ from mira.actions.action_models import ActionContract
 from mira.actions.action_registry import ActionRegistry
 from mira.cognition.llm_client import LLMClientError
 from mira.cognition.llm_intent_engine import LLMIntentEngine
+from mira.cognition.session_context_builder import SessionContextBuilder
 from mira.core.models import IntentResult, UserInput
+from mira.core.session_memory import MemoryMessage, SessionMemory
 
 
 class FakeClient:
@@ -155,6 +157,28 @@ def test_unknown_or_disallowed_intent_is_normalized_and_cannot_execute_action():
     assert result.entities["llm_action_name"] is None
     assert result.entities["llm_action_validation_failed"] is True
     assert result.entities["llm_action_validation_reason"] == "intent_unknown"
+    assert result.entities["llm_fallback_used"] is True
+    assert result.entities["llm_fallback_reason"] == "unsupported_intent"
+
+
+def test_unsupported_intent_without_action_gets_fallback_diagnostics():
+    result, _, _ = infer_with(
+        {
+            "intent": "unsupported_smalltalk",
+            "confidence": 0.7,
+            "emotion": "neutral",
+            "action_name": None,
+            "parameters": {},
+            "response_text": "Non sono sicuro.",
+        }
+    )
+
+    assert result.intent == "unknown"
+    assert result.confidence == 0.25
+    assert result.entities["llm_action_name"] is None
+    assert result.entities["llm_response_text"] == "Non sono sicuro."
+    assert result.entities["llm_fallback_used"] is True
+    assert result.entities["llm_fallback_reason"] == "unsupported_intent"
 
 
 def test_unknown_or_disallowed_action_name_is_removed():
@@ -174,6 +198,8 @@ def test_unknown_or_disallowed_action_name_is_removed():
     assert result.entities["llm_action_name"] is None
     assert result.entities["llm_action_validation_failed"] is True
     assert result.entities["llm_action_validation_reason"] == "action_unknown"
+    assert result.entities["llm_fallback_used"] is True
+    assert result.entities["llm_fallback_reason"] == "unknown_action"
 
 
 def test_incompatible_action_for_intent_is_rejected():
@@ -193,6 +219,8 @@ def test_incompatible_action_for_intent_is_rejected():
     assert result.entities["llm_action_name"] is None
     assert result.entities["llm_action_validation_failed"] is True
     assert result.entities["llm_action_validation_reason"] == "intent_action_mismatch"
+    assert result.entities["llm_fallback_used"] is True
+    assert result.entities["llm_fallback_reason"] == "intent_action_mismatch"
 
 
 def test_allowed_action_with_wrong_param_type_is_rejected():
@@ -212,6 +240,8 @@ def test_allowed_action_with_wrong_param_type_is_rejected():
     assert result.entities["llm_action_name"] is None
     assert result.entities["llm_action_validation_failed"] is True
     assert result.entities["llm_action_validation_reason"] == "missing_or_invalid_param:text"
+    assert result.entities["llm_fallback_used"] is True
+    assert result.entities["llm_fallback_reason"] == "invalid_parameters"
 
 
 def test_known_unknown_intent_with_allowed_action_is_rejected():
@@ -230,6 +260,8 @@ def test_known_unknown_intent_with_allowed_action_is_rejected():
     assert result.entities["llm_action_name"] is None
     assert result.entities["llm_action_validation_failed"] is True
     assert result.entities["llm_action_validation_reason"] == "intent_action_mismatch"
+    assert result.entities["llm_fallback_used"] is True
+    assert result.entities["llm_fallback_reason"] == "intent_action_mismatch"
 
 
 @pytest.mark.parametrize("parameters", [None, [], "url=example.com", 3])
@@ -249,6 +281,8 @@ def test_non_dict_action_params_reject_action(parameters):
     assert result.entities["llm_action_name"] is None
     assert result.entities["llm_action_validation_failed"] is True
     assert result.entities["llm_action_validation_reason"] == "parameters_type"
+    assert result.entities["llm_fallback_used"] is True
+    assert result.entities["llm_fallback_reason"] == "invalid_parameters"
 
 
 def test_missing_action_params_reject_action():
@@ -268,9 +302,11 @@ def test_missing_action_params_reject_action():
     assert "text" not in result.entities
     assert result.entities["llm_action_validation_failed"] is True
     assert result.entities["llm_action_validation_reason"] == "missing_or_invalid_param:text"
+    assert result.entities["llm_fallback_used"] is True
+    assert result.entities["llm_fallback_reason"] == "invalid_parameters"
 
 
-def test_invalid_schema_object_falls_back_to_rule_engine():
+def test_invalid_response_falls_back_to_rule_engine_with_diagnostics():
     fallback_result = IntentResult(
         intent="date_query",
         confidence=0.9,
@@ -285,18 +321,23 @@ def test_invalid_schema_object_falls_back_to_rule_engine():
 
     result = engine.infer(user_input)
 
-    assert result is fallback_result
+    assert result.intent == fallback_result.intent
+    assert result.confidence == fallback_result.confidence
+    assert result.entities["source"] == "fallback"
+    assert result.entities["llm_fallback_used"] is True
+    assert result.entities["llm_fallback_reason"] == "invalid_response"
     assert fallback.calls == [user_input]
 
 
 @pytest.mark.parametrize(
-    "error",
+    ("error", "expected_reason"),
     [
-        LLMClientError("Ollama returned invalid JSON"),
-        LLMClientError("Ollama request timed out."),
+        (LLMClientError("Ollama returned invalid JSON"), "invalid_json"),
+        (LLMClientError("Ollama request timed out."), "client_error"),
+        (LLMClientError("Ollama returned an empty response."), "invalid_response"),
     ],
 )
-def test_malformed_json_timeout_or_client_error_falls_back_to_rule_engine(error):
+def test_client_error_falls_back_to_rule_engine_with_diagnostics(error, expected_reason):
     fallback_result = IntentResult(intent="greeting", confidence=0.95)
     fallback = FakeFallbackEngine(fallback_result)
     engine = LLMIntentEngine(client=FakeClient(error=error), fallback_engine=fallback)
@@ -304,7 +345,10 @@ def test_malformed_json_timeout_or_client_error_falls_back_to_rule_engine(error)
 
     result = engine.infer(user_input)
 
-    assert result is fallback_result
+    assert result.intent == fallback_result.intent
+    assert result.confidence == fallback_result.confidence
+    assert result.entities["llm_fallback_used"] is True
+    assert result.entities["llm_fallback_reason"] == expected_reason
     assert fallback.calls == [user_input]
 
 
@@ -363,7 +407,7 @@ def test_invalid_emotion_is_preserved_only_as_metadata_for_response_builder_safe
     assert result.entities["llm_response_text"] == "Va bene."
 
 
-def test_prompt_does_not_include_session_history_context():
+def test_prompt_includes_empty_context_marker_without_session_memory():
     _, client, _ = infer_with(
         {
             "intent": "unknown",
@@ -377,6 +421,209 @@ def test_prompt_does_not_include_session_history_context():
     )
 
     prompt = client.calls[0]["prompt"]
-    assert "User input:\ncome mi chiamo?" in prompt
-    assert "Recent history" not in prompt
-    assert "session context" not in prompt.lower()
+    assert "Recent conversation context:\n(no previous conversation context)" in prompt
+    assert "Current user input:\ncome mi chiamo?" in prompt
+
+
+def test_prompt_includes_sanitized_recent_session_context_separate_from_current_input():
+    memory = SessionMemory()
+    memory.history.append(MemoryMessage(role="user", text="mi chiamo Erik"))
+    memory.history.append(
+        MemoryMessage(
+            role="assistant",
+            text="Va bene, Erik.",
+            metadata={"llm_raw": "{secret}", "action_name": "get_system_info"},
+        )
+    )
+    memory.history.append(MemoryMessage(role="user", text="come mi chiamo?"))
+    client = FakeClient(
+        {
+            "intent": "unknown",
+            "confidence": 0.5,
+            "emotion": "neutral",
+            "action_name": None,
+            "parameters": {},
+            "response_text": "",
+        }
+    )
+    engine = LLMIntentEngine(
+        client=client,
+        fallback_engine=FakeFallbackEngine(),
+        session_memory=memory,
+    )
+
+    engine.infer(UserInput(text="come mi chiamo?"))
+
+    prompt = client.calls[0]["prompt"]
+    context_section = prompt.split("Recent conversation context:\n", 1)[1].split(
+        "\n\nCurrent user input:", 1
+    )[0]
+    assert "User: mi chiamo Erik" in context_section
+    assert "Assistant: Va bene, Erik." in context_section
+    assert "come mi chiamo?" not in context_section
+    assert "llm_raw" not in context_section
+    assert "secret" not in context_section
+    assert "get_system_info" not in context_section
+    assert "Current user input:\ncome mi chiamo?" in prompt
+
+
+def test_prompt_session_context_is_bounded():
+    memory = SessionMemory()
+    for index in range(6):
+        memory.history.append(
+            MemoryMessage(role="user", text=f"message-{index} " + ("x" * 40))
+        )
+    client = FakeClient(
+        {
+            "intent": "unknown",
+            "confidence": 0.5,
+            "emotion": "neutral",
+            "action_name": None,
+            "parameters": {},
+            "response_text": "",
+        }
+    )
+    engine = LLMIntentEngine(
+        client=client,
+        fallback_engine=FakeFallbackEngine(),
+        context_builder=SessionContextBuilder(memory, max_messages=2, max_chars=90),
+    )
+
+    engine.infer(UserInput(text="continua"))
+
+    prompt = client.calls[0]["prompt"]
+    context_section = prompt.split("Recent conversation context:\n", 1)[1].split(
+        "\n\nCurrent user input:", 1
+    )[0]
+    assert "message-0" not in context_section
+    assert "message-5" in context_section
+    assert len(context_section) <= 110
+
+
+def test_low_confidence_llm_action_is_suppressed_with_default_threshold(monkeypatch):
+    monkeypatch.delenv("MIRA_LLM_ACTION_MIN_CONFIDENCE", raising=False)
+
+    result, _, _ = infer_with(
+        {
+            "intent": "open_url_request",
+            "confidence": 0.64,
+            "emotion": "speaking",
+            "action_name": "open_url",
+            "parameters": {"url": "example.com"},
+            "response_text": "Posso aprire quel sito.",
+        },
+        text="apri example.com",
+    )
+
+    assert result.intent == "open_url_request"
+    assert result.confidence == 0.64
+    assert result.entities["llm_action_name"] is None
+    assert "url" not in result.entities
+    assert result.entities["llm_response_text"] == "Posso aprire quel sito."
+    assert result.entities["action_suppressed_reason"] == "low_confidence"
+    assert result.entities["action_min_confidence"] == 0.65
+    assert result.entities["llm_fallback_used"] is True
+    assert result.entities["llm_fallback_reason"] == "low_confidence_action"
+
+
+def test_high_confidence_llm_action_is_preserved_at_threshold(monkeypatch):
+    monkeypatch.setenv("MIRA_LLM_ACTION_MIN_CONFIDENCE", "0.65")
+
+    result, _, _ = infer_with(
+        {
+            "intent": "open_url_request",
+            "confidence": 0.65,
+            "emotion": "speaking",
+            "action_name": "open_url",
+            "parameters": {"url": "example.com"},
+            "response_text": "",
+        },
+        text="apri example.com",
+    )
+
+    assert result.entities["llm_action_name"] == "open_url"
+    assert result.entities["url"] == "example.com"
+    assert "action_suppressed_reason" not in result.entities
+
+
+def test_no_action_llm_output_is_not_confidence_suppressed(monkeypatch):
+    monkeypatch.setenv("MIRA_LLM_ACTION_MIN_CONFIDENCE", "0.95")
+
+    result, _, _ = infer_with(
+        {
+            "intent": "greeting",
+            "confidence": 0.2,
+            "emotion": "happy",
+            "action_name": None,
+            "parameters": {},
+            "response_text": "Ciao.",
+        },
+        text="ciao",
+    )
+
+    assert result.intent == "greeting"
+    assert result.entities["llm_action_name"] is None
+    assert result.entities["llm_response_text"] == "Ciao."
+    assert "action_suppressed_reason" not in result.entities
+    assert "action_min_confidence" not in result.entities
+
+
+def test_custom_llm_action_min_confidence_is_respected(monkeypatch):
+    monkeypatch.setenv("MIRA_LLM_ACTION_MIN_CONFIDENCE", "0.9")
+
+    result, _, _ = infer_with(
+        {
+            "intent": "open_url_request",
+            "confidence": 0.89,
+            "emotion": "speaking",
+            "action_name": "open_url",
+            "parameters": {"url": "example.com"},
+            "response_text": "Posso aprire quel sito.",
+        },
+        text="apri example.com",
+    )
+
+    assert result.entities["llm_action_name"] is None
+    assert "url" not in result.entities
+    assert result.entities["action_suppressed_reason"] == "low_confidence"
+    assert result.entities["action_min_confidence"] == 0.9
+
+
+def test_invalid_llm_action_min_confidence_falls_back_to_default(monkeypatch):
+    monkeypatch.setenv("MIRA_LLM_ACTION_MIN_CONFIDENCE", "not-a-number")
+
+    result, _, _ = infer_with(
+        {
+            "intent": "open_url_request",
+            "confidence": 0.64,
+            "emotion": "speaking",
+            "action_name": "open_url",
+            "parameters": {"url": "example.com"},
+            "response_text": "Posso aprire quel sito.",
+        },
+        text="apri example.com",
+    )
+
+    assert result.entities["llm_action_name"] is None
+    assert result.entities["action_suppressed_reason"] == "low_confidence"
+    assert result.entities["action_min_confidence"] == 0.65
+
+
+def test_llm_action_min_confidence_is_clamped_to_sane_range(monkeypatch):
+    monkeypatch.setenv("MIRA_LLM_ACTION_MIN_CONFIDENCE", "2.0")
+
+    result, _, _ = infer_with(
+        {
+            "intent": "open_url_request",
+            "confidence": 0.99,
+            "emotion": "speaking",
+            "action_name": "open_url",
+            "parameters": {"url": "example.com"},
+            "response_text": "Posso aprire quel sito.",
+        },
+        text="apri example.com",
+    )
+
+    assert result.entities["llm_action_name"] is None
+    assert result.entities["action_suppressed_reason"] == "low_confidence"
+    assert result.entities["action_min_confidence"] == 1.0

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import socket
 import urllib.error
@@ -11,6 +12,9 @@ from typing import Any
 DEFAULT_OLLAMA_MODEL = "llama3.2:3b"
 DEFAULT_OLLAMA_BASE_URL = "http://localhost:11434"
 DEFAULT_OLLAMA_TIMEOUT_S = 10.0
+
+
+logger = logging.getLogger(__name__)
 
 
 class LLMClientError(RuntimeError):
@@ -104,16 +108,16 @@ class OllamaClient:
         try:
             timeout = float(raw_timeout)
         except ValueError:
-            print(
-                "[LLM] Invalid MIRA_OLLAMA_TIMEOUT_S; "
-                f"using {DEFAULT_OLLAMA_TIMEOUT_S}s."
+            logger.warning(
+                "Invalid MIRA_OLLAMA_TIMEOUT_S; using %ss.",
+                DEFAULT_OLLAMA_TIMEOUT_S,
             )
             return DEFAULT_OLLAMA_TIMEOUT_S
 
         if timeout <= 0:
-            print(
-                "[LLM] MIRA_OLLAMA_TIMEOUT_S must be positive; "
-                f"using {DEFAULT_OLLAMA_TIMEOUT_S}s."
+            logger.warning(
+                "MIRA_OLLAMA_TIMEOUT_S must be positive; using %ss.",
+                DEFAULT_OLLAMA_TIMEOUT_S,
             )
             return DEFAULT_OLLAMA_TIMEOUT_S
 

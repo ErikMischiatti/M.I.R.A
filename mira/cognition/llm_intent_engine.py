@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import logging
+import os
 from typing import Any
 
 from mira.cognition.intent_engine import IntentEngine
@@ -15,7 +17,23 @@ from mira.cognition.llm_schema import (
     validate_llm_action_for_intent,
 )
 from mira.cognition.rule_intent_engine import RuleIntentEngine
+from mira.cognition.session_context_builder import SessionContextBuilder
 from mira.core.models import IntentResult, UserInput
+from mira.core.session_memory import SessionMemory
+
+
+DEFAULT_LLM_ACTION_MIN_CONFIDENCE = 0.65
+LLM_ACTION_MIN_CONFIDENCE_ENV = "MIRA_LLM_ACTION_MIN_CONFIDENCE"
+
+LLM_VALIDATION_FALLBACK_REASONS = {
+    "intent_unknown": "unsupported_intent",
+    "action_unknown": "unknown_action",
+    "intent_action_mismatch": "intent_action_mismatch",
+    "parameters_type": "invalid_parameters",
+    "action_name": "unknown_action",
+}
+
+logger = logging.getLogger(__name__)
 
 
 class LLMIntentEngine(IntentEngine):
@@ -31,10 +49,16 @@ class LLMIntentEngine(IntentEngine):
         client: OllamaClient | None = None,
         fallback_engine: IntentEngine | None = None,
         action_registry: ActionRegistry | None = None,
+        session_memory: SessionMemory | None = None,
+        context_builder: SessionContextBuilder | None = None,
     ):
         self.client = client or OllamaClient()
         self.fallback_engine = fallback_engine or RuleIntentEngine()
         self.action_registry = action_registry or build_action_contract_registry()
+        self.context_builder = context_builder
+        if self.context_builder is None and session_memory is not None:
+            self.context_builder = SessionContextBuilder(session_memory)
+        self.action_min_confidence = self._action_min_confidence_from_environment()
 
     def infer(self, user_input: UserInput) -> IntentResult:
         if not user_input.text.strip():
@@ -49,13 +73,39 @@ class LLMIntentEngine(IntentEngine):
                 temperature=0.0,
             )
         except LLMClientError as exc:
-            print(f"[LLM] Falling back to rule engine: {exc}")
-            return self.fallback_engine.infer(user_input)
+            reason = self._fallback_reason_from_client_error(exc)
+            logger.warning("Falling back to rule intent engine: %s", exc)
+            return self._fallback_with_reason(user_input, reason)
 
         if not isinstance(raw_result, dict):
-            return self.fallback_engine.infer(user_input)
+            logger.warning("Falling back to rule intent engine: invalid LLM response type")
+            return self._fallback_with_reason(user_input, "invalid_response")
 
         return self._to_intent_result(raw_result, user_input)
+
+    def _fallback_with_reason(
+        self,
+        user_input: UserInput,
+        reason: str,
+    ) -> IntentResult:
+        result = self.fallback_engine.infer(user_input)
+        entities = dict(result.entities)
+        entities["llm_fallback_used"] = True
+        entities["llm_fallback_reason"] = reason
+
+        return IntentResult(
+            intent=result.intent,
+            confidence=result.confidence,
+            entities=entities,
+        )
+
+    def _fallback_reason_from_client_error(self, exc: LLMClientError) -> str:
+        message = str(exc).lower()
+        if "invalid json" in message:
+            return "invalid_json"
+        if "empty response" in message:
+            return "invalid_response"
+        return "client_error"
 
     def _build_prompt(self, user_input: UserInput) -> str:
         allowed_intents = ", ".join(ALLOWED_INTENTS)
@@ -64,6 +114,7 @@ class LLMIntentEngine(IntentEngine):
             describe_action_intent_compatibility(self.action_registry)
         )
         required_params = "\n".join(describe_required_action_params(self.action_registry))
+        session_context = self._build_session_context_block(user_input)
 
         return f"""
 You are the intent parser for N.E.R.O, a modular embodied robotic assistant.
@@ -101,9 +152,23 @@ Action compatibility:
 Entity extraction:
 {required_params}
 
-User input:
+Recent conversation context:
+{session_context}
+
+Current user input:
 {user_input.text}
 """.strip()
+
+    def _build_session_context_block(self, user_input: UserInput) -> str:
+        if self.context_builder is None:
+            return "(no previous conversation context)"
+
+        snapshot = self.context_builder.build(current_input=user_input)
+        if not snapshot.text:
+            return "(no previous conversation context)"
+
+        suffix = "\n[context truncated]" if snapshot.truncated else ""
+        return f"{snapshot.text}{suffix}"
 
     def _to_intent_result(
         self,
@@ -117,12 +182,14 @@ User input:
         response_text = str(raw_result.get("response_text", "")).strip()
         emotion = str(raw_result.get("emotion", "neutral")).strip()
 
+        fallback_reason = None
         validation_reason = None
         raw_action_requested = action_name is not None
 
         if intent not in ALLOWED_INTENTS:
             intent = "unknown"
             confidence = 0.25
+            fallback_reason = "unsupported_intent"
             if raw_action_requested:
                 validation_reason = "intent_unknown"
             action_name = None
@@ -137,6 +204,12 @@ User input:
         elif not isinstance(parameters, dict):
             parameters = {}
 
+        action_suppressed_reason = None
+        if action_name is not None and confidence < self.action_min_confidence:
+            action_name = None
+            parameters = {}
+            action_suppressed_reason = "low_confidence"
+
         entities = {
             **parameters,
             "llm_action_name": action_name,
@@ -148,11 +221,29 @@ User input:
         if validation_reason is not None:
             entities["llm_action_validation_failed"] = True
             entities["llm_action_validation_reason"] = validation_reason
+            fallback_reason = self._fallback_reason_from_validation(validation_reason)
+
+        if action_suppressed_reason is not None:
+            entities["action_suppressed_reason"] = action_suppressed_reason
+            entities["action_min_confidence"] = self.action_min_confidence
+            fallback_reason = "low_confidence_action"
+
+        if fallback_reason is not None:
+            entities["llm_fallback_used"] = True
+            entities["llm_fallback_reason"] = fallback_reason
 
         return IntentResult(
             intent=intent,
             confidence=confidence,
             entities=entities,
+        )
+
+    def _fallback_reason_from_validation(self, validation_reason: str) -> str:
+        if validation_reason.startswith("missing_or_invalid_param:"):
+            return "invalid_parameters"
+        return LLM_VALIDATION_FALLBACK_REASONS.get(
+            validation_reason,
+            "invalid_schema",
         )
 
     def _safe_confidence(self, value: Any) -> float:
@@ -162,3 +253,28 @@ User input:
             return 0.50
 
         return max(0.0, min(1.0, confidence))
+
+    def _action_min_confidence_from_environment(self) -> float:
+        raw_value = os.getenv(LLM_ACTION_MIN_CONFIDENCE_ENV)
+        if raw_value is None:
+            return DEFAULT_LLM_ACTION_MIN_CONFIDENCE
+
+        try:
+            threshold = float(raw_value)
+        except ValueError:
+            logger.warning(
+                "Invalid %s; using %s.",
+                LLM_ACTION_MIN_CONFIDENCE_ENV,
+                DEFAULT_LLM_ACTION_MIN_CONFIDENCE,
+            )
+            return DEFAULT_LLM_ACTION_MIN_CONFIDENCE
+
+        if threshold != threshold:
+            logger.warning(
+                "Invalid %s; using %s.",
+                LLM_ACTION_MIN_CONFIDENCE_ENV,
+                DEFAULT_LLM_ACTION_MIN_CONFIDENCE,
+            )
+            return DEFAULT_LLM_ACTION_MIN_CONFIDENCE
+
+        return max(0.0, min(1.0, threshold))
