@@ -456,3 +456,130 @@ def test_prompt_session_context_is_bounded():
     assert "message-0" not in context_section
     assert "message-5" in context_section
     assert len(context_section) <= 110
+
+
+def test_low_confidence_llm_action_is_suppressed_with_default_threshold(monkeypatch):
+    monkeypatch.delenv("MIRA_LLM_ACTION_MIN_CONFIDENCE", raising=False)
+
+    result, _, _ = infer_with(
+        {
+            "intent": "open_url_request",
+            "confidence": 0.64,
+            "emotion": "speaking",
+            "action_name": "open_url",
+            "parameters": {"url": "example.com"},
+            "response_text": "Posso aprire quel sito.",
+        },
+        text="apri example.com",
+    )
+
+    assert result.intent == "open_url_request"
+    assert result.confidence == 0.64
+    assert result.entities["llm_action_name"] is None
+    assert "url" not in result.entities
+    assert result.entities["llm_response_text"] == "Posso aprire quel sito."
+    assert result.entities["action_suppressed_reason"] == "low_confidence"
+    assert result.entities["action_min_confidence"] == 0.65
+
+
+def test_high_confidence_llm_action_is_preserved_at_threshold(monkeypatch):
+    monkeypatch.setenv("MIRA_LLM_ACTION_MIN_CONFIDENCE", "0.65")
+
+    result, _, _ = infer_with(
+        {
+            "intent": "open_url_request",
+            "confidence": 0.65,
+            "emotion": "speaking",
+            "action_name": "open_url",
+            "parameters": {"url": "example.com"},
+            "response_text": "",
+        },
+        text="apri example.com",
+    )
+
+    assert result.entities["llm_action_name"] == "open_url"
+    assert result.entities["url"] == "example.com"
+    assert "action_suppressed_reason" not in result.entities
+
+
+def test_no_action_llm_output_is_not_confidence_suppressed(monkeypatch):
+    monkeypatch.setenv("MIRA_LLM_ACTION_MIN_CONFIDENCE", "0.95")
+
+    result, _, _ = infer_with(
+        {
+            "intent": "greeting",
+            "confidence": 0.2,
+            "emotion": "happy",
+            "action_name": None,
+            "parameters": {},
+            "response_text": "Ciao.",
+        },
+        text="ciao",
+    )
+
+    assert result.intent == "greeting"
+    assert result.entities["llm_action_name"] is None
+    assert result.entities["llm_response_text"] == "Ciao."
+    assert "action_suppressed_reason" not in result.entities
+    assert "action_min_confidence" not in result.entities
+
+
+def test_custom_llm_action_min_confidence_is_respected(monkeypatch):
+    monkeypatch.setenv("MIRA_LLM_ACTION_MIN_CONFIDENCE", "0.9")
+
+    result, _, _ = infer_with(
+        {
+            "intent": "open_url_request",
+            "confidence": 0.89,
+            "emotion": "speaking",
+            "action_name": "open_url",
+            "parameters": {"url": "example.com"},
+            "response_text": "Posso aprire quel sito.",
+        },
+        text="apri example.com",
+    )
+
+    assert result.entities["llm_action_name"] is None
+    assert "url" not in result.entities
+    assert result.entities["action_suppressed_reason"] == "low_confidence"
+    assert result.entities["action_min_confidence"] == 0.9
+
+
+def test_invalid_llm_action_min_confidence_falls_back_to_default(monkeypatch):
+    monkeypatch.setenv("MIRA_LLM_ACTION_MIN_CONFIDENCE", "not-a-number")
+
+    result, _, _ = infer_with(
+        {
+            "intent": "open_url_request",
+            "confidence": 0.64,
+            "emotion": "speaking",
+            "action_name": "open_url",
+            "parameters": {"url": "example.com"},
+            "response_text": "Posso aprire quel sito.",
+        },
+        text="apri example.com",
+    )
+
+    assert result.entities["llm_action_name"] is None
+    assert result.entities["action_suppressed_reason"] == "low_confidence"
+    assert result.entities["action_min_confidence"] == 0.65
+
+
+def test_llm_action_min_confidence_is_clamped_to_sane_range(monkeypatch):
+    monkeypatch.setenv("MIRA_LLM_ACTION_MIN_CONFIDENCE", "2.0")
+
+    result, _, _ = infer_with(
+        {
+            "intent": "open_url_request",
+            "confidence": 0.99,
+            "emotion": "speaking",
+            "action_name": "open_url",
+            "parameters": {"url": "example.com"},
+            "response_text": "Posso aprire quel sito.",
+        },
+        text="apri example.com",
+    )
+
+    assert result.entities["llm_action_name"] is None
+    assert result.entities["action_suppressed_reason"] == "low_confidence"
+    assert result.entities["action_min_confidence"] == 1.0

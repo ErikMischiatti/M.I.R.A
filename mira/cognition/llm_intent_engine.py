@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from typing import Any
 
 from mira.cognition.intent_engine import IntentEngine
@@ -18,6 +19,10 @@ from mira.cognition.rule_intent_engine import RuleIntentEngine
 from mira.cognition.session_context_builder import SessionContextBuilder
 from mira.core.models import IntentResult, UserInput
 from mira.core.session_memory import SessionMemory
+
+
+DEFAULT_LLM_ACTION_MIN_CONFIDENCE = 0.65
+LLM_ACTION_MIN_CONFIDENCE_ENV = "MIRA_LLM_ACTION_MIN_CONFIDENCE"
 
 
 class LLMIntentEngine(IntentEngine):
@@ -42,6 +47,7 @@ class LLMIntentEngine(IntentEngine):
         self.context_builder = context_builder
         if self.context_builder is None and session_memory is not None:
             self.context_builder = SessionContextBuilder(session_memory)
+        self.action_min_confidence = self._action_min_confidence_from_environment()
 
     def infer(self, user_input: UserInput) -> IntentResult:
         if not user_input.text.strip():
@@ -159,6 +165,12 @@ Current user input:
         elif not isinstance(parameters, dict):
             parameters = {}
 
+        action_suppressed_reason = None
+        if action_name is not None and confidence < self.action_min_confidence:
+            action_name = None
+            parameters = {}
+            action_suppressed_reason = "low_confidence"
+
         entities = {
             **parameters,
             "llm_action_name": action_name,
@@ -170,6 +182,10 @@ Current user input:
         if validation_reason is not None:
             entities["llm_action_validation_failed"] = True
             entities["llm_action_validation_reason"] = validation_reason
+
+        if action_suppressed_reason is not None:
+            entities["action_suppressed_reason"] = action_suppressed_reason
+            entities["action_min_confidence"] = self.action_min_confidence
 
         return IntentResult(
             intent=intent,
@@ -184,3 +200,26 @@ Current user input:
             return 0.50
 
         return max(0.0, min(1.0, confidence))
+
+    def _action_min_confidence_from_environment(self) -> float:
+        raw_value = os.getenv(LLM_ACTION_MIN_CONFIDENCE_ENV)
+        if raw_value is None:
+            return DEFAULT_LLM_ACTION_MIN_CONFIDENCE
+
+        try:
+            threshold = float(raw_value)
+        except ValueError:
+            print(
+                f"[LLM] Invalid {LLM_ACTION_MIN_CONFIDENCE_ENV}; "
+                f"using {DEFAULT_LLM_ACTION_MIN_CONFIDENCE}."
+            )
+            return DEFAULT_LLM_ACTION_MIN_CONFIDENCE
+
+        if threshold != threshold:
+            print(
+                f"[LLM] Invalid {LLM_ACTION_MIN_CONFIDENCE_ENV}; "
+                f"using {DEFAULT_LLM_ACTION_MIN_CONFIDENCE}."
+            )
+            return DEFAULT_LLM_ACTION_MIN_CONFIDENCE
+
+        return max(0.0, min(1.0, threshold))
