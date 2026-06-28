@@ -157,6 +157,28 @@ def test_unknown_or_disallowed_intent_is_normalized_and_cannot_execute_action():
     assert result.entities["llm_action_name"] is None
     assert result.entities["llm_action_validation_failed"] is True
     assert result.entities["llm_action_validation_reason"] == "intent_unknown"
+    assert result.entities["llm_fallback_used"] is True
+    assert result.entities["llm_fallback_reason"] == "unsupported_intent"
+
+
+def test_unsupported_intent_without_action_gets_fallback_diagnostics():
+    result, _, _ = infer_with(
+        {
+            "intent": "unsupported_smalltalk",
+            "confidence": 0.7,
+            "emotion": "neutral",
+            "action_name": None,
+            "parameters": {},
+            "response_text": "Non sono sicuro.",
+        }
+    )
+
+    assert result.intent == "unknown"
+    assert result.confidence == 0.25
+    assert result.entities["llm_action_name"] is None
+    assert result.entities["llm_response_text"] == "Non sono sicuro."
+    assert result.entities["llm_fallback_used"] is True
+    assert result.entities["llm_fallback_reason"] == "unsupported_intent"
 
 
 def test_unknown_or_disallowed_action_name_is_removed():
@@ -176,6 +198,8 @@ def test_unknown_or_disallowed_action_name_is_removed():
     assert result.entities["llm_action_name"] is None
     assert result.entities["llm_action_validation_failed"] is True
     assert result.entities["llm_action_validation_reason"] == "action_unknown"
+    assert result.entities["llm_fallback_used"] is True
+    assert result.entities["llm_fallback_reason"] == "unknown_action"
 
 
 def test_incompatible_action_for_intent_is_rejected():
@@ -195,6 +219,8 @@ def test_incompatible_action_for_intent_is_rejected():
     assert result.entities["llm_action_name"] is None
     assert result.entities["llm_action_validation_failed"] is True
     assert result.entities["llm_action_validation_reason"] == "intent_action_mismatch"
+    assert result.entities["llm_fallback_used"] is True
+    assert result.entities["llm_fallback_reason"] == "intent_action_mismatch"
 
 
 def test_allowed_action_with_wrong_param_type_is_rejected():
@@ -214,6 +240,8 @@ def test_allowed_action_with_wrong_param_type_is_rejected():
     assert result.entities["llm_action_name"] is None
     assert result.entities["llm_action_validation_failed"] is True
     assert result.entities["llm_action_validation_reason"] == "missing_or_invalid_param:text"
+    assert result.entities["llm_fallback_used"] is True
+    assert result.entities["llm_fallback_reason"] == "invalid_parameters"
 
 
 def test_known_unknown_intent_with_allowed_action_is_rejected():
@@ -232,6 +260,8 @@ def test_known_unknown_intent_with_allowed_action_is_rejected():
     assert result.entities["llm_action_name"] is None
     assert result.entities["llm_action_validation_failed"] is True
     assert result.entities["llm_action_validation_reason"] == "intent_action_mismatch"
+    assert result.entities["llm_fallback_used"] is True
+    assert result.entities["llm_fallback_reason"] == "intent_action_mismatch"
 
 
 @pytest.mark.parametrize("parameters", [None, [], "url=example.com", 3])
@@ -251,6 +281,8 @@ def test_non_dict_action_params_reject_action(parameters):
     assert result.entities["llm_action_name"] is None
     assert result.entities["llm_action_validation_failed"] is True
     assert result.entities["llm_action_validation_reason"] == "parameters_type"
+    assert result.entities["llm_fallback_used"] is True
+    assert result.entities["llm_fallback_reason"] == "invalid_parameters"
 
 
 def test_missing_action_params_reject_action():
@@ -270,9 +302,11 @@ def test_missing_action_params_reject_action():
     assert "text" not in result.entities
     assert result.entities["llm_action_validation_failed"] is True
     assert result.entities["llm_action_validation_reason"] == "missing_or_invalid_param:text"
+    assert result.entities["llm_fallback_used"] is True
+    assert result.entities["llm_fallback_reason"] == "invalid_parameters"
 
 
-def test_invalid_schema_object_falls_back_to_rule_engine():
+def test_invalid_response_falls_back_to_rule_engine_with_diagnostics():
     fallback_result = IntentResult(
         intent="date_query",
         confidence=0.9,
@@ -287,18 +321,23 @@ def test_invalid_schema_object_falls_back_to_rule_engine():
 
     result = engine.infer(user_input)
 
-    assert result is fallback_result
+    assert result.intent == fallback_result.intent
+    assert result.confidence == fallback_result.confidence
+    assert result.entities["source"] == "fallback"
+    assert result.entities["llm_fallback_used"] is True
+    assert result.entities["llm_fallback_reason"] == "invalid_response"
     assert fallback.calls == [user_input]
 
 
 @pytest.mark.parametrize(
-    "error",
+    ("error", "expected_reason"),
     [
-        LLMClientError("Ollama returned invalid JSON"),
-        LLMClientError("Ollama request timed out."),
+        (LLMClientError("Ollama returned invalid JSON"), "invalid_json"),
+        (LLMClientError("Ollama request timed out."), "client_error"),
+        (LLMClientError("Ollama returned an empty response."), "invalid_response"),
     ],
 )
-def test_malformed_json_timeout_or_client_error_falls_back_to_rule_engine(error):
+def test_client_error_falls_back_to_rule_engine_with_diagnostics(error, expected_reason):
     fallback_result = IntentResult(intent="greeting", confidence=0.95)
     fallback = FakeFallbackEngine(fallback_result)
     engine = LLMIntentEngine(client=FakeClient(error=error), fallback_engine=fallback)
@@ -306,7 +345,10 @@ def test_malformed_json_timeout_or_client_error_falls_back_to_rule_engine(error)
 
     result = engine.infer(user_input)
 
-    assert result is fallback_result
+    assert result.intent == fallback_result.intent
+    assert result.confidence == fallback_result.confidence
+    assert result.entities["llm_fallback_used"] is True
+    assert result.entities["llm_fallback_reason"] == expected_reason
     assert fallback.calls == [user_input]
 
 
@@ -480,6 +522,8 @@ def test_low_confidence_llm_action_is_suppressed_with_default_threshold(monkeypa
     assert result.entities["llm_response_text"] == "Posso aprire quel sito."
     assert result.entities["action_suppressed_reason"] == "low_confidence"
     assert result.entities["action_min_confidence"] == 0.65
+    assert result.entities["llm_fallback_used"] is True
+    assert result.entities["llm_fallback_reason"] == "low_confidence_action"
 
 
 def test_high_confidence_llm_action_is_preserved_at_threshold(monkeypatch):

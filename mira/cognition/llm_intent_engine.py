@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 from typing import Any
 
@@ -23,6 +24,16 @@ from mira.core.session_memory import SessionMemory
 
 DEFAULT_LLM_ACTION_MIN_CONFIDENCE = 0.65
 LLM_ACTION_MIN_CONFIDENCE_ENV = "MIRA_LLM_ACTION_MIN_CONFIDENCE"
+
+LLM_VALIDATION_FALLBACK_REASONS = {
+    "intent_unknown": "unsupported_intent",
+    "action_unknown": "unknown_action",
+    "intent_action_mismatch": "intent_action_mismatch",
+    "parameters_type": "invalid_parameters",
+    "action_name": "unknown_action",
+}
+
+logger = logging.getLogger(__name__)
 
 
 class LLMIntentEngine(IntentEngine):
@@ -62,13 +73,39 @@ class LLMIntentEngine(IntentEngine):
                 temperature=0.0,
             )
         except LLMClientError as exc:
-            print(f"[LLM] Falling back to rule engine: {exc}")
-            return self.fallback_engine.infer(user_input)
+            reason = self._fallback_reason_from_client_error(exc)
+            logger.warning("Falling back to rule intent engine: %s", exc)
+            return self._fallback_with_reason(user_input, reason)
 
         if not isinstance(raw_result, dict):
-            return self.fallback_engine.infer(user_input)
+            logger.warning("Falling back to rule intent engine: invalid LLM response type")
+            return self._fallback_with_reason(user_input, "invalid_response")
 
         return self._to_intent_result(raw_result, user_input)
+
+    def _fallback_with_reason(
+        self,
+        user_input: UserInput,
+        reason: str,
+    ) -> IntentResult:
+        result = self.fallback_engine.infer(user_input)
+        entities = dict(result.entities)
+        entities["llm_fallback_used"] = True
+        entities["llm_fallback_reason"] = reason
+
+        return IntentResult(
+            intent=result.intent,
+            confidence=result.confidence,
+            entities=entities,
+        )
+
+    def _fallback_reason_from_client_error(self, exc: LLMClientError) -> str:
+        message = str(exc).lower()
+        if "invalid json" in message:
+            return "invalid_json"
+        if "empty response" in message:
+            return "invalid_response"
+        return "client_error"
 
     def _build_prompt(self, user_input: UserInput) -> str:
         allowed_intents = ", ".join(ALLOWED_INTENTS)
@@ -145,12 +182,14 @@ Current user input:
         response_text = str(raw_result.get("response_text", "")).strip()
         emotion = str(raw_result.get("emotion", "neutral")).strip()
 
+        fallback_reason = None
         validation_reason = None
         raw_action_requested = action_name is not None
 
         if intent not in ALLOWED_INTENTS:
             intent = "unknown"
             confidence = 0.25
+            fallback_reason = "unsupported_intent"
             if raw_action_requested:
                 validation_reason = "intent_unknown"
             action_name = None
@@ -182,15 +221,29 @@ Current user input:
         if validation_reason is not None:
             entities["llm_action_validation_failed"] = True
             entities["llm_action_validation_reason"] = validation_reason
+            fallback_reason = self._fallback_reason_from_validation(validation_reason)
 
         if action_suppressed_reason is not None:
             entities["action_suppressed_reason"] = action_suppressed_reason
             entities["action_min_confidence"] = self.action_min_confidence
+            fallback_reason = "low_confidence_action"
+
+        if fallback_reason is not None:
+            entities["llm_fallback_used"] = True
+            entities["llm_fallback_reason"] = fallback_reason
 
         return IntentResult(
             intent=intent,
             confidence=confidence,
             entities=entities,
+        )
+
+    def _fallback_reason_from_validation(self, validation_reason: str) -> str:
+        if validation_reason.startswith("missing_or_invalid_param:"):
+            return "invalid_parameters"
+        return LLM_VALIDATION_FALLBACK_REASONS.get(
+            validation_reason,
+            "invalid_schema",
         )
 
     def _safe_confidence(self, value: Any) -> float:
@@ -209,16 +262,18 @@ Current user input:
         try:
             threshold = float(raw_value)
         except ValueError:
-            print(
-                f"[LLM] Invalid {LLM_ACTION_MIN_CONFIDENCE_ENV}; "
-                f"using {DEFAULT_LLM_ACTION_MIN_CONFIDENCE}."
+            logger.warning(
+                "Invalid %s; using %s.",
+                LLM_ACTION_MIN_CONFIDENCE_ENV,
+                DEFAULT_LLM_ACTION_MIN_CONFIDENCE,
             )
             return DEFAULT_LLM_ACTION_MIN_CONFIDENCE
 
         if threshold != threshold:
-            print(
-                f"[LLM] Invalid {LLM_ACTION_MIN_CONFIDENCE_ENV}; "
-                f"using {DEFAULT_LLM_ACTION_MIN_CONFIDENCE}."
+            logger.warning(
+                "Invalid %s; using %s.",
+                LLM_ACTION_MIN_CONFIDENCE_ENV,
+                DEFAULT_LLM_ACTION_MIN_CONFIDENCE,
             )
             return DEFAULT_LLM_ACTION_MIN_CONFIDENCE
 
