@@ -275,6 +275,26 @@ def test_unknown_or_disallowed_intent_is_normalized_and_cannot_execute_action():
     assert result.entities["llm_fallback_reason"] == "unsupported_intent"
 
 
+def test_unsupported_intent_without_action_gets_fallback_diagnostics():
+    result, _, _ = infer_with(
+        {
+            "intent": "unsupported_smalltalk",
+            "confidence": 0.7,
+            "emotion": "neutral",
+            "action_name": None,
+            "parameters": {},
+            "response_text": "Non sono sicuro.",
+        }
+    )
+
+    assert result.intent == "unknown"
+    assert result.confidence == 0.25
+    assert result.entities["llm_action_name"] is None
+    assert result.entities["llm_response_text"] == "Non sono sicuro."
+    assert result.entities["llm_fallback_used"] is True
+    assert result.entities["llm_fallback_reason"] == "unsupported_intent"
+
+
 def test_unknown_or_disallowed_action_name_is_removed():
     result, _, _ = infer_with(
         {
@@ -292,6 +312,7 @@ def test_unknown_or_disallowed_action_name_is_removed():
     assert result.entities["llm_action_name"] is None
     assert result.entities["llm_action_validation_failed"] is True
     assert result.entities["llm_action_validation_reason"] == "action_unknown"
+    assert result.entities["llm_fallback_used"] is True
     assert result.entities["llm_fallback_reason"] == "unknown_action"
 
 
@@ -312,6 +333,7 @@ def test_incompatible_action_for_intent_is_rejected():
     assert result.entities["llm_action_name"] is None
     assert result.entities["llm_action_validation_failed"] is True
     assert result.entities["llm_action_validation_reason"] == "intent_action_mismatch"
+    assert result.entities["llm_fallback_used"] is True
     assert result.entities["llm_fallback_reason"] == "intent_action_mismatch"
 
 
@@ -332,6 +354,7 @@ def test_allowed_action_with_wrong_param_type_is_rejected():
     assert result.entities["llm_action_name"] is None
     assert result.entities["llm_action_validation_failed"] is True
     assert result.entities["llm_action_validation_reason"] == "missing_or_invalid_param:text"
+    assert result.entities["llm_fallback_used"] is True
     assert result.entities["llm_fallback_reason"] == "invalid_parameters"
 
 
@@ -351,6 +374,7 @@ def test_known_unknown_intent_with_allowed_action_is_rejected():
     assert result.entities["llm_action_name"] is None
     assert result.entities["llm_action_validation_failed"] is True
     assert result.entities["llm_action_validation_reason"] == "intent_action_mismatch"
+    assert result.entities["llm_fallback_used"] is True
     assert result.entities["llm_fallback_reason"] == "intent_action_mismatch"
 
 
@@ -371,6 +395,7 @@ def test_non_dict_action_params_reject_action(parameters):
     assert result.entities["llm_action_name"] is None
     assert result.entities["llm_action_validation_failed"] is True
     assert result.entities["llm_action_validation_reason"] == "parameters_type"
+    assert result.entities["llm_fallback_used"] is True
     assert result.entities["llm_fallback_reason"] == "invalid_parameters"
 
 
@@ -391,10 +416,11 @@ def test_missing_action_params_reject_action():
     assert "text" not in result.entities
     assert result.entities["llm_action_validation_failed"] is True
     assert result.entities["llm_action_validation_reason"] == "missing_or_invalid_param:text"
+    assert result.entities["llm_fallback_used"] is True
     assert result.entities["llm_fallback_reason"] == "invalid_parameters"
 
 
-def test_invalid_schema_object_falls_back_to_rule_engine_with_diagnostics():
+def test_invalid_response_falls_back_to_rule_engine_with_diagnostics():
     fallback_result = IntentResult(
         intent="date_query",
         confidence=0.9,
