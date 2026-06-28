@@ -5,7 +5,6 @@ from dataclasses import dataclass
 from mira.core.models import UserInput
 from mira.core.session_memory import SessionMemory
 
-
 DEFAULT_MAX_CONTEXT_MESSAGES = 8
 DEFAULT_MAX_CONTEXT_CHARS = 1200
 

@@ -467,7 +467,9 @@ def test_client_error_falls_back_to_rule_engine_with_diagnostics(error, expected
 
 
 def test_fallback_rule_handles_name_logic():
-    fallback = FakeFallbackEngine(IntentResult(intent="set_user_name", confidence=0.95, entities={"user_name": "Erik"}))
+    fallback = FakeFallbackEngine(
+        IntentResult(intent="set_user_name", confidence=0.95, entities={"user_name": "Erik"})
+    )
     engine = LLMIntentEngine(
         client=FakeClient(error=LLMClientError("Ollama request timed out.")),
         fallback_engine=fallback,
