@@ -55,10 +55,19 @@ class SessionMemory:
         self.last_intent = intent
 
     def set_context(self, key: str, value: Any) -> None:
-        self.context[key] = value
+        self.set_context_value(key, value)
 
     def get_context(self, key: str, default: Any = None) -> Any:
+        return self.get_context_value(key, default)
+
+    def set_context_value(self, key: str, value: Any) -> None:
+        self.context[key] = value
+
+    def get_context_value(self, key: str, default: Any = None) -> Any:
         return self.context.get(key, default)
+
+    def clear_context_value(self, key: str) -> None:
+        self.context.pop(key, None)
 
     def get_recent_history(self, limit: int | None = None) -> list[MemoryMessage]:
         if limit is None or limit >= len(self.history):

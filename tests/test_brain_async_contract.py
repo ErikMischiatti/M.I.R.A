@@ -217,3 +217,23 @@ def test_rule_based_project_path_intent_builds_action_request():
     request = brain.build_action_request(intent)
 
     assert request == ActionRequest(action_name="get_project_path")
+
+
+def test_low_confidence_llm_action_suppression_prevents_rule_based_action_fallback():
+    intent = IntentResult(
+        intent="open_url_request",
+        confidence=0.64,
+        entities={
+            "llm_action_name": None,
+            "llm_response_text": "Posso aprire quel sito.",
+            "action_suppressed_reason": "low_confidence",
+            "action_min_confidence": 0.65,
+            "llm_fallback_used": True,
+            "llm_fallback_reason": "low_confidence_action",
+        },
+    )
+    brain = make_brain(intent)
+
+    request = brain.build_action_request(intent)
+
+    assert request is None

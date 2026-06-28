@@ -89,3 +89,54 @@ def test_rule_engine_keeps_unknown_for_unsupported_local_command():
     intent = infer("cancella il file temporaneo")
 
     assert intent.intent == "unknown"
+
+
+def test_rule_engine_detects_italian_set_name_phrases():
+    for text in [
+        "mi chiamo Erik",
+        "il mio nome è Erik",
+        "sono Erik",
+        "chiamami Erik",
+    ]:
+        intent = infer(text)
+
+        assert intent.intent == "set_user_name"
+        assert intent.entities == {"user_name": "Erik"}
+
+
+def test_rule_engine_detects_english_set_name_phrases():
+    for text in ["my name is Erik", "call me Erik"]:
+        intent = infer(text)
+
+        assert intent.intent == "set_user_name"
+        assert intent.entities == {"user_name": "Erik"}
+
+
+def test_rule_engine_rejects_sentence_like_or_empty_names():
+    for text in ["mi chiamo", "mi chiamo Erik e vivo qui", "sono qui"]:
+        intent = infer(text)
+
+        assert intent.intent != "set_user_name"
+
+
+def test_rule_engine_detects_ask_user_name_phrases():
+    for text in ["come mi chiamo?", "qual è il mio nome?", "what is my name?"]:
+        intent = infer(text)
+
+        assert intent.intent == "ask_user_name"
+        assert intent.entities == {}
+
+
+def test_rule_engine_detects_identity_phrases():
+    for text in ["chi sei?", "come ti chiami?", "who are you?"]:
+        intent = infer(text)
+
+        assert intent.intent == "identity_query"
+
+
+def test_rule_engine_detects_project_context_phrases():
+    for text in ["di cosa stiamo parlando?", "what are we talking about?"]:
+        intent = infer(text)
+
+        assert intent.intent == "project_context"
+        assert intent.entities == {}

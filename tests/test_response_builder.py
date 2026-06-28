@@ -288,3 +288,82 @@ def test_project_path_action_result_produces_user_facing_response():
         "action_name": "get_project_path",
         "path": "/tmp/project",
     }
+
+
+class FakeMemory:
+    def __init__(self, user_name=None):
+        self.user_name = user_name
+
+    def get_context_value(self, key, default=None):
+        if key == "user_name":
+            return self.user_name
+        return default
+
+
+def test_set_user_name_acknowledges_name():
+    intent = IntentResult(intent="set_user_name", confidence=0.95, entities={"user_name": "Erik"})
+
+    response = ResponseBuilder().build(intent, UserInput(text="mi chiamo Erik"))
+
+    assert response.text == "Va bene, ti chiamerò Erik."
+    assert response.face_state is FaceState.HAPPY
+
+
+def test_ask_user_name_known_uses_session_memory():
+    intent = IntentResult(intent="ask_user_name", confidence=0.95)
+
+    response = ResponseBuilder(FakeMemory("Erik")).build(
+        intent,
+        UserInput(text="come mi chiamo?"),
+    )
+
+    assert response.text == "Ti chiami Erik."
+    assert response.face_state is FaceState.SPEAKING
+
+
+def test_ask_user_name_unknown_is_clear():
+    intent = IntentResult(intent="ask_user_name", confidence=0.95)
+
+    response = ResponseBuilder(FakeMemory()).build(
+        intent,
+        UserInput(text="come mi chiamo?"),
+    )
+
+    assert "Non conosco ancora il tuo nome" in response.text
+    assert response.face_state is FaceState.SPEAKING
+
+
+def test_identity_response_keeps_assistant_and_user_identity_separate():
+    intent = IntentResult(intent="identity_query", confidence=0.95)
+
+    response = build_response(intent)
+
+    assert "M.I.R.A." in response.text
+    assert "N.E.R.O." in response.text
+    assert "provvisoriamente" in response.text
+    assert "Ti chiami" not in response.text
+
+
+def test_project_context_response_identifies_mira_project():
+    intent = IntentResult(intent="project_context", confidence=0.92)
+
+    response = build_response(intent)
+
+    assert "M.I.R.A." in response.text
+    assert "assistente embodied" in response.text
+
+
+def test_llm_response_text_does_not_override_stateful_name_answer():
+    intent = IntentResult(
+        intent="ask_user_name",
+        confidence=0.9,
+        entities={"llm_response_text": "Non lo so."},
+    )
+
+    response = ResponseBuilder(FakeMemory("Erik")).build(
+        intent,
+        UserInput(text="come mi chiamo?"),
+    )
+
+    assert response.text == "Ti chiami Erik."
+    assert "llm_response_used" not in response.metadata

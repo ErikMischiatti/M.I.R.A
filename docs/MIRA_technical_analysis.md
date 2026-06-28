@@ -127,9 +127,11 @@ Rischio thread-safety: `EventBus` e `StateManager` sono sincroni e senza lock. I
 | `Brain` | `mira/core/brain.py` | Orchestrazione: memoria, intent, azioni, response, eventi, stati. |
 | `IntentEngine` | `mira/cognition/intent_engine.py` | Contratto astratto `infer(UserInput) -> IntentResult`. |
 | `RuleIntentEngine` | `mira/cognition/rule_intent_engine.py` | Regole deterministiche per greeting, stato, identità, ora/data, memoria, desktop, path progetto. |
-| `LLMIntentEngine` | `mira/cognition/llm_intent_engine.py` | Prompt strutturato, chiamata Ollama, validazione azioni, fallback rule. |
+| `LLMIntentEngine` | `mira/cognition/llm_intent_engine.py` | Prompt strutturato con contesto recente sanitizzato, chiamata Ollama, validazione azioni, fallback rule con diagnostica. |
 | `OllamaClient` | `mira/cognition/llm_client.py` | POST verso `/api/generate`, JSON schema in `format`, parsing risposta. |
 | `LLM schema` | `mira/cognition/llm_schema.py` | Intent consentiti, schema JSON, validazione compatibilità intent/action. |
+| `SessionContextBuilder` | `mira/cognition/session_context_builder.py` | Snapshot bounded e sanitizzato per prompt LLM, con safe session facts. |
+| `user_facts` | `mira/cognition/user_facts.py` | Estrazione deterministica conservativa del nome utente session-local. |
 | `ResponseBuilder` | `mira/cognition/response_builder.py` | Genera `BrainResponse` per UI e face state. |
 
 Cosa funziona:
@@ -138,17 +140,21 @@ Cosa funziona:
 - Il backend LLM è opzionale.
 - Su errore Ollama, timeout o risposta non valida, il sistema torna al rule engine.
 - Le azioni proposte dall'LLM sono validate contro contratti espliciti.
+- Le azioni proposte dall'LLM sono bloccate sotto la soglia `MIRA_LLM_ACTION_MIN_CONFIDENCE`.
 - Le emozioni LLM sono mappate a `FaceState` tramite allowlist.
 - Le risposte da azione hanno priorità sul testo conversazionale LLM.
+- Il prompt LLM include contesto recente bounded/sanitizzato e il messaggio corrente resta separato.
+- La memoria di sessione conserva safe facts espliciti come `user_name`, senza persistenza su disco.
+- `ResponseBuilder` gestisce risposte cognitive deterministiche per identità assistente, contesto progetto, set/ask nome utente.
 
 Fragilità:
 
-- Il prompt LLM include solo il messaggio corrente, non la session history.
-- Non esiste soglia semantica di confidence per bloccare azioni incerte.
 - `RuleIntentEngine` usa euristiche string-based.
 - `ResponseBuilder` è una catena crescente di `if`.
 - `Brain.build_action_request()` duplica informazioni già presenti nei contratti azione.
 - `requires_confirmation` esiste nei modelli ma non è applicato.
+- Non esiste memoria persistente multi-sessione.
+- Non viene ancora usata una dipendenza completa per validazione JSON Schema.
 
 ## 5. Memory e Context
 
@@ -162,10 +168,12 @@ File principale: `mira/core/session_memory.py`.
 | Bound caratteri | Assente. |
 | Messaggi | `MemoryMessage(role, text, metadata)`. |
 | Last intent | `SessionMemory.last_intent`. |
-| Context generico | `SessionMemory.context`, non integrato nel prompt LLM. |
+| Context generico | `SessionMemory.context`, usato per safe facts session-local come `user_name`. |
+| Context helpers | `set_context_value`, `get_context_value`, `clear_context_value`; alias legacy `set_context`/`get_context`. |
 | Recent history | `get_recent_history(limit)`. |
+| Prompt context | `SessionContextBuilder` include safe facts e recent history sanitizzata, escludendo il current input. |
 
-Nota importante: `Brain.process_text_async()` salva il messaggio utente prima dell'inferenza. Quindi un'azione come `get_last_user_message` tende a restituire il messaggio corrente, non quello precedente.
+Nota importante: `Brain.process_text_async()` salva il messaggio utente prima dell'inferenza. Quindi un'azione come `get_last_user_message` tende a restituire il messaggio corrente, non quello precedente. Per il prompt LLM, `SessionContextBuilder.build(current_input=...)` rimuove il messaggio corrente dal blocco di contesto e lo lascia nella sezione separata `Current user input`.
 
 Possibili leak/staleness:
 
@@ -289,19 +297,25 @@ Rischi:
 | Model env | `MIRA_OLLAMA_MODEL`, default `llama3.2:3b`. |
 | Base URL env | `MIRA_OLLAMA_BASE_URL`, default `http://localhost:11434`. |
 | Timeout env | `MIRA_OLLAMA_TIMEOUT_S`, default `10.0`. |
+| Action confidence env | `MIRA_LLM_ACTION_MIN_CONFIDENCE`, default `0.65`; valori invalidi tornano al default, valori numerici clamped a `0.0..1.0`. |
 | API | Ollama `/api/generate`, `stream: False`, `format` schema. |
-| Prompt | Intent parser per N.E.R.O.; allowed intents/actions; current input. |
+| Prompt | Intent parser per N.E.R.O. (nome provvisorio); allowed intents/actions; safe session facts; recent context bounded/sanitizzato; current input separato. |
 | Output | `intent`, `confidence`, `emotion`, `action_name`, `parameters`, `response_text`. |
-| Fallback | Rule engine su errore client, timeout, JSON invalido o output non-dict. |
+| Fallback | Rule engine su errore client, timeout, JSON invalido o output non-dict; diagnostica stabile per validazioni e action suppression. |
+
+Le azioni proposte dall'LLM sono eseguibili solo se superano `MIRA_LLM_ACTION_MIN_CONFIDENCE`. Se sono sotto soglia, vengono rimosse dai metadata eseguibili e l'intent espone `action_suppressed_reason = "low_confidence"` e `action_min_confidence = <threshold>`.
+
+I fallback LLM espongono `llm_fallback_used` e `llm_fallback_reason`. Ragioni implementate: `client_error`, `invalid_response`, `invalid_json`, `unsupported_intent`, `unknown_action`, `intent_action_mismatch`, `invalid_parameters`, `low_confidence_action`, `invalid_schema`.
 
 Limitazioni:
 
-- Nessuna session history nel prompt.
 - Nessuna astrazione provider oltre Ollama.
 - Nessun retry/backoff.
 - Nessun check disponibilità modello.
-- Logging via `print`.
-- `llm_raw` viene conservato negli entities.
+- `llm_raw` viene conservato negli entities per backward compatibility.
+- Nessuna memoria persistente.
+- Nessuna UI confirmation flow.
+- Nessuna dipendenza completa per validazione JSON Schema.
 
 ## 10. Tests e Validation
 
@@ -320,20 +334,23 @@ venv/bin/python -m pytest
 Risultato:
 
 ```text
-71 passed in 0.15s
+103 passed in 0.17s
 ```
 
 Copertura attuale:
 
 | File test | Copertura |
 |---|---|
-| `tests/test_action_contract_consistency.py` | Coerenza contratti/azioni, metadata prompt LLM, assenza contesto sessione nel prompt. |
+| `tests/test_action_contract_consistency.py` | Coerenza contratti/azioni e metadata prompt LLM con contesto quando la memoria è fornita. |
 | `tests/test_action_executor.py` | Success/failure executor, azione sconosciuta, request invalida, eccezioni handler, registry contracts. |
 | `tests/test_brain_async_contract.py` | Separazione worker/main thread, stale result, action fallback. |
 | `tests/test_desktop_actions.py` | URL, app allowlist, directory allowlist, project path. |
 | `tests/test_llm_intent_engine.py` | Conversione LLM, fallback, validazione azioni, confidence clamp, prompt. |
 | `tests/test_response_builder.py` | Priorità azioni, testo LLM, emotion mapping, fallback deterministic. |
-| `tests/test_rule_intent_engine.py` | Regole directory, project path, frasi distruttive, schemi URL. |
+| `tests/test_rule_intent_engine.py` | Regole directory, project path, frasi distruttive, schemi URL, identità, contesto progetto e nome utente. |
+| `tests/test_session_context_builder.py` | Context builder LLM: safe facts, bound, sanitizzazione, esclusione metadata e current input separato. |
+| `tests/test_session_memory.py` | Helper context session-local e clear memoria. |
+| `tests/test_brain_cognitive_flow.py` | Flusso sincrono completo per set/ask/update nome e contesto progetto senza azioni desktop. |
 
 Mancano:
 
@@ -412,8 +429,10 @@ Mancanze:
 | Stato facciale scritto da più componenti | `mira/core/brain.py`, `mira/core/interaction_manager.py`, `mira/core/embodied_behavior.py` | Possibili conflitti d'ordine. |
 | Mapping intent/action duplicato | `mira/core/brain.py`, `mira/actions/action_contracts.py` | Contratti non sono single source of truth. |
 | Conferma non implementata | `mira/actions/action_models.py` | `requires_confirmation` esiste ma non viene usato. |
-| Contesto LLM assente | `mira/cognition/llm_intent_engine.py` | Nessuna history/session context nel prompt. |
-| Memoria non persistente | `mira/core/session_memory.py` | Solo sessione corrente. |
+| `llm_raw` legacy | `mira/cognition/llm_intent_engine.py` | Ancora conservato negli entities per backward compatibility. |
+| Memoria non persistente | `mira/core/session_memory.py` | Solo sessione corrente; `user_name` non sopravvive al riavvio. |
+| UI confirmation assente | `mira/actions/action_models.py`, `mira/ui/*` | `requires_confirmation` esiste ma non viene usato da un flusso UI. |
+| JSON Schema validator assente | `mira/cognition/llm_schema.py` | Validazione lightweight custom, senza dipendenza completa dedicata. |
 | Desktop Linux-specific | `mira/actions/desktop_actions.py` | `xdg-open`, `notify-send`, comandi Linux. |
 | ResponseBuilder poco scalabile | `mira/cognition/response_builder.py` | Crescita tramite catena `if`. |
 
@@ -423,9 +442,7 @@ Per far sentire M.I.R.A. come un assistente locale embodied coerente mancano sop
 
 - Confirmation flow per azioni con side effect.
 - Permission/risk model per tool.
-- Session context snapshot per LLM.
 - Memoria persistente e preferenze utente.
-- Distinzione tra messaggio corrente e turn precedenti.
 - Desktop actions più ricche ma sicure.
 - UI feedback per pending, error, action progress, cancellation.
 - Event model tipizzato.
@@ -444,11 +461,10 @@ Immediate cleanup:
 
 Short-term:
 
-- Context builder per prompt LLM.
-- Redazione metadata sensibili.
 - Confirmation UI per azioni rischiose.
 - Pending state nel `ChatPanel`.
 - Migliorare risposta per memory actions.
+- Valutare validator JSON Schema completo per il payload LLM.
 
 Medium-term:
 
@@ -499,10 +515,10 @@ Il flusso principale è asincrono e UI-safe: il worker inferisce intent e prepar
 
 Il sistema azioni è già utile e relativamente sicuro: azioni registrate esplicitamente, LLM limitato da contratti, desktop actions allowlisted. I rischi principali sono la mancanza di conferma, la validazione contratti non centralizzata nell'executor e l'assunzione Linux.
 
-La memoria è solo session-local, bounded a 20 messaggi, senza persistenza e senza integrazione nel prompt LLM. Il prompt LLM usa solo il messaggio corrente e i contratti disponibili. Questo limita la coerenza multi-turn.
+La memoria è solo session-local, bounded a 20 messaggi e senza persistenza. Il prompt LLM usa il messaggio corrente separato da un contesto recente bounded e sanitizzato costruito da `SessionContextBuilder`; safe facts come `user_name` sono disponibili solo nella sessione corrente.
 
 La UI è compatta e convincente come prototipo embodied: occhi animati, stati espressivi, chat e debug drawer. `FaceState` ed `EmbodiedBehavior` sono buone basi per una futura astrazione hardware, purché restino separati da PySide6.
 
-La test suite passa nel virtualenv locale con `venv/bin/python -m pytest`: 71 test passati. Mancano test GUI, integrazione Qt, event ordering, memory persistence, prompt injection e confirmation flow.
+La test suite passa nel virtualenv locale con `venv/bin/python -m pytest`: 103 test passati. Mancano test GUI, integrazione Qt, event ordering, memory persistence, prompt injection e confirmation flow.
 
-Le prossime priorità consigliate sono: documentazione architetturale, packaging minimo, event model tipizzato, context builder LLM con redaction, confirmation flow per tool, app composition fuori da `MainWindow`, memoria persistente e adapter hardware-neutral per preparare la futura piattaforma H.A.R.O.
+Le prossime priorità consigliate sono: documentazione architetturale, packaging minimo, event model tipizzato, confirmation flow per tool, app composition fuori da `MainWindow`, memoria persistente, eventuale validator JSON Schema completo e adapter hardware-neutral per preparare la futura piattaforma H.A.R.O. (nome provvisorio).

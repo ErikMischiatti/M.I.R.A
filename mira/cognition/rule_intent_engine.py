@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from mira.cognition.intent_engine import IntentEngine
+from mira.cognition.user_facts import extract_user_name
 from mira.core.models import IntentResult, UserInput
 
 
@@ -13,14 +14,28 @@ class RuleIntentEngine(IntentEngine):
         if not text:
             return IntentResult(intent="empty_input", confidence=1.0)
 
+        extracted_name = extract_user_name(user_input.text)
+        if extracted_name is not None:
+            return IntentResult(
+                intent="set_user_name",
+                confidence=0.95,
+                entities={"user_name": extracted_name},
+            )
+
+        if self._is_user_name_query(text):
+            return IntentResult(intent="ask_user_name", confidence=0.95)
+
         if any(word in text for word in ["ciao", "salve", "hey", "hello"]):
             return IntentResult(intent="greeting", confidence=0.95)
 
         if "come stai" in text:
             return IntentResult(intent="status_query", confidence=0.95)
 
-        if "chi sei" in text:
+        if self._is_identity_query(text):
             return IntentResult(intent="identity_query", confidence=0.95)
+
+        if self._is_project_context_query(text):
+            return IntentResult(intent="project_context", confidence=0.92)
 
         if "che ore sono" in text or "dimmi l'ora" in text or "dimmi ora" in text:
             return IntentResult(intent="time_query", confidence=0.95)
@@ -52,7 +67,7 @@ class RuleIntentEngine(IntentEngine):
 
         if "cancella memoria sessione" in text or "resetta memoria sessione" in text:
             return IntentResult(intent="clear_session_memory", confidence=0.90)
-        
+
         if "cosa sai fare" in text or "che azioni sai fare" in text or "lista azioni" in text:
             return IntentResult(intent="list_actions", confidence=0.90)
 
@@ -89,7 +104,7 @@ class RuleIntentEngine(IntentEngine):
             raw = text.replace("apri ", "").replace("vai su ", "").strip()
             explicit_url_like = "://" in raw or raw.startswith("javascript:")
 
-            if "." in raw or explicit_url_like:  # semplice euristica URL
+            if "." in raw or explicit_url_like:
                 return IntentResult(
                     intent="open_url_request",
                     confidence=0.90,
@@ -168,3 +183,43 @@ class RuleIntentEngine(IntentEngine):
             )
 
         return IntentResult(intent="unknown", confidence=0.50)
+
+    def _is_user_name_query(self, text: str) -> bool:
+        patterns = [
+            "come mi chiamo",
+            "qual è il mio nome",
+            "qual e il mio nome",
+            "ti ricordi il mio nome",
+            "what is my name",
+            "what's my name",
+            "do you know my name",
+        ]
+        return any(pattern in text for pattern in patterns)
+
+    def _is_identity_query(self, text: str) -> bool:
+        patterns = [
+            "chi sei",
+            "come ti chiami",
+            "qual è il tuo nome",
+            "qual e il tuo nome",
+            "who are you",
+            "what are you",
+            "what is your name",
+            "what's your name",
+        ]
+        return any(pattern in text for pattern in patterns)
+
+    def _is_project_context_query(self, text: str) -> bool:
+        patterns = [
+            "di cosa stiamo parlando",
+            "di che cosa stiamo parlando",
+            "qual è il contesto",
+            "qual e il contesto",
+            "che progetto è",
+            "che progetto e",
+            "what are we talking about",
+            "what project is this",
+            "what is this project",
+            "project context",
+        ]
+        return any(pattern in text for pattern in patterns)

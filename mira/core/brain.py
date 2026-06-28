@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import os
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -32,13 +33,17 @@ from mira.actions.desktop_actions import (
 
 from mira.cognition.response_builder import ResponseBuilder
 from mira.cognition.rule_intent_engine import RuleIntentEngine
-from mira.cognition.llm_intent_engine import LLMIntentEngine  # ✅ NEW
+from mira.cognition.llm_intent_engine import LLMIntentEngine
+from mira.cognition.user_facts import normalize_user_name
 
 from mira.core.events import EventBus
 from mira.core.models import BrainResponse, IntentResult, UserInput
 from mira.core.session_memory import SessionMemory
 from mira.core.state_manager import StateManager
 from mira.ui.face.face_state import FaceState
+
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -121,10 +126,9 @@ class Brain:
         self.state_manager = state_manager
         self.memory = SessionMemory()
 
-        # ✅ ENGINE SELECTION
         self.intent_engine = intent_engine or self._select_intent_engine()
 
-        self.response_builder = response_builder or ResponseBuilder()
+        self.response_builder = response_builder or ResponseBuilder(self.memory)
 
         self.action_registry = ActionRegistry()
         self.action_executor = ActionExecutor(self.action_registry, self.event_bus)
@@ -146,10 +150,10 @@ class Brain:
         engine_type = os.getenv("MIRA_INTENT_ENGINE", "rule").lower()
 
         if engine_type == "llm":
-            print("[Brain] Using LLMIntentEngine")
-            return LLMIntentEngine()
+            logger.info("Using LLMIntentEngine")
+            return LLMIntentEngine(session_memory=self.memory)
 
-        print("[Brain] Using RuleIntentEngine")
+        logger.info("Using RuleIntentEngine")
         return RuleIntentEngine()
 
     # ============================================================
@@ -230,7 +234,7 @@ class Brain:
         on_response: Callable[[BrainResponse], None] | None,
     ) -> None:
         if request_id != self._latest_request_id:
-            print(f"[Brain] Ignoring stale async request {request_id}")
+            logger.info("Ignoring stale async request %s", request_id)
             return
 
         self.event_bus.emit("processing_started", user_input)
@@ -260,7 +264,7 @@ class Brain:
         on_response: Callable[[BrainResponse], None] | None,
     ) -> None:
         if result.request_id != self._latest_request_id:
-            print(f"[Brain] Ignoring stale async result {result.request_id}")
+            logger.info("Ignoring stale async result %s", result.request_id)
             return
 
         response = self._finalize_computation_result(result)
@@ -291,6 +295,9 @@ class Brain:
         if intent.entities.get("llm_action_validation_failed"):
             return None
 
+        if intent.entities.get("action_suppressed_reason"):
+            return None
+
         llm_action = intent.entities.get("llm_action_name")
 
         if llm_action:
@@ -301,6 +308,10 @@ class Brain:
                 "llm_raw",
                 "llm_action_validation_failed",
                 "llm_action_validation_reason",
+                "llm_fallback_used",
+                "llm_fallback_reason",
+                "action_suppressed_reason",
+                "action_min_confidence",
             }
             return ActionRequest(
                 action_name=llm_action,
@@ -385,6 +396,7 @@ class Brain:
 
     def _build_response(self, user_input: UserInput) -> BrainResponse:
         intent = self.infer_intent(user_input)
+        self._apply_cognitive_side_effects(intent)
         self.memory.set_last_intent(intent)
         self.event_bus.emit("intent_inferred", intent)
 
@@ -395,6 +407,7 @@ class Brain:
             action_result = self.action_executor.execute(action_request)
 
         response = self.build_response(intent, user_input, action_result)
+        self._enrich_response_metadata(response, intent, action_request, action_result)
         self.memory.add_response(response)
 
         return response
@@ -418,6 +431,7 @@ class Brain:
         self,
         result: BrainComputationResult,
     ) -> BrainResponse:
+        self._apply_cognitive_side_effects(result.intent)
         self.memory.set_last_intent(result.intent)
         self.event_bus.emit("intent_inferred", result.intent)
 
@@ -431,9 +445,61 @@ class Brain:
             result.user_input,
             action_result,
         )
+        self._enrich_response_metadata(
+            response,
+            result.intent,
+            result.action_request,
+            action_result,
+        )
         self.memory.add_response(response)
 
         return response
+
+
+    def _apply_cognitive_side_effects(self, intent: IntentResult) -> None:
+        if intent.intent != "set_user_name":
+            return
+
+        user_name = normalize_user_name(intent.entities.get("user_name"))
+        if user_name is None:
+            intent.entities.pop("user_name", None)
+            return
+
+        intent.entities["user_name"] = user_name
+        self.memory.set_context_value("user_name", user_name)
+
+    def _enrich_response_metadata(
+        self,
+        response: BrainResponse,
+        intent: IntentResult,
+        action_request: ActionRequest | None,
+        action_result: ActionResult | None,
+    ) -> None:
+        response.metadata.setdefault("intent", intent.intent)
+        response.metadata.setdefault("confidence", intent.confidence)
+        response.metadata["selected_intent"] = intent.intent
+
+        if action_result is not None:
+            response.metadata.setdefault("action_name", action_result.action_name)
+            response.metadata.setdefault("response_source", "action")
+        elif action_request is not None:
+            response.metadata.setdefault("action_name", action_request.action_name)
+            response.metadata.setdefault("response_source", "action_request")
+        elif response.metadata.get("llm_response_used"):
+            response.metadata.setdefault("response_source", "llm_response_text")
+        else:
+            response.metadata.setdefault("response_source", "deterministic")
+
+        for key in (
+            "llm_fallback_used",
+            "llm_fallback_reason",
+            "action_suppressed_reason",
+            "action_min_confidence",
+            "llm_action_validation_failed",
+            "llm_action_validation_reason",
+        ):
+            if key in intent.entities:
+                response.metadata[key] = intent.entities[key]
 
     # ============================================================
     # MEMORY HELPERS

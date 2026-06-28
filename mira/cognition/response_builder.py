@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any
+
 from mira.actions.action_models import ActionResult
 from mira.core.models import BrainResponse, IntentResult, UserInput
 from mira.ui.face.face_state import FaceState
@@ -17,6 +19,9 @@ LLM_EMOTION_FACE_STATES = {
 class ResponseBuilder:
     """Builds UI-facing brain responses from normalized intent results."""
 
+    def __init__(self, memory: Any | None = None):
+        self.memory = memory
+
     def build(
         self,
         intent: IntentResult,
@@ -29,6 +34,73 @@ class ResponseBuilder:
         if intent.intent == "empty_input":
             return BrainResponse(
                 text="Non ho ricevuto alcun input.",
+                face_state=FaceState.CONFUSED,
+                metadata={"intent": intent.intent, "confidence": intent.confidence},
+            )
+
+        if intent.intent == "set_user_name":
+            user_name = self._get_user_name_from_intent_or_memory(intent)
+            if user_name:
+                text = f"Va bene, ti chiamerò {user_name}."
+            else:
+                text = "Non sono riuscito a leggere un nome valido."
+            return BrainResponse(
+                text=text,
+                face_state=FaceState.HAPPY,
+                metadata={"intent": intent.intent, "confidence": intent.confidence},
+            )
+
+        if intent.intent == "ask_user_name":
+            user_name = self._get_user_name_from_memory()
+            if user_name:
+                text = f"Ti chiami {user_name}."
+            else:
+                text = "Non conosco ancora il tuo nome. Puoi dirmelo, per esempio: mi chiamo Erik."
+            return BrainResponse(
+                text=text,
+                face_state=FaceState.SPEAKING,
+                metadata={"intent": intent.intent, "confidence": intent.confidence},
+            )
+
+        if intent.intent == "identity_query":
+            return BrainResponse(
+                text=(
+                    "Sono M.I.R.A., un assistente embodied software-first. "
+                    "N.E.R.O. indica provvisoriamente il mio nucleo cognitivo e H.A.R.O. "
+                    "è un nome provvisorio per una possibile futura piattaforma fisica."
+                ),
+                face_state=FaceState.SPEAKING,
+                metadata={"intent": intent.intent, "confidence": intent.confidence},
+            )
+
+        if intent.intent == "project_context":
+            return BrainResponse(
+                text=(
+                    "Stiamo parlando di M.I.R.A., un assistente embodied software-first "
+                    "con cognizione modulare, memoria di sessione, azioni locali opzionali "
+                    "e una possibile evoluzione hardware futura."
+                ),
+                face_state=FaceState.SPEAKING,
+                metadata={"intent": intent.intent, "confidence": intent.confidence},
+            )
+
+        if intent.intent == "greeting":
+            return BrainResponse(
+                text="Ciao. Sono M.I.R.A. Pronto a interagire con te.",
+                face_state=FaceState.HAPPY,
+                metadata={"intent": intent.intent, "confidence": intent.confidence},
+            )
+
+        if intent.intent == "status_query":
+            return BrainResponse(
+                text="Sto funzionando correttamente. Il mio layer cognitivo è attivo.",
+                face_state=FaceState.SPEAKING,
+                metadata={"intent": intent.intent, "confidence": intent.confidence},
+            )
+
+        if intent.intent == "llm_not_implemented":
+            return BrainResponse(
+                text="Il backend LLM è previsto, ma non è ancora attivo in questa build.",
                 face_state=FaceState.CONFUSED,
                 metadata={"intent": intent.intent, "confidence": intent.confidence},
             )
@@ -50,39 +122,31 @@ class ResponseBuilder:
                 metadata=metadata,
             )
 
-        if intent.intent == "greeting":
-            return BrainResponse(
-                text="Ciao. Sono M.I.R.A. Pronto a interagire con te.",
-                face_state=FaceState.HAPPY,
-                metadata={"intent": intent.intent, "confidence": intent.confidence},
-            )
-
-        if intent.intent == "status_query":
-            return BrainResponse(
-                text="Sto funzionando correttamente. Il mio layer cognitivo è attivo.",
-                face_state=FaceState.SPEAKING,
-                metadata={"intent": intent.intent, "confidence": intent.confidence},
-            )
-
-        if intent.intent == "identity_query":
-            return BrainResponse(
-                text="Sono N.E.R.O, il nucleo cognitivo embodied progettato per H.A.R.O.",
-                face_state=FaceState.SPEAKING,
-                metadata={"intent": intent.intent, "confidence": intent.confidence},
-            )
-
-        if intent.intent == "llm_not_implemented":
-            return BrainResponse(
-                text="Il backend LLM è previsto, ma non è ancora attivo in questa build.",
-                face_state=FaceState.CONFUSED,
-                metadata={"intent": intent.intent, "confidence": intent.confidence},
-            )
-
         return BrainResponse(
             text=f"Ho ricevuto: '{user_input.text}', ma non so ancora interpretarlo bene.",
             face_state=FaceState.CONFUSED,
             metadata={"intent": intent.intent, "confidence": intent.confidence},
         )
+
+    def _get_user_name_from_intent_or_memory(self, intent: IntentResult) -> str | None:
+        user_name = intent.entities.get("user_name")
+        if isinstance(user_name, str) and user_name.strip():
+            return user_name.strip()
+        return self._get_user_name_from_memory()
+
+    def _get_user_name_from_memory(self) -> str | None:
+        if self.memory is None:
+            return None
+        getter = getattr(self.memory, "get_context_value", None)
+        if getter is None:
+            getter = getattr(self.memory, "get_context", None)
+        if getter is None:
+            return None
+
+        user_name = getter("user_name")
+        if isinstance(user_name, str) and user_name.strip():
+            return user_name.strip()
+        return None
 
     def _get_llm_response_text(self, intent: IntentResult) -> str | None:
         response_text = intent.entities.get("llm_response_text")
