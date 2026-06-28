@@ -292,7 +292,10 @@ class Brain:
 
     def build_action_request(self, intent: IntentResult) -> ActionRequest | None:
         # --- LLM override support ---
-        if intent.entities.get("llm_action_validation_failed"):
+        if (
+            intent.entities.get("llm_action_validation_failed")
+            or intent.entities.get("action_suppressed_reason")
+        ):
             return None
 
         if intent.entities.get("action_suppressed_reason"):

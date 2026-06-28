@@ -194,6 +194,23 @@ def test_invalid_llm_action_marker_prevents_rule_based_action_fallback():
     assert request is None
 
 
+def test_low_confidence_llm_action_suppression_prevents_rule_based_action_fallback():
+    intent = IntentResult(
+        intent="time_query",
+        confidence=0.4,
+        entities={
+            "llm_action_name": None,
+            "action_suppressed_reason": "low_confidence",
+            "action_min_confidence": 0.65,
+        },
+    )
+    brain = make_brain(intent)
+
+    request = brain.build_action_request(intent)
+
+    assert request is None
+
+
 def test_rule_based_action_fallback_still_builds_request_without_llm_failure_marker():
     intent = IntentResult(
         intent="open_url_request",
