@@ -8,7 +8,7 @@ from mira.cognition.llm_client import LLMClientError
 from mira.cognition.llm_intent_engine import LLMIntentEngine
 from mira.cognition.session_context_builder import SessionContextBuilder
 from mira.domain.models import IntentResult, UserInput
-from mira.core.session_memory import MemoryMessage, SessionMemory
+from mira.memory.session_memory import MemoryMessage, SessionMemory
 
 
 class FakeClient:

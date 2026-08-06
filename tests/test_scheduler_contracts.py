@@ -21,7 +21,7 @@ from __future__ import annotations
 from mira.actions.action_models import ActionRequest
 from mira.core.brain import Brain
 from mira.core.embodied_behavior import EmbodiedBehavior
-from mira.core.events import EventBus
+from mira.messaging.events import EventBus
 from mira.domain.models import BrainResponse, IntentResult, UserInput
 from mira.domain.scheduler import ManualScheduler
 from mira.domain.state import FaceState

@@ -1,4 +1,4 @@
-from mira.core.events import EventBus
+from mira.messaging.events import EventBus
 from mira.core.state_manager import StateManager
 from mira.domain.models import BrainResponse
 from mira.domain.state import FaceState

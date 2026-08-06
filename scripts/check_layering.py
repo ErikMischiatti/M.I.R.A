@@ -15,15 +15,16 @@ Rule D (direction)
         mira            -> nothing
         mira.domain     -> nothing            (shared vocabulary; no mira deps)
         mira.config     -> nothing
-        mira.actions    -> domain
-        mira.cognition  -> domain, actions
-        mira.core       -> domain, actions, cognition
-        mira.adapters   -> domain              (port implementations)
-        mira.ui         -> domain, core, adapters
-        mira.main       -> unrestricted        (composition entry point)
+        mira.messaging  -> nothing            (in-process notification)
+        mira.memory     -> domain             (session retention)
+        mira.actions    -> domain, memory, messaging
+        mira.cognition  -> domain, memory, actions
+        mira.core       -> domain, messaging, memory, actions, cognition
+        mira.adapters   -> domain             (port implementations)
+        mira.ui         -> domain, messaging, core, adapters
+        mira.main       -> unrestricted       (composition entry point)
 
-    Known exceptions are listed in DIRECTION_DEBT, reported on every run, and
-    expected to shrink.
+    DIRECTION_DEBT holds exceptions and is currently empty.
 
 Rule Q (Qt containment)
     Only mira.ui, mira.adapters and mira.main may import PySide6. Timing and
@@ -52,11 +53,21 @@ LAYER_IMPORTS: dict[str, frozenset[str]] = {
     "mira": frozenset(),
     "mira.domain": frozenset(),
     "mira.config": frozenset(),
-    "mira.actions": frozenset({"mira.domain"}),
-    "mira.cognition": frozenset({"mira.domain", "mira.actions"}),
-    "mira.core": frozenset({"mira.domain", "mira.actions", "mira.cognition"}),
+    "mira.messaging": frozenset(),
+    "mira.memory": frozenset({"mira.domain"}),
+    "mira.actions": frozenset({"mira.domain", "mira.memory", "mira.messaging"}),
+    "mira.cognition": frozenset({"mira.domain", "mira.memory", "mira.actions"}),
+    "mira.core": frozenset(
+        {
+            "mira.domain",
+            "mira.messaging",
+            "mira.memory",
+            "mira.actions",
+            "mira.cognition",
+        }
+    ),
     "mira.adapters": frozenset({"mira.domain"}),
-    "mira.ui": frozenset({"mira.domain", "mira.core", "mira.adapters"}),
+    "mira.ui": frozenset({"mira.domain", "mira.messaging", "mira.core", "mira.adapters"}),
 }
 
 # Layers exempt from every rule. The composition entry point must be able to
@@ -67,27 +78,9 @@ UNRESTRICTED: frozenset[str] = frozenset({"mira.main"})
 QT_ALLOWED_LAYERS: frozenset[str] = frozenset({"mira.ui", "mira.adapters"})
 
 # Rule D exceptions: (importing module, imported module) -> justification.
-# These are debt, not design. Each entry names what removes it.
-DIRECTION_DEBT: dict[tuple[str, str], str] = {
-    (
-        "mira.actions.builtin_actions",
-        "mira.core.session_memory",
-    ): "SessionMemory is a memory-tier concept co-located with orchestration. "
-    "Removed when a memory layer is extracted.",
-    (
-        "mira.actions.action_executor",
-        "mira.core.events",
-    ): "EventBus is a messaging mechanism co-located with orchestration; this "
-    "import is TYPE_CHECKING-only. Removed when a messaging layer is extracted.",
-    (
-        "mira.cognition.llm_intent_engine",
-        "mira.core.session_memory",
-    ): "As above; annotation only.",
-    (
-        "mira.cognition.session_context_builder",
-        "mira.core.session_memory",
-    ): "As above; annotation only.",
-}
+# Empty since session memory and messaging moved out of the orchestration
+# package into mira.memory and mira.messaging.
+DIRECTION_DEBT: dict[tuple[str, str], str] = {}
 
 # Rule Q exceptions: module -> justification.
 # Empty since the scheduler port moved Qt timing into mira.adapters.

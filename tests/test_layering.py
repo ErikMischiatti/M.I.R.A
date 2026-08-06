@@ -186,14 +186,25 @@ def test_layering_checker_passes_on_current_tree():
     assert "Layering OK" in result.stdout
 
 
-def test_current_tree_declares_only_expected_exceptions():
-    """Declared exceptions are debt; pin the count so it cannot grow silently."""
+def test_current_tree_declares_no_exceptions():
+    """The debt is zero; pin it so a regression cannot reintroduce any.
+
+    With no exceptions the checker prints no exception block at all, so the
+    count is asserted through the success line instead.
+    """
     result = run_checker(REPO_ROOT, CHECKER)
     assert result.returncode == 0
-    assert "Declared exceptions (4)" in result.stdout, (
-        "the number of declared exceptions changed; shrinking is expected, "
-        f"growing needs justification.\n{result.stdout}"
+    assert "(0 declared exceptions)" in result.stdout, (
+        "layering debt reappeared; every exception needs a justification.\n"
+        f"{result.stdout}"
     )
+    assert "Declared exceptions" not in result.stdout
+
+    # The reported count only covers edges that are already disallowed, so a
+    # non-applicable debt entry would go unreported. Assert the dicts directly.
+    checker = _checker()
+    assert checker.DIRECTION_DEBT == {}
+    assert checker.QT_DEBT == {}
 
 
 @pytest.mark.parametrize("module_path,source,expected,location", REJECTION_CASES)
@@ -242,10 +253,29 @@ def test_checker_rejects_symlinked_package(tmp_path):
     assert "mira/cognition/plugins" in result.stderr
 
 
+def _checker():
+    """Load the checker module to reuse its declared layer table."""
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("_check_layering", CHECKER)
+    module = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(module)
+    return module
+
+
 def test_no_domain_package_imports_the_ui_layer():
     """Direct assertion of the outcome, independent of the checker."""
     offenders = []
-    for package in ("core", "cognition", "actions", "domain"):
+    # Derived from the checker so a new layer cannot be silently omitted.
+    packages = sorted(
+        layer.split(".", 1)[1]
+        for layer in _checker().LAYER_IMPORTS
+        if layer != "mira" and layer != "mira.ui"
+    )
+    for package in packages:
+        if not (REPO_ROOT / "mira" / package).is_dir():
+            continue
         for path in sorted((REPO_ROOT / "mira" / package).rglob("*.py")):
             if "__pycache__" in path.parts:
                 continue

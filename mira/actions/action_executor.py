@@ -7,7 +7,7 @@ from mira.actions.action_models import ActionRequest, ActionResult
 from mira.actions.action_registry import ActionRegistry
 
 if TYPE_CHECKING:
-    from mira.core.events import EventBus
+    from mira.messaging.events import EventBus
 
 
 logger = logging.getLogger(__name__)

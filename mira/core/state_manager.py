@@ -1,5 +1,5 @@
 from mira.domain.state import FaceState
-from mira.core.events import EventBus
+from mira.messaging.events import EventBus
 
 
 class StateManager:

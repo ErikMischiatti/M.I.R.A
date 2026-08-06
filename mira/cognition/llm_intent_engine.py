@@ -19,7 +19,7 @@ from mira.cognition.llm_schema import (
 from mira.cognition.rule_intent_engine import RuleIntentEngine
 from mira.cognition.session_context_builder import SessionContextBuilder
 from mira.domain.models import IntentResult, UserInput
-from mira.core.session_memory import SessionMemory
+from mira.memory.session_memory import SessionMemory
 
 
 DEFAULT_LLM_ACTION_MIN_CONFIDENCE = 0.65

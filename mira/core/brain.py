@@ -33,10 +33,10 @@ from mira.cognition.response_builder import ResponseBuilder
 from mira.cognition.rule_intent_engine import RuleIntentEngine
 from mira.cognition.llm_intent_engine import LLMIntentEngine  # ✅ NEW
 
-from mira.core.events import EventBus
+from mira.messaging.events import EventBus
 from mira.domain.scheduler import Scheduler
 from mira.domain.models import BrainResponse, IntentResult, UserInput
-from mira.core.session_memory import SessionMemory
+from mira.memory.session_memory import SessionMemory
 from mira.core.state_manager import StateManager
 from mira.domain.state import FaceState
 

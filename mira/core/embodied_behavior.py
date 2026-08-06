@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from mira.core.events import EventBus
+from mira.messaging.events import EventBus
 from mira.domain.scheduler import Scheduler, TimerHandle
 from mira.domain.models import BrainResponse, IntentResult
 from mira.core.state_manager import StateManager

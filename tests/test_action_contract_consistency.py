@@ -10,10 +10,10 @@ from mira.cognition.llm_schema import (
     validate_llm_action_for_intent,
 )
 from mira.core.brain import Brain
-from mira.core.events import EventBus
+from mira.messaging.events import EventBus
 from mira.domain.models import UserInput
 from mira.domain.scheduler import ManualScheduler
-from mira.core.session_memory import MemoryMessage, SessionMemory
+from mira.memory.session_memory import MemoryMessage, SessionMemory
 from mira.domain.state import FaceState
 
 
