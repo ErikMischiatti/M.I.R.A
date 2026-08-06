@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 
 from mira.cognition.session_context_builder import SessionContextBuilder
-from mira.core.models import UserInput
+from mira.domain.models import UserInput
 from mira.core.session_memory import MemoryMessage, SessionMemory
 
 

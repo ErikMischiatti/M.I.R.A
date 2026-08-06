@@ -11,9 +11,9 @@ from mira.cognition.llm_schema import (
 )
 from mira.core.brain import Brain
 from mira.core.events import EventBus
-from mira.core.models import UserInput
+from mira.domain.models import UserInput
 from mira.core.session_memory import MemoryMessage, SessionMemory
-from mira.ui.face.face_state import FaceState
+from mira.domain.state import FaceState
 
 
 class RecordingStateManager:

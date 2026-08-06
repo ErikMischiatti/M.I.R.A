@@ -4,7 +4,7 @@ from PySide6.QtGui import QColor, QPainter, QBrush
 
 from mira.ui.face.eye import Eye
 from mira.ui.face.face_controller import FaceController
-from mira.ui.face.face_state import FaceState
+from mira.domain.state import FaceState
 
 
 class FaceWidget(QWidget):

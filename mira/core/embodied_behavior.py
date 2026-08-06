@@ -3,9 +3,9 @@ from __future__ import annotations
 from PySide6.QtCore import QTimer
 
 from mira.core.events import EventBus
-from mira.core.models import BrainResponse, IntentResult
+from mira.domain.models import BrainResponse, IntentResult
 from mira.core.state_manager import StateManager
-from mira.ui.face.face_state import FaceState
+from mira.domain.state import FaceState
 
 
 class EmbodiedBehavior:

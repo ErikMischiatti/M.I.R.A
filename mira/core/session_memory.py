@@ -1,7 +1,7 @@
 from dataclasses import dataclass, field
 from typing import Any
 
-from mira.core.models import UserInput, IntentResult, BrainResponse
+from mira.domain.models import UserInput, IntentResult, BrainResponse
 
 
 @dataclass

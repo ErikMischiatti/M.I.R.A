@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from mira.cognition.intent_engine import IntentEngine
-from mira.core.models import IntentResult, UserInput
+from mira.domain.models import IntentResult, UserInput
 
 
 class RuleIntentEngine(IntentEngine):

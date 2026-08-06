@@ -1,4 +1,4 @@
-from mira.ui.face.face_state import FaceState
+from mira.domain.state import FaceState
 from mira.core.events import EventBus
 
 

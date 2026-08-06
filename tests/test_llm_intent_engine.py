@@ -7,7 +7,7 @@ from mira.actions.action_registry import ActionRegistry
 from mira.cognition.llm_client import LLMClientError
 from mira.cognition.llm_intent_engine import LLMIntentEngine
 from mira.cognition.session_context_builder import SessionContextBuilder
-from mira.core.models import IntentResult, UserInput
+from mira.domain.models import IntentResult, UserInput
 from mira.core.session_memory import MemoryMessage, SessionMemory
 
 

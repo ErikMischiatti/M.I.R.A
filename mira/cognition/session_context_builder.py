@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from mira.core.models import UserInput
+from mira.domain.models import UserInput
 from mira.core.session_memory import SessionMemory
 
 

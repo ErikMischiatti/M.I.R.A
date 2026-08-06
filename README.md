@@ -173,6 +173,9 @@ Face UI + Chat Response
 
 The project is organized around a modular separation of responsibilities:
 
+- `domain/` — UI-independent shared vocabulary: expressive state and the core
+  interaction models. Depends on nothing else in `mira` and imports no GUI toolkit.
+
 - `actions/`  
   Action models, registry, executor, and concrete system actions.
 
@@ -343,9 +346,13 @@ Without `MIRA_INTENT_ENGINE`, the system defaults to the rule-based engine.
 │   │   ├── events.py
 │   │   ├── __init__.py
 │   │   ├── interaction_manager.py
-│   │   ├── models.py
 │   │   ├── session_memory.py
 │   │   └── state_manager.py
+│   │
+│   ├── domain/
+│   │   ├── __init__.py
+│   │   ├── models.py
+│   │   └── state.py
 │   │
 │   ├── ui/
 │   │   ├── chat_panel.py
@@ -358,7 +365,6 @@ Without `MIRA_INTENT_ENGINE`, the system defaults to the rule-based engine.
 │   │       ├── expression_store.py
 │   │       ├── eye.py
 │   │       ├── face_controller.py
-│   │       ├── face_state.py
 │   │       └── face_widget.py
 │   │
 │   ├── __init__.py

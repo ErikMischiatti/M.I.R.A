@@ -26,6 +26,12 @@ The project is currently a Python + PySide6 embodied desktop assistant prototype
 
 Main modules:
 
+- `mira/domain`
+  - UI-independent shared vocabulary
+  - `FaceState` (`mira/domain/state.py`)
+  - `UserInput`, `IntentResult`, `BrainResponse` (`mira/domain/models.py`)
+  - depends on nothing else in `mira`; must never import PySide6
+
 - `mira/core`
   - event bus
   - state manager
@@ -65,6 +71,9 @@ Main modules:
 - Keep the architecture modular.
 - Do not couple UI directly to LLM logic.
 - Do not couple cognition directly to PySide6 widgets.
+- Do not import `mira.ui` from `mira/domain`, `mira/actions`, `mira/cognition`
+  or `mira/core`. Run `python scripts/check_layering.py` after changing imports;
+  it also rejects a new package under `mira/` that has no declared layer.
 - Prefer small, testable functions.
 - Keep local LLM integration optional.
 - Preserve fallback to the rule-based intent engine.
@@ -185,6 +194,7 @@ Use these after changes:
 
 ```bash
 python3 -m compileall mira
+python3 scripts/check_layering.py
 git diff --check
 ```
 

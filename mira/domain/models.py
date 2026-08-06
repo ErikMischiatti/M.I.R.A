@@ -1,6 +1,6 @@
 from dataclasses import dataclass, field
 from typing import Any
-from mira.ui.face.face_state import FaceState
+from mira.domain.state import FaceState
 
 
 @dataclass
