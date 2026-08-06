@@ -76,6 +76,22 @@ REJECTION_CASES = [
         id="qt-in-domain",
     ),
     pytest.param(
+        # Since the scheduler port there is no Qt exception for mira.core.
+        "mira/core/offender.py",
+        "from PySide6.QtCore import QTimer\n\nUSED = QTimer\n",
+        "[qt] mira.core must not import a GUI toolkit",
+        "mira/core/offender.py:1",
+        id="qt-in-core-has-no-exception",
+    ),
+    pytest.param(
+        # Adapters are the declared home for technology bindings.
+        "mira/adapters/offender.py",
+        "from mira.core.brain import Brain\n\nUSED = Brain\n",
+        "[direction] mira.adapters must not import mira.core",
+        "mira/adapters/offender.py:1",
+        id="adapters-must-not-import-orchestration",
+    ),
+    pytest.param(
         "mira/perception/camera.py",
         "from mira.ui.debug_panel import DebugPanel\n\nUSED = DebugPanel\n",
         "[unclassified] mira.perception.camera belongs to no declared layer",
@@ -174,7 +190,7 @@ def test_current_tree_declares_only_expected_exceptions():
     """Declared exceptions are debt; pin the count so it cannot grow silently."""
     result = run_checker(REPO_ROOT, CHECKER)
     assert result.returncode == 0
-    assert "Declared exceptions (6)" in result.stdout, (
+    assert "Declared exceptions (4)" in result.stdout, (
         "the number of declared exceptions changed; shrinking is expected, "
         f"growing needs justification.\n{result.stdout}"
     )

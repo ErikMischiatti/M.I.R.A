@@ -18,15 +18,17 @@ Rule D (direction)
         mira.actions    -> domain
         mira.cognition  -> domain, actions
         mira.core       -> domain, actions, cognition
-        mira.ui         -> domain, core
+        mira.adapters   -> domain              (port implementations)
+        mira.ui         -> domain, core, adapters
         mira.main       -> unrestricted        (composition entry point)
 
     Known exceptions are listed in DIRECTION_DEBT, reported on every run, and
     expected to shrink.
 
 Rule Q (Qt containment)
-    Only mira.ui and mira.main may import PySide6. Known exceptions are listed
-    in QT_DEBT, reported on every run, and expected to shrink.
+    Only mira.ui, mira.adapters and mira.main may import PySide6. Timing and
+    other technology bindings belong in mira.adapters behind a domain port.
+    QT_DEBT holds exceptions and is currently empty.
 
 Default-deny: any package under mira/ that is not assigned a layer below is a
 failure, not a free pass. Adding a package therefore requires a deliberate
@@ -53,7 +55,8 @@ LAYER_IMPORTS: dict[str, frozenset[str]] = {
     "mira.actions": frozenset({"mira.domain"}),
     "mira.cognition": frozenset({"mira.domain", "mira.actions"}),
     "mira.core": frozenset({"mira.domain", "mira.actions", "mira.cognition"}),
-    "mira.ui": frozenset({"mira.domain", "mira.core"}),
+    "mira.adapters": frozenset({"mira.domain"}),
+    "mira.ui": frozenset({"mira.domain", "mira.core", "mira.adapters"}),
 }
 
 # Layers exempt from every rule. The composition entry point must be able to
@@ -61,7 +64,7 @@ LAYER_IMPORTS: dict[str, frozenset[str]] = {
 UNRESTRICTED: frozenset[str] = frozenset({"mira.main"})
 
 # Rule Q: layers permitted to import a GUI toolkit.
-QT_ALLOWED_LAYERS: frozenset[str] = frozenset({"mira.ui"})
+QT_ALLOWED_LAYERS: frozenset[str] = frozenset({"mira.ui", "mira.adapters"})
 
 # Rule D exceptions: (importing module, imported module) -> justification.
 # These are debt, not design. Each entry names what removes it.
@@ -87,12 +90,8 @@ DIRECTION_DEBT: dict[tuple[str, str], str] = {
 }
 
 # Rule Q exceptions: module -> justification.
-QT_DEBT: dict[str, str] = {
-    "mira.core.brain": "QThreadPool/QRunnable/Signal/QTimer drive the two-phase "
-    "turn commit. Removed when the scheduler port lands (proposed ADR 0005).",
-    "mira.core.embodied_behavior": "One single-shot QTimer for expression decay. "
-    "Removed when the scheduler port lands (proposed ADR 0005).",
-}
+# Empty since the scheduler port moved Qt timing into mira.adapters.
+QT_DEBT: dict[str, str] = {}
 
 
 class Finding(NamedTuple):

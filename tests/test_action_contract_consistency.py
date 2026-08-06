@@ -12,6 +12,7 @@ from mira.cognition.llm_schema import (
 from mira.core.brain import Brain
 from mira.core.events import EventBus
 from mira.domain.models import UserInput
+from mira.domain.scheduler import ManualScheduler
 from mira.core.session_memory import MemoryMessage, SessionMemory
 from mira.domain.state import FaceState
 
@@ -41,6 +42,7 @@ def build_brain_registry() -> ActionRegistry:
         event_bus=EventBus(),
         state_manager=RecordingStateManager(),
         intent_engine=object(),
+        scheduler=ManualScheduler(),
     )
     return brain.action_registry
 

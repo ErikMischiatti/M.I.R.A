@@ -5,6 +5,7 @@ from mira.ui.face.face_widget import FaceWidget
 from mira.ui.debug_panel import DebugPanel
 from mira.ui.chat_panel import ChatPanel
 
+from mira.adapters.qt_scheduler import QtScheduler
 from mira.core.events import EventBus
 from mira.core.state_manager import StateManager
 from mira.core.brain import Brain
@@ -24,9 +25,14 @@ class MainWindow(QMainWindow):
         # --- Core systems ---
         self.event_bus = EventBus()
         self.state_manager = StateManager(self.event_bus)
-        self.brain = Brain(self.event_bus, self.state_manager)
+        self.scheduler = QtScheduler()
+        self.brain = Brain(
+            self.event_bus, self.state_manager, scheduler=self.scheduler
+        )
         self.interaction_manager = InteractionManager(self.event_bus, self.state_manager)
-        self.embodied_behavior = EmbodiedBehavior(self.event_bus, self.state_manager)
+        self.embodied_behavior = EmbodiedBehavior(
+            self.event_bus, self.state_manager, scheduler=self.scheduler
+        )
 
         # --- UI root ---
         central_widget = QWidget()

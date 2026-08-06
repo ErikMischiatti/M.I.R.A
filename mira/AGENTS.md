@@ -32,6 +32,12 @@ Main modules:
   - `UserInput`, `IntentResult`, `BrainResponse` (`mira/domain/models.py`)
   - depends on nothing else in `mira`; must never import PySide6
 
+- `mira/adapters`
+  - implementations of domain ports against concrete technologies
+  - `QtScheduler` (`mira/adapters/qt_scheduler.py`): the production timing
+    adapter; the only place that knows the turn lifecycle runs on a Qt event loop
+  - may import `mira.domain`; never imported by the domain
+
 - `mira/core`
   - event bus
   - state manager
@@ -74,6 +80,9 @@ Main modules:
 - Do not import `mira.ui` from `mira/domain`, `mira/actions`, `mira/cognition`
   or `mira/core`. Run `python scripts/check_layering.py` after changing imports;
   it also rejects a new package under `mira/` that has no declared layer.
+- Do not import PySide6 outside `mira/adapters`, `mira/ui` and `mira/main.py`.
+  Timing belongs behind the `Scheduler` port in `mira/domain/scheduler.py`; the
+  core is constructible and testable with no GUI toolkit installed.
 - Prefer small, testable functions.
 - Keep local LLM integration optional.
 - Preserve fallback to the rule-based intent engine.

@@ -4,6 +4,7 @@ from mira.actions.action_models import ActionRequest, ActionResult
 from mira.core.brain import Brain, BrainComputationResult
 from mira.core.events import EventBus
 from mira.domain.models import BrainResponse, IntentResult, UserInput
+from mira.domain.scheduler import ManualScheduler
 from mira.domain.state import FaceState
 
 
@@ -70,6 +71,7 @@ def make_brain(intent: IntentResult):
         state_manager=RecordingStateManager(),
         intent_engine=StaticIntentEngine(intent),
         response_builder=RecordingResponseBuilder(),
+        scheduler=ManualScheduler(),
     )
     brain.action_executor = RecordingActionExecutor()
     return brain
