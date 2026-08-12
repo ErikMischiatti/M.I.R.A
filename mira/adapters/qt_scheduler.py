@@ -23,6 +23,17 @@ Both entry points assert they are called from the thread that built the
 scheduler. Without that check, `submit` from a loop-less thread silently never
 delivers and leaks its receiver, and a `QTimer` created there never fires —
 failures whose only symptom is a wedged turn.
+
+Every `QObject` here must also be *destroyed* on the home thread, which is a
+separate obligation from being created there. `QThreadPool` auto-deletes a
+finished `QRunnable` on the pool thread it ran on, and that deletion releases
+whatever the runnable referenced. A sender left under Python's ownership is
+therefore destroyed on a pool thread, and `~QObject` tearing down a connection
+there races the home thread delivering that same connection's queued event —
+observed as an intermittent SIGSEGV in `submit`, roughly once per hundred calls.
+`_sender_owner` exists to close that: a parented sender is owned by C++, so a
+pool thread dropping its reference cannot run the destructor, and the deferred
+delete in `_forget_receiver` runs it here instead.
 """
 
 from __future__ import annotations
@@ -114,11 +125,14 @@ class QtScheduler:
         self._home_thread = QThread.currentThread()
         # Qt objects are owned here; without a reference they would be
         # collected before firing or before delivering a completion.
-        # _WorkerSignals is deliberately absent: the worker owns it, and Qt's
-        # queued event carries its own copy of the arguments, so the signal
-        # object may die once emit() has posted. Pinning it here would leak.
         self._timers: set[QTimer] = set()
-        self._receivers: set[_CompletionReceiver] = set()
+        # Parent for every per-submit sender, built on the home thread. Giving a
+        # sender a C++ parent moves its lifetime out of Python's hands, which is
+        # what keeps ~QObject on this thread; see _senders below.
+        self._sender_owner = QObject()
+        # Receiver -> its sender. Keyed by receiver so the receiver is held for
+        # exactly as long as the completion it is waiting for.
+        self._senders: dict[_CompletionReceiver, _WorkerSignals] = {}
 
     def _require_home_thread(self, operation: str) -> None:
         if QThread.currentThread() is not self._home_thread:
@@ -143,9 +157,11 @@ class QtScheduler:
 
     def submit(self, work: Callable[[], T], on_complete: Callable[[T], None]) -> None:
         self._require_home_thread("submit")
-        signals = _WorkerSignals()
+        # Parented, so QThreadPool auto-deleting the worker on a pool thread
+        # drops a reference that no longer decides when ~QObject runs.
+        signals = _WorkerSignals(self._sender_owner)
         receiver = _CompletionReceiver(self, on_complete)
-        self._receivers.add(receiver)
+        self._senders[receiver] = signals
         signals.completed.connect(receiver.handle)
         self._thread_pool.start(_Worker(work, signals))
 
@@ -153,7 +169,12 @@ class QtScheduler:
         self._timers.discard(timer)
 
     def _forget_receiver(self, receiver: _CompletionReceiver) -> None:
-        self._receivers.discard(receiver)
+        signals = self._senders.pop(receiver, None)
+        if signals is not None:
+            # Deferred, not immediate: this runs inside the slot that this very
+            # sender is delivering, and posting the delete to the home thread is
+            # also what keeps the destructor off any pool thread.
+            signals.deleteLater()
 
     def pending_timers(self) -> int:
         """Timers still held alive here. The leak surface the tests assert on."""
@@ -161,4 +182,4 @@ class QtScheduler:
 
     def pending_completions(self) -> int:
         """Completions awaiting delivery. The leak surface the tests assert on."""
-        return len(self._receivers)
+        return len(self._senders)

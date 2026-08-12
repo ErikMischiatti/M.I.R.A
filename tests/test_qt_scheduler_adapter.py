@@ -171,6 +171,82 @@ print("OK")
 """
 
 
+# One submit per event-loop cycle, repeated. This is the sequence that made the
+# crash reproducible: a single completion delivered, then the loop exits while
+# the pool thread that ran the work is still retiring its sender. At 500 cycles
+# the unfixed adapter segfaulted in essentially every process, against roughly
+# 1% for a single submit, so this is the end-to-end guard.
+REPEATED_SUBMIT_CASE = PREAMBLE + """
+CYCLES = 500
+
+for i in range(CYCLES):
+    got = []
+
+    def on_complete(result, got=got):
+        assert threading.current_thread().ident == main_thread, "completion off main"
+        got.append(result)
+        app.quit()
+
+    scheduler.submit(lambda: "x", on_complete)
+    app.exec()
+    assert got == ["x"], f"cycle {i} delivered {got}"
+
+assert scheduler.pending_completions() == 0, "receivers leaked across cycles"
+print("OK")
+"""
+
+
+# Creating a QObject on the home thread is only half the obligation; it must be
+# destroyed there too. The sender is referenced by the QRunnable, which
+# QThreadPool auto-deletes on a pool thread, so if that deletion is what destroys
+# the sender then ~QObject tears down the connection off the home thread and
+# races the delivery of its own queued event. Asserting on the destructor's
+# thread pins that invariant directly rather than hunting an intermittent crash.
+SENDER_LIFETIME_CASE = PREAMBLE + """
+from PySide6.QtCore import Qt
+from mira.adapters import qt_scheduler
+
+destroyed_on = []
+original_init = qt_scheduler._WorkerSignals.__init__
+
+
+def recording_init(self, *args, **kwargs):
+    original_init(self, *args, **kwargs)
+    # Direct, so the handler runs inside ~QObject on the thread destroying it.
+    self.destroyed.connect(
+        lambda *_: destroyed_on.append(threading.current_thread().ident),
+        Qt.ConnectionType.DirectConnection,
+    )
+
+
+qt_scheduler._WorkerSignals.__init__ = recording_init
+
+CYCLES = 50
+for i in range(CYCLES):
+    got = []
+
+    def on_complete(result, got=got):
+        got.append(result)
+        app.quit()
+
+    scheduler.submit(lambda: "x", on_complete)
+    app.exec()
+    assert got == ["x"], f"cycle {i} delivered {got}"
+
+# Drain the deferred deletes the completions queued.
+QTimer.singleShot(200, app.quit)
+app.exec()
+
+# Non-vacuous on purpose: an adapter that simply kept every sender alive would
+# record nothing here and satisfy an "all on the main thread" assertion
+# trivially, while still growing without bound.
+assert len(destroyed_on) == CYCLES, f"only {len(destroyed_on)}/{CYCLES} senders destroyed"
+off_main = [t for t in destroyed_on if t != main_thread]
+assert off_main == [], f"{len(off_main)} of {CYCLES} senders destroyed off the main thread"
+print("OK")
+"""
+
+
 def run_case(source: str) -> subprocess.CompletedProcess[str]:
     env = dict(os.environ, QT_QPA_PLATFORM="offscreen")
     return subprocess.run(
@@ -192,6 +268,8 @@ def run_case(source: str) -> subprocess.CompletedProcess[str]:
         pytest.param(ORDERING_CASE, id="timers-fire-in-delay-order"),
         pytest.param(WORK_RAISES_CASE, id="failed-work-releases-receiver"),
         pytest.param(WRONG_THREAD_CASE, id="rejects-calls-from-a-foreign-thread"),
+        pytest.param(REPEATED_SUBMIT_CASE, id="repeated-submits-survive-many-loop-cycles"),
+        pytest.param(SENDER_LIFETIME_CASE, id="sender-is-destroyed-on-the-main-thread"),
     ],
 )
 def test_qt_scheduler(source):
