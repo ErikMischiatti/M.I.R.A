@@ -3,7 +3,7 @@ from pathlib import Path
 
 from mira.ui.face.expression_library import DEFAULT_EXPRESSION_LIBRARY, make_expression_library
 from mira.ui.face.expression_profile import ExpressionProfile
-from mira.ui.face.face_state import FaceState
+from mira.domain.state import FaceState
 
 
 EXPRESSIONS_FILE = Path("mira/config/expression_profiles.json")

@@ -1,11 +1,10 @@
 from __future__ import annotations
 
-from PySide6.QtCore import QTimer
-
-from mira.core.events import EventBus
-from mira.core.models import BrainResponse, IntentResult
+from mira.messaging.events import EventBus
+from mira.domain.scheduler import Scheduler, TimerHandle
+from mira.domain.models import BrainResponse, IntentResult
 from mira.core.state_manager import StateManager
-from mira.ui.face.face_state import FaceState
+from mira.domain.state import FaceState
 
 
 class EmbodiedBehavior:
@@ -21,13 +20,18 @@ class EmbodiedBehavior:
     It only shapes how the current behavior remains visible.
     """
 
-    def __init__(self, event_bus: EventBus, state_manager: StateManager):
+    def __init__(
+        self,
+        event_bus: EventBus,
+        state_manager: StateManager,
+        *,
+        scheduler: Scheduler,
+    ):
         self.event_bus = event_bus
         self.state_manager = state_manager
+        self.scheduler = scheduler
 
-        self.decay_timer = QTimer()
-        self.decay_timer.setSingleShot(True)
-        self.decay_timer.timeout.connect(self._decay_to_neutral)
+        self._decay_handle: TimerHandle | None = None
 
         self.last_response_state: FaceState | None = None
         self.decay_active = False
@@ -67,10 +71,10 @@ class EmbodiedBehavior:
         delay_ms = self._get_decay_delay(response.face_state)
         self.decay_active = True
 
-        if self.decay_timer.isActive():
-            self.decay_timer.stop()
+        if self._decay_handle is not None:
+            self._decay_handle.cancel()
 
-        self.decay_timer.start(delay_ms)
+        self._decay_handle = self.scheduler.call_later(delay_ms, self._decay_to_neutral)
 
     def _get_decay_delay(self, state: FaceState) -> int:
         if state == FaceState.HAPPY:

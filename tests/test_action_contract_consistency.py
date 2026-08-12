@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from doubles import RecordingStateManager
+
 from mira.actions.action_contracts import ACTION_CONTRACTS
 from mira.actions.action_models import ActionContract
 from mira.actions.action_registry import ActionRegistry
@@ -10,21 +12,16 @@ from mira.cognition.llm_schema import (
     validate_llm_action_for_intent,
 )
 from mira.core.brain import Brain
-from mira.core.events import EventBus
-from mira.core.models import UserInput
-from mira.core.session_memory import MemoryMessage, SessionMemory
-from mira.ui.face.face_state import FaceState
-
-
-class RecordingStateManager:
-    def __init__(self):
-        self.current_state = FaceState.IDLE
-
-    def set_state(self, new_state):
-        self.current_state = new_state
+from mira.domain.models import UserInput
+from mira.domain.scheduler import ManualScheduler
+from mira.memory.session_memory import MemoryMessage, SessionMemory
+from mira.messaging.events import EventBus
 
 
 class FakeClient:
+    """Local on purpose: a fixed canned reply, unlike the configurable
+    `FakeClient` in `test_llm_intent_engine.py`. Two names, two contracts."""
+
     def generate_structured(self, **kwargs):
         return {
             "intent": "unknown",
@@ -41,6 +38,7 @@ def build_brain_registry() -> ActionRegistry:
         event_bus=EventBus(),
         state_manager=RecordingStateManager(),
         intent_engine=object(),
+        scheduler=ManualScheduler(),
     )
     return brain.action_registry
 

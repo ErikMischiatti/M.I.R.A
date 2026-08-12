@@ -1,91 +1,9 @@
 from __future__ import annotations
 
-import importlib.util
-import sys
-import types
-from dataclasses import dataclass, field
-from enum import Enum, auto
-from pathlib import Path
-from typing import Any
-
-
-@dataclass
-class ActionResult:
-    success: bool
-    action_name: str
-    message: str
-    data: dict[str, Any] = field(default_factory=dict)
-
-
-class FaceState(Enum):
-    IDLE = auto()
-    LISTENING = auto()
-    THINKING = auto()
-    SPEAKING = auto()
-    HAPPY = auto()
-    TIRED = auto()
-    ANGRY = auto()
-    CONFUSED = auto()
-
-
-@dataclass
-class UserInput:
-    text: str
-    source: str = "text"
-    metadata: dict[str, Any] = field(default_factory=dict)
-
-
-@dataclass
-class IntentResult:
-    intent: str
-    confidence: float = 1.0
-    entities: dict[str, Any] = field(default_factory=dict)
-
-
-@dataclass
-class BrainResponse:
-    text: str
-    face_state: FaceState
-    metadata: dict[str, Any] = field(default_factory=dict)
-
-
-def _load_response_builder_module():
-    modules = {
-        "mira.actions.action_models": types.ModuleType("mira.actions.action_models"),
-        "mira.core.models": types.ModuleType("mira.core.models"),
-        "mira.ui.face.face_state": types.ModuleType("mira.ui.face.face_state"),
-    }
-    modules["mira.actions.action_models"].ActionResult = ActionResult
-    modules["mira.core.models"].BrainResponse = BrainResponse
-    modules["mira.core.models"].IntentResult = IntentResult
-    modules["mira.core.models"].UserInput = UserInput
-    modules["mira.ui.face.face_state"].FaceState = FaceState
-
-    original_modules = {
-        name: sys.modules.get(name)
-        for name in modules
-    }
-    sys.modules.update(modules)
-    try:
-        module_path = Path(__file__).resolve().parents[1] / "mira/cognition/response_builder.py"
-        spec = importlib.util.spec_from_file_location(
-            "response_builder_under_test",
-            module_path,
-        )
-        module = importlib.util.module_from_spec(spec)
-        assert spec.loader is not None
-        spec.loader.exec_module(module)
-        return module
-    finally:
-        for name, original_module in original_modules.items():
-            if original_module is None:
-                sys.modules.pop(name, None)
-            else:
-                sys.modules[name] = original_module
-
-
-response_builder = _load_response_builder_module()
-ResponseBuilder = response_builder.ResponseBuilder
+from mira.actions.action_models import ActionResult
+from mira.cognition.response_builder import ResponseBuilder
+from mira.domain.models import IntentResult, UserInput
+from mira.domain.state import FaceState
 
 
 def build_response(intent: IntentResult, action_result: ActionResult | None = None):

@@ -14,7 +14,7 @@ from PySide6.QtWidgets import (
     QScrollArea,
 )
 
-from mira.ui.face.face_state import FaceState
+from mira.domain.state import FaceState
 
 
 class DebugPanel(QWidget):

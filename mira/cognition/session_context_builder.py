@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from mira.core.models import UserInput
-from mira.core.session_memory import SessionMemory
+from mira.domain.models import UserInput
+from mira.memory.session_memory import SessionMemory
 
 
 DEFAULT_MAX_CONTEXT_MESSAGES = 8

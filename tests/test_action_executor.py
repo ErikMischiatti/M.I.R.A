@@ -2,18 +2,15 @@ from __future__ import annotations
 
 import unittest
 
+# A real EventBus subclass that records to `emitted` and still dispatches. No
+# test here subscribes, so dispatch delivers to nobody and the recording is the
+# only observable effect — which is what these tests assert on.
+from doubles import RecordingEventBus
+
 from mira.actions.action_contracts import ACTION_CONTRACTS, build_action_contract_registry
 from mira.actions.action_executor import ActionExecutor
 from mira.actions.action_models import ActionContract, ActionRequest, ActionResult
 from mira.actions.action_registry import ActionRegistry
-
-
-class RecordingEventBus:
-    def __init__(self):
-        self.events = []
-
-    def emit(self, event_name, payload=None):
-        self.events.append((event_name, payload))
 
 
 class ActionExecutorTests(unittest.TestCase):
@@ -44,7 +41,7 @@ class ActionExecutorTests(unittest.TestCase):
             ),
         )
         self.assertEqual(
-            [event_name for event_name, _ in event_bus.events],
+            [event_name for event_name, _ in event_bus.emitted],
             ["action_started", "action_completed"],
         )
 
@@ -60,7 +57,7 @@ class ActionExecutorTests(unittest.TestCase):
         self.assertIn("non disponibile", result.message)
         self.assertEqual(result.data["reason"], "action_unknown")
         self.assertEqual(
-            [event_name for event_name, _ in event_bus.events],
+            [event_name for event_name, _ in event_bus.emitted],
             ["action_started", "action_failed"],
         )
 
@@ -81,7 +78,7 @@ class ActionExecutorTests(unittest.TestCase):
         self.assertIn("boom", result.message)
         self.assertEqual(result.data["reason"], "action_exception")
         self.assertEqual(
-            [event_name for event_name, _ in event_bus.events],
+            [event_name for event_name, _ in event_bus.emitted],
             ["action_started", "action_failed"],
         )
 
@@ -103,7 +100,7 @@ class ActionExecutorTests(unittest.TestCase):
                 self.assertFalse(result.success)
                 self.assertEqual(result.data["reason"], expected_reason)
                 self.assertEqual(
-                    [event_name for event_name, _ in event_bus.events],
+                    [event_name for event_name, _ in event_bus.emitted],
                     ["action_failed"],
                 )
 

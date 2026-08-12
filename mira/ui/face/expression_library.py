@@ -1,7 +1,7 @@
 import copy
 
 from mira.ui.face.expression_profile import ExpressionProfile
-from mira.ui.face.face_state import FaceState
+from mira.domain.state import FaceState
 
 
 DEFAULT_EXPRESSION_LIBRARY = {

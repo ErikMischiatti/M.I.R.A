@@ -148,7 +148,10 @@ Profiles can be saved and reloaded from configuration files without modifying th
 
 ## Architecture Overview
 
-For a complete technical analysis of the current architecture, see [`docs/MIRA_technical_analysis.md`](docs/MIRA_technical_analysis.md).
+A historical technical analysis from 2026-06-28 is kept at
+[`docs/MIRA_technical_analysis.md`](docs/MIRA_technical_analysis.md). It is a
+snapshot, not current guidance — the package layout has changed since. The
+enforced structure lives in `scripts/check_layering.py`.
 
 ```text
 User Input
@@ -173,6 +176,15 @@ Face UI + Chat Response
 
 The project is organized around a modular separation of responsibilities:
 
+- `domain/` — UI-independent shared vocabulary: expressive state and the core
+  interaction models. Depends on nothing else in `mira` and imports no GUI toolkit.
+
+- `messaging/` — in-process notification: subscription and synchronous fan-out.
+  Depends on nothing else in `mira`.
+
+- `memory/` — what the assistant retains within a session: recent history, the
+  last inferred intent, and session context. Depends only on `domain/`.
+
 - `actions/`  
   Action models, registry, executor, and concrete system actions.
 
@@ -180,7 +192,11 @@ The project is organized around a modular separation of responsibilities:
   Intent engines, local LLM integration, schemas, and response construction.
 
 - `core/`  
-  Brain orchestration, event bus, interaction manager, state manager, embodied behavior, and memory.
+  Brain orchestration, interaction manager, state manager, and embodied behavior.
+
+- `adapters/` — implementations of domain ports against concrete technologies.
+  Currently the Qt-backed scheduler; the only place that knows the turn
+  lifecycle runs on a Qt event loop.
 
 - `ui/`  
   Chat panel, debug panel, main window, expressive face rendering, and animation control.
@@ -337,15 +353,30 @@ Without `MIRA_INTENT_ENGINE`, the system defaults to the rule-based engine.
 │   │   ├── __init__.py
 │   │   └── expression_profiles.json
 │   │
+│   ├── adapters/
+│   │   ├── __init__.py
+│   │   └── qt_scheduler.py
+│   │
 │   ├── core/
 │   │   ├── brain.py
 │   │   ├── embodied_behavior.py
-│   │   ├── events.py
 │   │   ├── __init__.py
 │   │   ├── interaction_manager.py
-│   │   ├── models.py
-│   │   ├── session_memory.py
 │   │   └── state_manager.py
+│   │
+│   ├── domain/
+│   │   ├── __init__.py
+│   │   ├── models.py
+│   │   ├── scheduler.py
+│   │   └── state.py
+│   │
+│   ├── memory/
+│   │   ├── __init__.py
+│   │   └── session_memory.py
+│   │
+│   ├── messaging/
+│   │   ├── __init__.py
+│   │   └── events.py
 │   │
 │   ├── ui/
 │   │   ├── chat_panel.py
@@ -358,7 +389,6 @@ Without `MIRA_INTENT_ENGINE`, the system defaults to the rule-based engine.
 │   │       ├── expression_store.py
 │   │       ├── eye.py
 │   │       ├── face_controller.py
-│   │       ├── face_state.py
 │   │       └── face_widget.py
 │   │
 │   ├── __init__.py

@@ -26,11 +26,31 @@ The project is currently a Python + PySide6 embodied desktop assistant prototype
 
 Main modules:
 
+- `mira/domain`
+  - UI-independent shared vocabulary
+  - `FaceState` (`mira/domain/state.py`)
+  - `UserInput`, `IntentResult`, `BrainResponse` (`mira/domain/models.py`)
+  - depends on nothing else in `mira`; must never import PySide6
+
+- `mira/adapters`
+  - implementations of domain ports against concrete technologies
+  - `QtScheduler` (`mira/adapters/qt_scheduler.py`): the production timing
+    adapter; the only place that knows the turn lifecycle runs on a Qt event loop
+  - may import `mira.domain`; never imported by the domain
+
+- `mira/messaging`
+  - in-process notification: subscription and synchronous fan-out
+  - `EventBus` (`mira/messaging/events.py`)
+  - depends on nothing else in `mira`; events notify, they do not carry authority
+
+- `mira/memory`
+  - what the assistant retains within a session
+  - `SessionMemory`, `MemoryMessage` (`mira/memory/session_memory.py`)
+  - depends only on `mira.domain`; no persistence
+
 - `mira/core`
-  - event bus
   - state manager
   - brain orchestration
-  - session memory
   - interaction manager
   - embodied behavior
 
@@ -65,6 +85,15 @@ Main modules:
 - Keep the architecture modular.
 - Do not couple UI directly to LLM logic.
 - Do not couple cognition directly to PySide6 widgets.
+- Do not import `mira.ui` from any inner layer — `mira/domain`, `mira/messaging`,
+  `mira/memory`, `mira/actions`, `mira/cognition`, `mira/core` or `mira/adapters`. Run `python scripts/check_layering.py` after changing imports;
+  it also rejects a new package under `mira/` that has no declared layer.
+- Do not import PySide6 outside `mira/adapters`, `mira/ui` and `mira/main.py`.
+  Timing belongs behind the `Scheduler` port in `mira/domain/scheduler.py`; the
+  core is constructible and testable with no GUI toolkit installed.
+- Session memory lives in `mira/memory` and the event bus in `mira/messaging`,
+  not in `mira/core`. The layering checker declares zero exceptions; keep it
+  that way rather than adding one.
 - Prefer small, testable functions.
 - Keep local LLM integration optional.
 - Preserve fallback to the rule-based intent engine.
@@ -185,6 +214,7 @@ Use these after changes:
 
 ```bash
 python3 -m compileall mira
+python3 scripts/check_layering.py
 git diff --check
 ```
 

@@ -2,7 +2,7 @@ import math
 import random
 
 from mira.ui.face.expression_store import load_expression_library, reset_expression
-from mira.ui.face.face_state import FaceState
+from mira.domain.state import FaceState
 
 
 class FaceController:

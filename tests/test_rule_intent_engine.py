@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from mira.cognition.rule_intent_engine import RuleIntentEngine
-from mira.core.models import UserInput
+from mira.domain.models import UserInput
 
 
 def infer(text: str):
