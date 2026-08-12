@@ -247,6 +247,211 @@ print("OK")
 """
 
 
+# --- call_later timer lifetime ------------------------------------------
+#
+# PySide holds a strong reference to every callable connected to a signal, in
+# bookkeeping owned by the emitter. `call_later` used to connect a lambda closing
+# over its own QTimer, which made timer and callable refer to each other through
+# a hop on the C++ side that Python's collector cannot see, so no timer was ever
+# reclaimed. `pending_timers()` reported zero throughout, which is why these
+# cases count live QTimer objects instead of trusting that number.
+#
+# TOLERANCE covers the QTimer objects the harness itself has in flight
+# (`QTimer.singleShot` for the hard stop and the drain step). The defect these
+# cases guard against grew one QTimer per call — 500 at COUNT below, two orders
+# of magnitude above the tolerance — so it cannot hide inside it.
+TIMER_LIFETIME_PREAMBLE = PREAMBLE + """
+import gc
+
+COUNT = 500
+TOLERANCE = 10
+
+
+def live_timers():
+    gc.collect()
+    return sum(1 for obj in gc.get_objects() if isinstance(obj, QTimer))
+
+
+def owned_timers():
+    # C++ children of the scheduler's owner: exact, with no ambient timers.
+    return [c for c in scheduler._qt_owner.children() if isinstance(c, QTimer)]
+"""
+
+
+TIMER_FIRED_LIFETIME_CASE = TIMER_LIFETIME_PREAMBLE + """
+fired = []
+baseline = live_timers()
+
+for _ in range(COUNT):
+    scheduler.call_later(0, lambda: fired.append(1))
+
+observed["owned_while_pending"] = len(owned_timers())
+
+
+def measure():
+    # Recorded rather than asserted: PySide prints a traceback for an exception
+    # raised inside a slot but the process still exits 0, so an assertion here
+    # would be a false pass. Every case in this file therefore asserts after
+    # app.exec() has returned.
+    observed["fired"] = len(fired)
+    observed["pending"] = scheduler.pending_timers()
+    observed["owned"] = len(owned_timers())
+    observed["grew"] = live_timers() - baseline
+    app.quit()
+
+
+# Drain the deferred deletes the released timers queued, then measure.
+QTimer.singleShot(500, measure)
+app.exec()
+
+assert observed.get("owned_while_pending") == COUNT, observed.get("owned_while_pending")
+assert "grew" in observed, "the drain step never ran"
+assert observed["fired"] == COUNT, f"only {observed['fired']}/{COUNT} callbacks ran"
+assert observed["pending"] == 0, f"{observed['pending']} still pending"
+assert observed["owned"] == 0, f"{observed['owned']} timers still owned by the scheduler"
+assert observed["grew"] <= TOLERANCE, (
+    f"live QTimer count grew by {observed['grew']} over {COUNT} fired timers"
+)
+print("OK")
+"""
+
+
+TIMER_CANCELLED_LIFETIME_CASE = TIMER_LIFETIME_PREAMBLE + """
+fired = []
+baseline = live_timers()
+
+handles = [scheduler.call_later(60000, lambda: fired.append(1)) for _ in range(COUNT)]
+observed["owned_while_pending"] = len(owned_timers())
+observed["all_pending"] = all(h.is_pending() for h in handles)
+
+for handle in handles:
+    handle.cancel()
+
+observed["pending_after_cancel"] = scheduler.pending_timers()
+observed["none_pending"] = all(h.is_pending() is False for h in handles)
+
+# Idempotent: further cancels must neither raise nor resurrect anything.
+for handle in handles:
+    handle.cancel()
+    handle.cancel()
+observed["idempotent"] = all(h.is_pending() is False for h in handles)
+
+handles.clear()
+
+
+def measure():
+    observed["fired"] = len(fired)
+    observed["owned"] = len(owned_timers())
+    observed["grew"] = live_timers() - baseline
+    app.quit()
+
+
+QTimer.singleShot(500, measure)
+app.exec()
+
+assert observed["owned_while_pending"] == COUNT, observed["owned_while_pending"]
+assert observed["all_pending"] is True, "a long-delay timer should be pending"
+assert observed["pending_after_cancel"] == 0, observed["pending_after_cancel"]
+assert observed["none_pending"] is True, "a cancelled timer must not be pending"
+assert observed["idempotent"] is True, "cancel is not idempotent"
+assert "grew" in observed, "the drain step never ran"
+assert observed["fired"] == 0, "a cancelled timer must not fire"
+assert observed["owned"] == 0, f"{observed['owned']} cancelled timers still owned"
+assert observed["grew"] <= TOLERANCE, (
+    f"live QTimer count grew by {observed['grew']} over {COUNT} cancelled timers"
+)
+print("OK")
+"""
+
+
+# A QTimer must be destroyed on its home thread, not merely created there. The
+# submit path had exactly this fault; asserting the destructor's thread here pins
+# the same invariant for timers, and asserting that destructions were *observed*
+# is what stops a return to never destroying them at all.
+TIMER_DESTRUCTION_THREAD_CASE = TIMER_LIFETIME_PREAMBLE + """
+from PySide6.QtCore import Qt
+
+destroyed_on = []
+original_init = QTimer.__init__
+
+
+def recording_init(self, *args, **kwargs):
+    original_init(self, *args, **kwargs)
+    # Direct, so the handler runs inside ~QObject on the destroying thread.
+    self.destroyed.connect(
+        lambda *_: destroyed_on.append(threading.current_thread().ident),
+        Qt.ConnectionType.DirectConnection,
+    )
+
+
+QTimer.__init__ = recording_init
+
+fired = []
+# Half fire, half are cancelled: both release paths must destroy on this thread.
+for _ in range(COUNT // 2):
+    scheduler.call_later(0, lambda: fired.append(1))
+for handle in [scheduler.call_later(60000, lambda: None) for _ in range(COUNT // 2)]:
+    handle.cancel()
+
+
+def measure():
+    observed["fired"] = len(fired)
+    observed["destroyed"] = len(destroyed_on)
+    observed["off_main"] = len([t for t in destroyed_on if t != main_thread])
+    app.quit()
+
+
+QTimer.singleShot(500, measure)
+app.exec()
+
+assert "destroyed" in observed, "the drain step never ran"
+assert observed["fired"] == COUNT // 2, f"only {observed['fired']}/{COUNT // 2} fired"
+# Non-vacuous on purpose: never destroying a timer would satisfy an
+# "all on the home thread" assertion trivially, which is the leak this fixes.
+assert observed["destroyed"] >= COUNT, (
+    f"only {observed['destroyed']} of {COUNT} timers were destroyed at all"
+)
+assert observed["off_main"] == 0, (
+    f"{observed['off_main']} timers destroyed off the home thread"
+)
+print("OK")
+"""
+
+
+# Cancelling from a foreign thread would stop a timer across threads and destroy
+# it off its home thread, so it is rejected like submit and call_later are.
+CANCEL_WRONG_THREAD_CASE = PREAMBLE + """
+import threading
+
+handle = scheduler.call_later(60000, lambda: None)
+errors = []
+
+
+def from_worker():
+    try:
+        handle.cancel()
+        errors.append("cancel did not raise")
+    except RuntimeError as exc:
+        assert "cancel" in str(exc), exc
+
+
+t = threading.Thread(target=from_worker)
+t.start()
+t.join()
+
+assert errors == [], errors
+# The rejected call must have changed nothing.
+assert handle.is_pending() is True, "the timer was cancelled by the rejected call"
+assert scheduler.pending_timers() == 1, scheduler.pending_timers()
+
+# Cancelling from the home thread still works.
+handle.cancel()
+assert handle.is_pending() is False
+assert scheduler.pending_timers() == 0
+print("OK")
+"""
+
+
 def run_case(source: str) -> subprocess.CompletedProcess[str]:
     env = dict(os.environ, QT_QPA_PLATFORM="offscreen")
     return subprocess.run(
@@ -270,6 +475,10 @@ def run_case(source: str) -> subprocess.CompletedProcess[str]:
         pytest.param(WRONG_THREAD_CASE, id="rejects-calls-from-a-foreign-thread"),
         pytest.param(REPEATED_SUBMIT_CASE, id="repeated-submits-survive-many-loop-cycles"),
         pytest.param(SENDER_LIFETIME_CASE, id="sender-is-destroyed-on-the-main-thread"),
+        pytest.param(TIMER_FIRED_LIFETIME_CASE, id="fired-timers-are-released"),
+        pytest.param(TIMER_CANCELLED_LIFETIME_CASE, id="cancelled-timers-are-released"),
+        pytest.param(TIMER_DESTRUCTION_THREAD_CASE, id="timers-are-destroyed-on-the-main-thread"),
+        pytest.param(CANCEL_WRONG_THREAD_CASE, id="rejects-cancel-from-a-foreign-thread"),
     ],
 )
 def test_qt_scheduler(source):
