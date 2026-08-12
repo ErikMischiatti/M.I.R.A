@@ -9,31 +9,11 @@ import.
 from __future__ import annotations
 
 import importlib.util
-import shutil
-import subprocess
-import sys
-from pathlib import Path
+import re
 
 import pytest
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
-CHECKER = REPO_ROOT / "scripts" / "check_layering.py"
-
-# Blocks PySide6 at import time even though it is installed here, so the tests
-# below prove independence rather than relying on the interpreter lacking it.
-BLOCKER = """
-import sys
-
-
-class _BlockPySide6:
-    def find_spec(self, fullname, path=None, target=None):
-        if fullname == "PySide6" or fullname.startswith("PySide6."):
-            raise ImportError("PySide6 is blocked for this test")
-        return None
-
-
-sys.meta_path.insert(0, _BlockPySide6())
-"""
+from layering_harness import BLOCKER, CHECKER, REPO_ROOT, isolated_tree, run_checker, run_python
 
 IMPORT_DOMAIN = BLOCKER + """
 import mira.domain.models
@@ -131,36 +111,34 @@ REJECTION_CASES = [
 ]
 
 
-def run_python(source: str, cwd: Path) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
-        [sys.executable, "-c", source], cwd=cwd, capture_output=True, text=True, timeout=60
-    )
+def load_checker():
+    """Import the checker as a module, to read its declared layer tables.
 
-
-def run_checker(cwd: Path, checker: Path) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
-        [sys.executable, str(checker)], cwd=cwd, capture_output=True, text=True, timeout=60
-    )
-
-
-def isolated_tree(tmp_path: Path, module_path: str, source: str) -> Path:
-    """Build a throwaway tree holding the checker and one offending module.
-
-    The checker resolves its own repository root, so copying it here leaves the
-    real repository untouched.
+    Local: this module is its only consumer, so it stays out of the shared
+    harness. `_check_layering` is a throwaway name — the checker is never on
+    sys.path as an importable module.
     """
-    scripts_dir = tmp_path / "scripts"
-    scripts_dir.mkdir()
-    shutil.copy(CHECKER, scripts_dir / "check_layering.py")
+    spec = importlib.util.spec_from_file_location("_check_layering", CHECKER)
+    module = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(module)
+    return module
 
-    target = tmp_path / module_path
-    target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text(source, encoding="utf-8")
-    return scripts_dir / "check_layering.py"
+
+def test_the_blocker_covers_exactly_the_toolkits_the_checker_rejects():
+    """`BLOCKER` and the checker must agree on what counts as a GUI toolkit.
+
+    If they drifted, a test could import a toolkit the checker forbids and still
+    pass, or the blocker could reject something the rule permits.
+    """
+    blocked = re.search(r"BLOCKED = \((.*?)\)", BLOCKER, re.S).group(1)
+    names = tuple(re.findall(r'"([^"]+)"', blocked))
+
+    assert names == load_checker().QT_ROOTS
 
 
 def test_domain_vocabulary_imports_without_pyside6():
-    result = run_python(IMPORT_DOMAIN, REPO_ROOT)
+    result = run_python(IMPORT_DOMAIN)
     assert result.returncode == 0, (
         f"domain vocabulary requires PySide6.\nstdout: {result.stdout}\nstderr: {result.stderr}"
     )
@@ -172,7 +150,7 @@ def test_pyside6_block_actually_blocks():
     if importlib.util.find_spec("PySide6") is None:
         pytest.skip("PySide6 not installed; blocker cannot be exercised")
 
-    blocked = run_python(IMPORT_PYSIDE6, REPO_ROOT)
+    blocked = run_python(IMPORT_PYSIDE6)
     assert blocked.returncode != 0, "the blocker did not prevent importing PySide6"
     assert "PySide6 is blocked for this test" in blocked.stderr
     assert "BLOCKER FAILED" not in blocked.stdout
@@ -202,7 +180,7 @@ def test_current_tree_declares_no_exceptions():
 
     # The reported count only covers edges that are already disallowed, so a
     # non-applicable debt entry would go unreported. Assert the dicts directly.
-    checker = _checker()
+    checker = load_checker()
     assert checker.DIRECTION_DEBT == {}
     assert checker.QT_DEBT == {}
 
@@ -253,24 +231,13 @@ def test_checker_rejects_symlinked_package(tmp_path):
     assert "mira/cognition/plugins" in result.stderr
 
 
-def _checker():
-    """Load the checker module to reuse its declared layer table."""
-    import importlib.util
-
-    spec = importlib.util.spec_from_file_location("_check_layering", CHECKER)
-    module = importlib.util.module_from_spec(spec)
-    assert spec.loader is not None
-    spec.loader.exec_module(module)
-    return module
-
-
 def test_no_domain_package_imports_the_ui_layer():
     """Direct assertion of the outcome, independent of the checker."""
     offenders = []
     # Derived from the checker so a new layer cannot be silently omitted.
     packages = sorted(
         layer.split(".", 1)[1]
-        for layer in _checker().LAYER_IMPORTS
+        for layer in load_checker().LAYER_IMPORTS
         if layer != "mira" and layer != "mira.ui"
     )
     for package in packages:

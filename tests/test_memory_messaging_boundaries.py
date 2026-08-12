@@ -9,37 +9,10 @@ used to work around is genuinely gone.
 
 from __future__ import annotations
 
-import shutil
-import subprocess
-import sys
 from pathlib import Path
 
 import pytest
-
-REPO_ROOT = Path(__file__).resolve().parents[1]
-CHECKER = REPO_ROOT / "scripts" / "check_layering.py"
-
-# Blocks every GUI toolkit so the import proves independence rather than relying
-# on the environment. It deliberately does NOT claim to block a model backend:
-# mira.cognition.llm_client uses urllib and socket from the standard library, so
-# naming requests/httpx here would block nothing this repo uses. Independence
-# from the layers above is asserted directly instead, via ABOVE_MEMORY below.
-BLOCKER = """
-import sys
-
-BLOCKED = ("PySide6", "PyQt5", "PyQt6", "shiboken6")
-
-
-class _Block:
-    def find_spec(self, fullname, path=None, target=None):
-        root = fullname.split(".")[0]
-        if root in BLOCKED:
-            raise ImportError(f"{root} is blocked for this test")
-        return None
-
-
-sys.meta_path.insert(0, _Block())
-"""
+from layering_harness import BLOCKER, REPO_ROOT, isolated_tree, run_checker, run_python
 
 IMPORT_MEMORY = BLOCKER + """
 from mira.domain.models import BrainResponse, IntentResult, UserInput
@@ -174,34 +147,6 @@ ACCEPTANCE_CASES = [
 ]
 
 
-def run_python(source: str) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
-        [sys.executable, "-c", source],
-        cwd=REPO_ROOT,
-        capture_output=True,
-        text=True,
-        timeout=60,
-    )
-
-
-def run_checker(cwd: Path, checker: Path) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
-        [sys.executable, str(checker)], cwd=cwd, capture_output=True, text=True, timeout=60
-    )
-
-
-def isolated_tree(tmp_path: Path, module_path: str, source: str) -> Path:
-    """Build a throwaway tree with the checker and one module under test."""
-    scripts_dir = tmp_path / "scripts"
-    scripts_dir.mkdir()
-    shutil.copy(CHECKER, scripts_dir / "check_layering.py")
-
-    target = tmp_path / module_path
-    target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text(source, encoding="utf-8")
-    return scripts_dir / "check_layering.py"
-
-
 def test_memory_works_without_a_gui_toolkit_and_pulls_in_no_layer_above_it():
     result = run_python(IMPORT_MEMORY)
     assert result.returncode == 0, f"stdout: {result.stdout}\nstderr: {result.stderr}"
@@ -227,7 +172,6 @@ def test_no_import_cycle_from_any_entry_point(entry_point):
     result = run_python(f"import {entry_point}\nprint('OK')\n")
     assert result.returncode == 0, f"{entry_point}: {result.stderr}"
     assert result.stdout.strip().endswith("OK")
-
 
 
 @pytest.mark.parametrize("module_path,source,expected", REJECTION_CASES)

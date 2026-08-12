@@ -11,10 +11,10 @@ import inspect
 
 import pytest
 
-from mira.actions.action_models import ActionRequest, ActionResult
+from doubles import RecordingActionExecutor, RecordingStateManager, StaticIntentEngine
+
 from mira.core.brain import Brain
 from mira.core.embodied_behavior import EmbodiedBehavior
-from mira.messaging.events import EventBus
 from mira.domain.models import BrainResponse, IntentResult, UserInput
 from mira.domain.scheduler import (
     ManualScheduler,
@@ -23,29 +23,7 @@ from mira.domain.scheduler import (
     TimerHandle,
 )
 from mira.domain.state import FaceState
-
-
-class RecordingStateManager:
-    def __init__(self) -> None:
-        self.states: list[FaceState] = []
-        self.current_state = FaceState.IDLE
-
-    def set_state(self, state: FaceState) -> None:
-        self.states.append(state)
-        self.current_state = state
-
-    def get_state(self) -> FaceState:
-        return self.current_state
-
-
-class StaticIntentEngine:
-    def __init__(self, intent: IntentResult) -> None:
-        self.intent = intent
-        self.calls: list[UserInput] = []
-
-    def infer(self, user_input: UserInput) -> IntentResult:
-        self.calls.append(user_input)
-        return self.intent
+from mira.messaging.events import EventBus
 
 
 class ExplodingIntentEngine:
@@ -62,16 +40,13 @@ class EchoResponseBuilder:
         )
 
 
-class RecordingActionExecutor:
-    def __init__(self) -> None:
-        self.requests: list[ActionRequest] = []
-
-    def execute(self, request: ActionRequest) -> ActionResult:
-        self.requests.append(request)
-        return ActionResult(success=True, action_name=request.action_name, message="ok")
-
-
 def make_brain(scheduler: ManualScheduler, engine=None) -> Brain:
+    """Local on purpose: this one takes the scheduler and echoes the input.
+
+    `doubles.make_recording_brain` is the shared factory, and it is a different
+    contract — a fixed `ManualScheduler` and a recording builder. The tests here
+    drive the clock themselves and assert on echoed text.
+    """
     brain = Brain(
         event_bus=EventBus(),
         state_manager=RecordingStateManager(),

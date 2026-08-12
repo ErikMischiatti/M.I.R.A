@@ -1,8 +1,9 @@
 """Characterization tests for timing contracts held nowhere else.
 
-Written and run green against the pre-port Qt implementation, then re-run
-unchanged afterwards; only the construction helpers gained a `scheduler=`
-argument, so the current file no longer runs on the pre-port tree.
+Written and run green against the pre-port Qt implementation. It no longer runs
+on the pre-port tree: the construction helpers take a `scheduler=` argument, and
+the brain factory now comes from `tests/doubles.py`, which imports
+`ManualScheduler`.
 
 It covers only the two contracts no other file pins:
 
@@ -10,90 +11,20 @@ It covers only the two contracts no other file pins:
 - the expression decay delay table and its three re-entry guards.
 
 The staleness gates, interpretation-phase purity and commit ordering are pinned
-directly by `test_brain_async_contract.py` — which does run on both trees — and
-again, more strongly, through the production path by `test_scheduler.py`. They
-were duplicated here and removed: a third copy carried no independent signal,
-since one mutation defeating a gate fails every copy at once.
+directly by `test_brain_async_contract.py`, and again more strongly through the
+production path by `test_scheduler.py`. They were duplicated here and removed: a
+third copy carried no independent signal, since one mutation defeating a gate
+fails every copy at once.
 """
 
 from __future__ import annotations
 
-from mira.actions.action_models import ActionRequest
-from mira.core.brain import Brain
+from doubles import RecordingEventBus, RecordingStateManager, make_recording_brain
+
 from mira.core.embodied_behavior import EmbodiedBehavior
-from mira.messaging.events import EventBus
-from mira.domain.models import BrainResponse, IntentResult, UserInput
+from mira.domain.models import IntentResult
 from mira.domain.scheduler import ManualScheduler
 from mira.domain.state import FaceState
-
-
-class RecordingEventBus(EventBus):
-    def __init__(self) -> None:
-        super().__init__()
-        self.emitted: list[tuple[str, object]] = []
-
-    def emit(self, event_name: str, payload: object = None) -> None:
-        self.emitted.append((event_name, payload))
-        super().emit(event_name, payload)
-
-
-class RecordingStateManager:
-    def __init__(self) -> None:
-        self.states: list[FaceState] = []
-        self.current_state = FaceState.IDLE
-
-    def set_state(self, state: FaceState) -> None:
-        self.states.append(state)
-        self.current_state = state
-
-    def get_state(self) -> FaceState:
-        return self.current_state
-
-
-class StaticIntentEngine:
-    def __init__(self, intent: IntentResult) -> None:
-        self.intent = intent
-        self.calls: list[UserInput] = []
-
-    def infer(self, user_input: UserInput) -> IntentResult:
-        self.calls.append(user_input)
-        return self.intent
-
-
-class RecordingResponseBuilder:
-    def build(self, intent, user_input, action_result=None) -> BrainResponse:
-        return BrainResponse(
-            text="response",
-            face_state=FaceState.SPEAKING,
-            metadata={"intent": intent.intent},
-        )
-
-
-class RecordingActionExecutor:
-    def __init__(self) -> None:
-        self.requests: list[ActionRequest] = []
-
-    def execute(self, request: ActionRequest):
-        self.requests.append(request)
-        from mira.actions.action_models import ActionResult
-
-        return ActionResult(success=True, action_name=request.action_name, message="ok")
-
-
-def make_brain(intent: IntentResult) -> Brain:
-    """Construct a Brain with recording collaborators and a manual scheduler.
-
-    The only place the scheduler port changed this file.
-    """
-    brain = Brain(
-        event_bus=RecordingEventBus(),
-        state_manager=RecordingStateManager(),
-        intent_engine=StaticIntentEngine(intent),
-        response_builder=RecordingResponseBuilder(),
-        scheduler=ManualScheduler(),
-    )
-    brain.action_executor = RecordingActionExecutor()
-    return brain
 
 
 def make_embodied_behavior() -> EmbodiedBehavior:
@@ -106,7 +37,7 @@ def make_embodied_behavior() -> EmbodiedBehavior:
 
 
 def test_request_ids_are_monotonic_and_allocation_claims_latest():
-    brain = make_brain(IntentResult(intent="time_query"))
+    brain = make_recording_brain(IntentResult(intent="time_query"))
     first = brain._new_request_id()
     second = brain._new_request_id()
 
