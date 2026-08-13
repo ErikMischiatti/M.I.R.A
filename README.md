@@ -333,6 +333,9 @@ Without `MIRA_INTENT_ENGINE`, the system defaults to the rule-based engine.
 ├── assets/
 │   └── mira_record.gif
 │
+├── bin/
+│   └── mira
+│
 ├── mira/
 │   ├── actions/
 │   │   ├── action_executor.py
@@ -466,6 +469,34 @@ MIRA_OLLAMA_BASE_URL=http://localhost:11434
 MIRA_OLLAMA_TIMEOUT_S=10
 MIRA_LLM_ACTION_MIN_CONFIDENCE=0.65
 ```
+
+### 6. Optional: launch from anywhere with a single command
+
+`bin/mira` runs the application in the repository's own virtual environment
+from any working directory. Put it on your `PATH` once:
+
+```bash
+ln -s "$PWD/bin/mira" ~/.local/bin/MIRA
+```
+
+Then, from any directory:
+
+```bash
+MIRA
+MIRA_INTENT_ENGINE=llm MIRA
+```
+
+The launcher resolves the repository through the symlink, so it keeps working
+after `git pull` and needs no reinstall. Moving or renaming the repository is
+the only change that requires recreating the symlink.
+
+It also changes into the repository root before starting the application, and
+that is deliberate rather than incidental: `mira/ui/face/expression_store.py`
+loads and saves the expression profiles through the relative path
+`mira/config/expression_profiles.json`, and `mira/actions/desktop_actions.py`
+derives its `open_directory` allowlist from `Path.cwd()`. Editable installation
+makes the package importable from anywhere; it does not make those two paths
+working-directory independent, so the launcher still pins them.
 
 ---
 

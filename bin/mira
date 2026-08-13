@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+#
+# M.I.R.A. launcher.
+#
+# Runs the desktop application from any working directory using the
+# repository's own virtual environment. Intended to be reached through a
+# symlink on PATH, for example:
+#
+#   ln -s "$PWD/bin/mira" ~/.local/bin/MIRA
+#
+set -euo pipefail
+
+# Resolve this script through any symlink chain so the repository root is
+# derived from the real file location, not from the caller's PATH entry.
+script_path="$(readlink -f -- "${BASH_SOURCE[0]}")"
+repo_root="$(cd -- "$(dirname -- "$script_path")/.." && pwd -P)"
+
+python_bin="$repo_root/venv/bin/python"
+
+if [ ! -x "$python_bin" ]; then
+    printf 'MIRA: no virtual environment at %s\n' "$repo_root/venv" >&2
+    printf 'MIRA: create it with\n' >&2
+    printf '  cd %s\n' "$repo_root" >&2
+    printf '  python3 -m venv venv\n' >&2
+    printf '  venv/bin/pip install -r requirements.txt\n' >&2
+    exit 1
+fi
+
+# The repository root must be the working directory.
+#
+# Two parts of the application resolve paths against the process working
+# directory rather than against the package:
+#
+#   - mira/ui/face/expression_store.py loads and saves the expression
+#     profiles through the relative path mira/config/expression_profiles.json,
+#     so a different working directory silently falls back to code defaults
+#     and writes the tuned profiles somewhere else.
+#   - mira/actions/desktop_actions.py derives the open_directory allowlist
+#     from Path.cwd(), and its "progetto"/"current" aliases are bound at
+#     import time. Launching from / would place every directory on the
+#     filesystem inside the allowlist.
+#
+# Pinning the working directory here keeps configuration loading correct and
+# keeps the directory allowlist scoped to the project.
+cd -- "$repo_root"
+
+# exec so signals and the exit status pass straight through to the caller.
+exec "$python_bin" -m mira.main "$@"
