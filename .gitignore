@@ -9,6 +9,11 @@ __pycache__/
 .mypy_cache/
 .ruff_cache/
 
+# Packaging artefacts left by `pip install -e .`
+*.egg-info/
+build/
+dist/
+
 # Virtual environments
 venv/
 .venv/

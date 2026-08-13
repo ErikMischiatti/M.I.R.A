@@ -395,6 +395,7 @@ Without `MIRA_INTENT_ENGINE`, the system defaults to the rule-based engine.
 │   └── main.py
 │
 ├── LICENSE
+├── pyproject.toml
 ├── README.md
 ├── requirements.txt
 └── .gitignore
@@ -420,11 +421,22 @@ python3 -m venv venv
 source venv/bin/activate
 ```
 
-### 3. Install dependencies
+### 3. Install the dependencies and the package
 
 ```bash
 pip install -r requirements.txt
+pip install -e .
 ```
+
+The second command is what makes `import mira` independent of the working
+directory. Without it the package is found only when the repository root
+happens to be on `sys.path`, which is why `python3 -m mira.main` and
+`python -m pytest` work from the repository root and nothing works from
+anywhere else — those two commands put the working directory on `sys.path`,
+while the `pytest` console script does not.
+
+Editable (`-e`) keeps the working tree authoritative: no reinstall after an
+edit or a `git pull`. Reinstall only if the repository moves.
 
 ### 4. Run the default rule-based version
 
