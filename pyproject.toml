@@ -1,0 +1,68 @@
+# Packaging metadata for M.I.R.A.
+#
+# This file exists for one reason: to make `mira` importable without the
+# repository root happening to be the process working directory. Before it,
+# every successful import was an accident of `sys.path[0]`:
+#
+#   - `python -c "import mira"` and `python -m pytest` prepend the working
+#     directory, so both worked from the repository root and nowhere else.
+#   - the `pytest` console script prepends nothing, so `import mira` failed at
+#     collection even from the repository root.
+#
+# Install once, in editable mode, so the interpreter resolves the package
+# through installed metadata rather than through the working directory:
+#
+#     venv/bin/pip install -e .
+#
+# Editable keeps the working tree the single source of truth: no build step
+# sits between an edit and the next test run, and `git pull` needs no reinstall.
+#
+# This file adds no runtime behaviour. The application still starts through
+# `python -m mira.main`, and the launcher still pins the working directory to
+# the repository root — `mira/ui/face/expression_store.py:9` and the
+# `Path.cwd()` allowlist in `mira/actions/desktop_actions.py:49-52,82` both
+# resolve against it, and neither is changed here.
+
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mira"
+version = "0.1.0"
+description = "M.I.R.A. — a local desktop assistant."
+readme = "README.md"
+# The only interpreter this has been validated against. Widen it deliberately,
+# after running the suite on the older version, rather than on the assumption
+# that the syntax happens to parse.
+requires-python = ">=3.12"
+# Mirrors requirements.txt, minus pytest, which is a development dependency and
+# is declared as one below.
+dependencies = [
+    "PySide6",
+    "requests",
+]
+
+[project.optional-dependencies]
+dev = ["pytest"]
+
+[tool.setuptools.packages.find]
+# `mira.actions` and `mira.cognition` carry no `__init__.py`, so they are
+# implicit namespace packages (PEP 420). `namespaces = true` is what keeps them
+# in the distribution: without it setuptools drops both silently, and an install
+# that reports success still fails on the first `mira.actions` import.
+include = ["mira*"]
+exclude = ["*__pycache__*"]
+namespaces = true
+
+[tool.setuptools.package-data]
+# `mira/ui/face/expression_store.py` loads mira/config/expression_profiles.json.
+"mira.config" = ["*.json"]
+
+[tool.pytest.ini_options]
+# Anchors pytest's rootdir on this file, so a bare `pytest` collects the same
+# tests whatever the working directory. It does not put anything on `sys.path`:
+# test modules reach `mira` through the editable install, and `tests/conftest.py`
+# adds the tests directory itself so `doubles` and `layering_harness` resolve
+# under `--import-mode=importlib` as well as under the default `prepend`.
+testpaths = ["tests"]

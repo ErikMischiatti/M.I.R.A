@@ -333,6 +333,9 @@ Without `MIRA_INTENT_ENGINE`, the system defaults to the rule-based engine.
 ├── assets/
 │   └── mira_record.gif
 │
+├── bin/
+│   └── mira
+│
 ├── mira/
 │   ├── actions/
 │   │   ├── action_executor.py
@@ -395,6 +398,7 @@ Without `MIRA_INTENT_ENGINE`, the system defaults to the rule-based engine.
 │   └── main.py
 │
 ├── LICENSE
+├── pyproject.toml
 ├── README.md
 ├── requirements.txt
 └── .gitignore
@@ -420,11 +424,22 @@ python3 -m venv venv
 source venv/bin/activate
 ```
 
-### 3. Install dependencies
+### 3. Install the dependencies and the package
 
 ```bash
 pip install -r requirements.txt
+pip install -e .
 ```
+
+The second command is what makes `import mira` independent of the working
+directory. Without it the package is found only when the repository root
+happens to be on `sys.path`, which is why `python3 -m mira.main` and
+`python -m pytest` work from the repository root and nothing works from
+anywhere else — those two commands put the working directory on `sys.path`,
+while the `pytest` console script does not.
+
+Editable (`-e`) keeps the working tree authoritative: no reinstall after an
+edit or a `git pull`. Reinstall only if the repository moves.
 
 ### 4. Run the default rule-based version
 
@@ -454,6 +469,34 @@ MIRA_OLLAMA_BASE_URL=http://localhost:11434
 MIRA_OLLAMA_TIMEOUT_S=10
 MIRA_LLM_ACTION_MIN_CONFIDENCE=0.65
 ```
+
+### 6. Optional: launch from anywhere with a single command
+
+`bin/mira` runs the application in the repository's own virtual environment
+from any working directory. Put it on your `PATH` once:
+
+```bash
+ln -s "$PWD/bin/mira" ~/.local/bin/MIRA
+```
+
+Then, from any directory:
+
+```bash
+MIRA
+MIRA_INTENT_ENGINE=llm MIRA
+```
+
+The launcher resolves the repository through the symlink, so it keeps working
+after `git pull` and needs no reinstall. Moving or renaming the repository is
+the only change that requires recreating the symlink.
+
+It also changes into the repository root before starting the application, and
+that is deliberate rather than incidental: `mira/ui/face/expression_store.py`
+loads and saves the expression profiles through the relative path
+`mira/config/expression_profiles.json`, and `mira/actions/desktop_actions.py`
+derives its `open_directory` allowlist from `Path.cwd()`. Editable installation
+makes the package importable from anywhere; it does not make those two paths
+working-directory independent, so the launcher still pins them.
 
 ---
 
