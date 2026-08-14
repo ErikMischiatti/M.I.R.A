@@ -39,6 +39,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from mira.adapters.qt_scheduler import QtScheduler
+from mira.core.activity_authority import ActivityAuthority
 from mira.core.brain import Brain
 from mira.core.embodied_behavior import EmbodiedBehavior
 from mira.core.interaction_manager import InteractionManager
@@ -59,10 +60,16 @@ class Application:
     The UI needs only `event_bus` and `brain`; the remaining fields are here so
     the graph can be inspected and driven in tests, and so ownership is stated
     in one readable place rather than inferred from constructor arguments.
+
+    `StateManager` is deliberately *not* a field. Exposing it handed any holder
+    of this record a live state manager without importing the type, which is
+    the one route `scripts/check_state_authority.py` cannot see: its Rule B
+    keys on the import, and an aliased receiver defeats Rule A. Reach the state
+    through `activity` instead.
     """
 
     event_bus: EventBus
-    state_manager: StateManager
+    activity: ActivityAuthority
     scheduler: Scheduler
     brain: Brain
     interaction_manager: InteractionManager
@@ -83,21 +90,25 @@ def build_application(*, scheduler: Scheduler | None = None) -> Application:
     """
     event_bus = EventBus()
     state_manager = StateManager(event_bus)
+    # One authority over the shared face state, shared by every component
+    # that used to write it. Two authorities would each commit against the
+    # same StateManager and neither would be authoritative.
+    activity = ActivityAuthority(state_manager)
     scheduler = QtScheduler() if scheduler is None else scheduler
 
-    brain = Brain(event_bus, state_manager, scheduler=scheduler)
+    brain = Brain(event_bus, activity, scheduler=scheduler)
 
     # These next two lines are the order-sensitive pair. Both subscribe from
     # their own constructors, and both handle `response_ready` and the three
     # input events, so the order they are built in is the order their handlers
     # run in. `Brain` above subscribes to nothing — it only emits — so its
     # position is free. Interaction first, embodiment second, as before the move.
-    interaction_manager = InteractionManager(event_bus, state_manager)
-    embodied_behavior = EmbodiedBehavior(event_bus, state_manager, scheduler=scheduler)
+    interaction_manager = InteractionManager(event_bus, activity)
+    embodied_behavior = EmbodiedBehavior(event_bus, activity, scheduler=scheduler)
 
     return Application(
         event_bus=event_bus,
-        state_manager=state_manager,
+        activity=activity,
         scheduler=scheduler,
         brain=brain,
         interaction_manager=interaction_manager,

@@ -2,7 +2,7 @@
 
 Every collaborator on the brain built here is a recording double from
 `tests/doubles.py`, so the assertions below read four recorders:
-`brain.event_bus.emitted`, `brain.state_manager.states`,
+`brain.event_bus.emitted`, `brain.activity.states`,
 `brain.action_executor.requests` and `brain.response_builder.calls`. The reply
 text comes from a double too — `"executed <action>"` when an action ran,
 `"no action"` when none did.
@@ -41,7 +41,7 @@ def test_worker_compute_only_infers_intent_and_builds_action_request():
     assert brain.memory.history == []
     assert brain.memory.last_intent is None
     assert brain.event_bus.emitted == []
-    assert brain.state_manager.states == []
+    assert brain.activity.states == []
 
 
 def test_finalize_executes_action_and_mutates_memory_in_main_flow():
@@ -92,7 +92,7 @@ def test_stale_async_result_does_not_update_memory_events_actions_or_callback():
     assert brain.memory.last_intent is None
     assert brain.action_executor.requests == []
     assert brain.event_bus.emitted == []
-    assert brain.state_manager.states == []
+    assert brain.activity.states == []
 
 
 def test_current_async_result_finalization_emits_response_and_invokes_callback():
@@ -116,7 +116,7 @@ def test_current_async_result_finalization_emits_response_and_invokes_callback()
         "intent_inferred",
         "response_ready",
     ]
-    assert brain.state_manager.states == [FaceState.SPEAKING]
+    assert brain.activity.states == [FaceState.SPEAKING]
 
 
 def test_invalid_llm_action_marker_prevents_rule_based_action_fallback():

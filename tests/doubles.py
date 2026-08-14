@@ -23,6 +23,7 @@ ignoring annotations and docstrings.
 from __future__ import annotations
 
 from mira.actions.action_models import ActionRequest, ActionResult
+from mira.core.activity_authority import ActivityAuthority
 from mira.core.brain import Brain
 from mira.domain.models import BrainResponse, IntentResult, UserInput
 from mira.domain.scheduler import ManualScheduler
@@ -71,6 +72,36 @@ class RecordingStateManager:
 
     def get_state(self) -> FaceState:
         return self.current_state
+
+
+class RecordingActivityAuthority(ActivityAuthority):
+    """The real authority, committing into a `RecordingStateManager`.
+
+    A real `ActivityAuthority` rather than a stand-in, because the thing under
+    test is usually what a component *asked* for, and a fake authority would let
+    a wrong request look right. The recording happens one level down, where the
+    commit lands.
+
+    `states` and `current_state` are forwarded so assertions read
+    `brain.activity.states` instead of reaching through to the manager. Before
+    the authority existed these tests said `brain.state_manager.states`; the
+    values compared are unchanged.
+    """
+
+    def __init__(self) -> None:
+        super().__init__(RecordingStateManager())
+
+    @property
+    def states(self) -> list[FaceState]:
+        return self.state_manager.states
+
+    @property
+    def current_state(self) -> FaceState:
+        return self.state_manager.current_state
+
+    @current_state.setter
+    def current_state(self, state: FaceState) -> None:
+        self.state_manager.current_state = state
 
 
 class StaticIntentEngine:
@@ -156,7 +187,7 @@ def make_recording_brain(intent: IntentResult) -> Brain:
     """
     brain = Brain(
         event_bus=RecordingEventBus(),
-        state_manager=RecordingStateManager(),
+        activity=RecordingActivityAuthority(),
         intent_engine=StaticIntentEngine(intent),
         response_builder=RecordingResponseBuilder(),
         scheduler=ManualScheduler(),

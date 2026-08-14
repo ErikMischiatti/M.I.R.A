@@ -71,7 +71,7 @@ print(json.dumps({
     },
     "types": {
         "event_bus": type(graph.event_bus).__name__,
-        "state_manager": type(graph.state_manager).__name__,
+        "activity": type(graph.activity).__name__,
         "scheduler": type(graph.scheduler).__name__,
         "brain": type(graph.brain).__name__,
         "interaction_manager": type(graph.interaction_manager).__name__,
@@ -79,14 +79,14 @@ print(json.dumps({
     },
     "shared_instances": {
         "brain.event_bus": graph.brain.event_bus is graph.event_bus,
-        "brain.state_manager": graph.brain.state_manager is graph.state_manager,
+        "brain.activity": graph.brain.activity is graph.activity,
         "brain.scheduler": graph.brain.scheduler is graph.scheduler,
         "embodied.event_bus": graph.embodied_behavior.event_bus is graph.event_bus,
-        "embodied.state_manager": graph.embodied_behavior.state_manager is graph.state_manager,
+        "embodied.activity": graph.embodied_behavior.activity is graph.activity,
         "embodied.scheduler": graph.embodied_behavior.scheduler is graph.scheduler,
         "interaction.event_bus": graph.interaction_manager.event_bus is graph.event_bus,
-        "interaction.state_manager": graph.interaction_manager.state_manager is graph.state_manager,
-        "state_manager.event_bus": graph.state_manager.event_bus is graph.event_bus,
+        "interaction.activity": graph.interaction_manager.activity is graph.activity,
+        "activity.state_manager.event_bus": graph.activity.state_manager.event_bus is graph.event_bus,
     },
     "brain_owns": {
         "memory": type(graph.brain.memory).__name__,
@@ -95,7 +95,7 @@ print(json.dumps({
         "action_registry": type(graph.brain.action_registry).__name__,
         "action_executor": type(graph.brain.action_executor).__name__,
     },
-    "initial_state": graph.state_manager.get_state().name,
+    "initial_state": graph.activity.current().name,
     "pending_timers": graph.scheduler.pending_timers(),
     "pending_completions": graph.scheduler.pending_completions(),
     "window_reaches_brain": window.brain is graph.brain,
@@ -149,7 +149,7 @@ def test_the_graph_is_built_from_the_production_implementations(graph):
     """Composition picks the concrete adapters; nothing else chooses for it."""
     assert graph["types"] == {
         "event_bus": "EventBus",
-        "state_manager": "StateManager",
+        "activity": "ActivityAuthority",
         "scheduler": "QtScheduler",
         "brain": "Brain",
         "interaction_manager": "InteractionManager",
@@ -356,7 +356,7 @@ def test_a_whole_turn_flows_through_the_composed_graph(qt_free_application, manu
         "response_ready",
     ]
     assert len(replies) == 1
-    assert qt_free_application.state_manager.get_state() is FaceState.SPEAKING
+    assert qt_free_application.activity.current() is FaceState.SPEAKING
 
 
 def test_building_the_graph_twice_shares_nothing(manual_scheduler):
@@ -370,7 +370,7 @@ def test_building_the_graph_twice_shares_nothing(manual_scheduler):
     second = build_application(scheduler=manual_scheduler)
 
     assert first.event_bus is not second.event_bus
-    assert first.state_manager is not second.state_manager
+    assert first.activity is not second.activity
     assert first.brain is not second.brain
 
 

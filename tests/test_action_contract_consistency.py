@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from doubles import RecordingStateManager
+from doubles import RecordingActivityAuthority
 
 from mira.actions.action_contracts import ACTION_CONTRACTS
 from mira.actions.action_models import ActionContract
@@ -36,7 +36,7 @@ class FakeClient:
 def build_brain_registry() -> ActionRegistry:
     brain = Brain(
         event_bus=EventBus(),
-        state_manager=RecordingStateManager(),
+        activity=RecordingActivityAuthority(),
         intent_engine=object(),
         scheduler=ManualScheduler(),
     )
