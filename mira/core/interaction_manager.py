@@ -1,7 +1,6 @@
 from mira.messaging.events import EventBus
-from mira.core.state_manager import StateManager
+from mira.core.activity_authority import ActivityAuthority
 from mira.domain.models import BrainResponse
-from mira.domain.state import FaceState
 
 
 class InteractionManager:
@@ -16,9 +15,9 @@ class InteractionManager:
       (audio, webcam, tools, etc.)
     """
 
-    def __init__(self, event_bus: EventBus, state_manager: StateManager):
+    def __init__(self, event_bus: EventBus, activity: ActivityAuthority):
         self.event_bus = event_bus
-        self.state_manager = state_manager
+        self.activity = activity
 
         self.input_has_focus = False
         self.input_has_text = False
@@ -41,7 +40,7 @@ class InteractionManager:
         if self.is_processing:
             return
 
-        self.state_manager.set_state(FaceState.LISTENING)
+        self.activity.attend()
 
     def on_input_unfocused(self, payload=None) -> None:
         self.input_has_focus = False
@@ -49,10 +48,7 @@ class InteractionManager:
         if self.is_processing:
             return
 
-        if self.input_has_text:
-            self.state_manager.set_state(FaceState.LISTENING)
-        else:
-            self.state_manager.set_state(FaceState.IDLE)
+        self.activity.settle(engaged=self.input_has_text)
 
     def on_input_text_changed(self, text) -> None:
         text = text or ""
@@ -61,27 +57,24 @@ class InteractionManager:
         if self.is_processing:
             return
 
-        if self.input_has_text or self.input_has_focus:
-            self.state_manager.set_state(FaceState.LISTENING)
-        else:
-            self.state_manager.set_state(FaceState.IDLE)
+        self.activity.settle(engaged=self.input_has_text or self.input_has_focus)
 
     def on_user_input_received(self, payload=None) -> None:
         # Interaction starts: user is actively engaging with the system.
         if self.is_processing:
             return
 
-        self.state_manager.set_state(FaceState.LISTENING)
+        self.activity.attend()
 
     def on_processing_started(self, payload=None) -> None:
         self.is_processing = True
-        self.state_manager.set_state(FaceState.THINKING)
+        self.activity.deliberate()
 
     def on_response_ready(self, response) -> None:
         self.is_processing = False
 
         if isinstance(response, BrainResponse):
-            self.state_manager.set_state(response.face_state)
+            self.activity.conclude(response.face_state)
             return
 
         # Fallback safety path
@@ -98,7 +91,4 @@ class InteractionManager:
         self._restore_idle_or_listening()
 
     def _restore_idle_or_listening(self) -> None:
-        if self.input_has_focus or self.input_has_text:
-            self.state_manager.set_state(FaceState.LISTENING)
-        else:
-            self.state_manager.set_state(FaceState.IDLE)
+        self.activity.settle(engaged=self.input_has_focus or self.input_has_text)

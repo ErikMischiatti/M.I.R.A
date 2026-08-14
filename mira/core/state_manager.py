@@ -24,6 +24,3 @@ class StateManager:
 
     def get_state(self) -> FaceState:
         return self.current_state
-
-    def reset(self) -> None:
-        self.set_state(FaceState.IDLE)

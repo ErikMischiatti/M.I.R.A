@@ -19,7 +19,7 @@ fails every copy at once.
 
 from __future__ import annotations
 
-from doubles import RecordingEventBus, RecordingStateManager, make_recording_brain
+from doubles import RecordingActivityAuthority, RecordingEventBus, make_recording_brain
 
 from mira.core.embodied_behavior import EmbodiedBehavior
 from mira.domain.models import IntentResult
@@ -29,7 +29,7 @@ from mira.domain.state import FaceState
 
 def make_embodied_behavior() -> EmbodiedBehavior:
     return EmbodiedBehavior(
-        RecordingEventBus(), RecordingStateManager(), scheduler=ManualScheduler()
+        RecordingEventBus(), RecordingActivityAuthority(), scheduler=ManualScheduler()
     )
 
 
@@ -60,32 +60,32 @@ def test_decay_delay_table_is_unchanged():
 def test_decay_only_fires_while_still_in_the_held_state():
     behavior = make_embodied_behavior()
     behavior.last_response_state = FaceState.HAPPY
-    behavior.state_manager.current_state = FaceState.THINKING
+    behavior.activity.current_state = FaceState.THINKING
 
     behavior._decay_to_neutral()
 
-    assert behavior.state_manager.states == []
+    assert behavior.activity.states == []
     assert behavior.decay_active is False
 
 
 def test_decay_returns_to_listening_when_input_is_engaged():
     behavior = make_embodied_behavior()
     behavior.last_response_state = FaceState.SPEAKING
-    behavior.state_manager.current_state = FaceState.SPEAKING
+    behavior.activity.current_state = FaceState.SPEAKING
     behavior.input_has_focus = True
 
     behavior._decay_to_neutral()
 
-    assert behavior.state_manager.states == [FaceState.LISTENING]
+    assert behavior.activity.states == [FaceState.LISTENING]
 
 
 def test_decay_returns_to_idle_when_input_is_not_engaged():
     behavior = make_embodied_behavior()
     behavior.last_response_state = FaceState.SPEAKING
-    behavior.state_manager.current_state = FaceState.SPEAKING
+    behavior.activity.current_state = FaceState.SPEAKING
     behavior.input_has_focus = False
     behavior.input_has_text = False
 
     behavior._decay_to_neutral()
 
-    assert behavior.state_manager.states == [FaceState.IDLE]
+    assert behavior.activity.states == [FaceState.IDLE]

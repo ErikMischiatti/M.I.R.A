@@ -37,7 +37,7 @@ from mira.messaging.events import EventBus
 from mira.domain.scheduler import Scheduler
 from mira.domain.models import BrainResponse, IntentResult, UserInput
 from mira.memory.session_memory import SessionMemory
-from mira.core.state_manager import StateManager
+from mira.core.activity_authority import ActivityAuthority
 from mira.domain.state import FaceState
 
 
@@ -54,14 +54,14 @@ class Brain:
     def __init__(
         self,
         event_bus: EventBus,
-        state_manager: StateManager,
+        activity: ActivityAuthority,
         intent_engine=None,
         response_builder=None,
         *,
         scheduler: Scheduler,
     ):
         self.event_bus = event_bus
-        self.state_manager = state_manager
+        self.activity = activity
         self.memory = SessionMemory()
 
         # ✅ ENGINE SELECTION
@@ -136,15 +136,15 @@ class Brain:
         self.memory.add_user_input(user_input)
 
         self.event_bus.emit("user_input_received", user_input)
-        self.state_manager.set_state(FaceState.LISTENING)
+        self.activity.attend()
 
         self.event_bus.emit("processing_started", user_input)
-        self.state_manager.set_state(FaceState.THINKING)
+        self.activity.deliberate()
 
         response = self._build_response(user_input)
 
         self.event_bus.emit("response_ready", response)
-        self.state_manager.set_state(response.face_state)
+        self.activity.conclude(response.face_state)
 
         return response
 
@@ -158,7 +158,7 @@ class Brain:
         self.memory.add_user_input(user_input)
 
         self.event_bus.emit("user_input_received", user_input)
-        self.state_manager.set_state(FaceState.LISTENING)
+        self.activity.attend()
 
         self.scheduler.call_later(
             self.listening_delay_ms,
@@ -176,7 +176,7 @@ class Brain:
             return
 
         self.event_bus.emit("processing_started", user_input)
-        self.state_manager.set_state(FaceState.THINKING)
+        self.activity.deliberate()
 
         self._start_response_worker(request_id, user_input, on_response)
 
@@ -203,7 +203,7 @@ class Brain:
         response = self._finalize_computation_result(result)
 
         self.event_bus.emit("response_ready", response)
-        self.state_manager.set_state(response.face_state)
+        self.activity.conclude(response.face_state)
 
         if on_response is not None:
             on_response(response)

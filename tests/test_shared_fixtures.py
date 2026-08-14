@@ -20,6 +20,7 @@ from doubles import (
     RecordingActionExecutor,
     RecordingEventBus,
     RecordingResponseBuilder,
+    RecordingActivityAuthority,
     RecordingStateManager,
     StaticIntentEngine,
     make_recording_brain,
@@ -113,13 +114,12 @@ def test_absent_variables_select_the_production_defaults():
     """
     from mira.cognition import llm_client, llm_intent_engine
     from mira.core.brain import Brain
-    from mira.core.state_manager import StateManager
     from mira.messaging.events import EventBus
 
     assert [name for name in MIRA_ENV_VARS if name in os.environ] == []
 
     bus = EventBus()
-    brain = Brain(bus, StateManager(bus), scheduler=ManualScheduler())
+    brain = Brain(bus, RecordingActivityAuthority(), scheduler=ManualScheduler())
     # mira/core/brain.py:88 defaults to "rule" when the variable is absent.
     assert type(brain.intent_engine).__name__ == "RuleIntentEngine"
 
@@ -287,7 +287,8 @@ def test_make_recording_brain_wires_every_collaborator_to_a_double():
     brain = make_recording_brain(intent)
 
     assert isinstance(brain.event_bus, RecordingEventBus)
-    assert isinstance(brain.state_manager, RecordingStateManager)
+    assert isinstance(brain.activity, RecordingActivityAuthority)
+    assert isinstance(brain.activity.state_manager, RecordingStateManager)
     assert isinstance(brain.intent_engine, StaticIntentEngine)
     assert isinstance(brain.response_builder, RecordingResponseBuilder)
     assert isinstance(brain.scheduler, ManualScheduler)
@@ -301,10 +302,10 @@ def test_make_recording_brain_returns_an_independent_brain_each_call():
     first = make_recording_brain(IntentResult(intent="time_query"))
     second = make_recording_brain(IntentResult(intent="greeting"))
 
-    first.state_manager.set_state(FaceState.SPEAKING)
+    first.activity.conclude(FaceState.SPEAKING)
     first.event_bus.emit("response_ready", None)
 
-    assert second.state_manager.states == []
+    assert second.activity.states == []
     assert second.event_bus.emitted == []
     assert second.memory.history == []
     assert first.scheduler is not second.scheduler
@@ -315,6 +316,7 @@ def test_make_recording_brain_returns_an_independent_brain_each_call():
     [
         pytest.param(RecordingEventBus, "emitted", id="RecordingEventBus"),
         pytest.param(RecordingStateManager, "states", id="RecordingStateManager"),
+        pytest.param(RecordingActivityAuthority, "states", id="RecordingActivityAuthority"),
         pytest.param(RecordingActionExecutor, "requests", id="RecordingActionExecutor"),
         pytest.param(RecordingResponseBuilder, "calls", id="RecordingResponseBuilder"),
         # Takes a constructor argument, hence the lambda; a class-level `calls`

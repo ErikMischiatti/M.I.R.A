@@ -30,10 +30,13 @@ class MainWindow(QMainWindow):
 
         # The only two parts of the graph the UI touches, unpacked here rather
         # than kept as the whole `Application`. Holding the record itself would
-        # leave `state_manager`, `scheduler`, `interaction_manager` and
+        # leave `activity`, `scheduler`, `interaction_manager` and
         # `embodied_behavior` one attribute hop away, and reaching them that way
         # needs no import — so `scripts/check_layering.py`, which reads imports,
-        # would never see it. Unpacking keeps the narrowed allowlist meaningful.
+        # would never see it. `activity` is the one that matters: it commits
+        # face-state transitions, which is why Rule C of
+        # `scripts/check_state_authority.py` also forbids this module calling
+        # it, rather than trusting the unpacking below.
         self.event_bus = application.event_bus
         self.brain = application.brain
 

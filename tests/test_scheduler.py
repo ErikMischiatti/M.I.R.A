@@ -11,7 +11,7 @@ import inspect
 
 import pytest
 
-from doubles import RecordingActionExecutor, RecordingStateManager, StaticIntentEngine
+from doubles import RecordingActionExecutor, RecordingActivityAuthority, StaticIntentEngine
 
 from mira.core.brain import Brain
 from mira.core.embodied_behavior import EmbodiedBehavior
@@ -49,7 +49,7 @@ def make_brain(scheduler: ManualScheduler, engine=None) -> Brain:
     """
     brain = Brain(
         event_bus=EventBus(),
-        state_manager=RecordingStateManager(),
+        activity=RecordingActivityAuthority(),
         intent_engine=engine or StaticIntentEngine(IntentResult(intent="time_query")),
         response_builder=EchoResponseBuilder(),
         scheduler=scheduler,
@@ -239,7 +239,7 @@ def test_full_turn_runs_through_the_scheduler():
 
     scheduler.run_all()
     assert [r.text for r in responses] == ["answer:che ore sono"]
-    assert brain.state_manager.states == [
+    assert brain.activity.states == [
         FaceState.LISTENING,
         FaceState.THINKING,
         FaceState.SPEAKING,
@@ -306,7 +306,7 @@ def test_interpretation_failure_still_reports_to_the_user():
     assert len(responses) == 1
     assert responses[0].face_state is FaceState.CONFUSED
     assert "errore" in responses[0].text.lower()
-    assert brain.state_manager.states[-1] is FaceState.CONFUSED
+    assert brain.activity.states[-1] is FaceState.CONFUSED
 
 
 # --- decay through the port --------------------------------------------
@@ -314,26 +314,26 @@ def test_interpretation_failure_still_reports_to_the_user():
 
 def test_decay_fires_after_its_delay():
     scheduler = ManualScheduler()
-    state_manager = RecordingStateManager()
-    behavior = EmbodiedBehavior(EventBus(), state_manager, scheduler=scheduler)
+    activity = RecordingActivityAuthority()
+    behavior = EmbodiedBehavior(EventBus(), activity, scheduler=scheduler)
 
-    state_manager.current_state = FaceState.SPEAKING
+    activity.current_state = FaceState.SPEAKING
     behavior.on_response_ready(
         BrainResponse(text="hi", face_state=FaceState.SPEAKING)
     )
 
     assert scheduler.pending_timers() == 1
     scheduler.advance(1799)
-    assert state_manager.states == []
+    assert activity.states == []
 
     scheduler.advance(1)
-    assert state_manager.states == [FaceState.IDLE]
+    assert activity.states == [FaceState.IDLE]
 
 
 def test_new_response_cancels_the_previous_decay():
     scheduler = ManualScheduler()
-    state_manager = RecordingStateManager()
-    behavior = EmbodiedBehavior(EventBus(), state_manager, scheduler=scheduler)
+    activity = RecordingActivityAuthority()
+    behavior = EmbodiedBehavior(EventBus(), activity, scheduler=scheduler)
 
     behavior.on_response_ready(BrainResponse(text="a", face_state=FaceState.HAPPY))
     first_handle = behavior._decay_handle
@@ -344,6 +344,6 @@ def test_new_response_cancels_the_previous_decay():
     assert scheduler.pending_timers() == 1
 
     # Only the second decay remains, on the second response's schedule.
-    state_manager.current_state = FaceState.SPEAKING
+    activity.current_state = FaceState.SPEAKING
     scheduler.advance(1800)
-    assert state_manager.states == [FaceState.IDLE]
+    assert activity.states == [FaceState.IDLE]

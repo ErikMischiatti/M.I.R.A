@@ -3,7 +3,7 @@ from __future__ import annotations
 from mira.messaging.events import EventBus
 from mira.domain.scheduler import Scheduler, TimerHandle
 from mira.domain.models import BrainResponse, IntentResult
-from mira.core.state_manager import StateManager
+from mira.core.activity_authority import ActivityAuthority
 from mira.domain.state import FaceState
 
 
@@ -23,12 +23,12 @@ class EmbodiedBehavior:
     def __init__(
         self,
         event_bus: EventBus,
-        state_manager: StateManager,
+        activity: ActivityAuthority,
         *,
         scheduler: Scheduler,
     ):
         self.event_bus = event_bus
-        self.state_manager = state_manager
+        self.activity = activity
         self.scheduler = scheduler
 
         self._decay_handle: TimerHandle | None = None
@@ -56,10 +56,10 @@ class EmbodiedBehavior:
         Keep this subtle and short.
         """
         if intent.intent == "unknown":
-            self.state_manager.set_state(FaceState.CONFUSED)
+            self.activity.express(FaceState.CONFUSED)
 
         elif intent.intent == "greeting":
-            self.state_manager.set_state(FaceState.HAPPY)
+            self.activity.express(FaceState.HAPPY)
 
     def on_response_ready(self, response: BrainResponse) -> None:
         """
@@ -90,16 +90,13 @@ class EmbodiedBehavior:
     def _decay_to_neutral(self) -> None:
         self.decay_active = False
 
-        current_state = self.state_manager.get_state()
+        current_state = self.activity.current()
 
         # Decay only if we are still in the expressive state that was being held.
         if self.last_response_state is not None and current_state != self.last_response_state:
             return
 
-        if self._should_return_to_listening():
-            self.state_manager.set_state(FaceState.LISTENING)
-        else:
-            self.state_manager.set_state(FaceState.IDLE)
+        self.activity.settle(engaged=self._should_return_to_listening())
 
     def on_input_focused(self, payload=None) -> None:
         self.input_has_focus = True
