@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from PySide6.QtCore import QSize, Qt
 from PySide6.QtWidgets import QMainWindow, QWidget, QHBoxLayout, QVBoxLayout, QPushButton, QSplitter
 
@@ -5,16 +7,20 @@ from mira.ui.face.face_widget import FaceWidget
 from mira.ui.debug_panel import DebugPanel
 from mira.ui.chat_panel import ChatPanel
 
-from mira.adapters.qt_scheduler import QtScheduler
-from mira.messaging.events import EventBus
-from mira.core.state_manager import StateManager
-from mira.core.brain import Brain
-from mira.core.interaction_manager import InteractionManager
+from mira.application.composition import Application
 
-from mira.core.embodied_behavior import EmbodiedBehavior
 
 class MainWindow(QMainWindow):
-    def __init__(self):
+    """The window. It presents the application; it does not assemble it.
+
+    Receives an already-built `Application` and keeps references to the two
+    collaborators it actually uses: the bus it publishes user interaction on and
+    subscribes to for rendering, and the brain it hands submitted text to.
+    Nothing here decides which scheduler, memory or intent engine exists — that
+    is `mira.application.composition`.
+    """
+
+    def __init__(self, application: Application):
         super().__init__()
 
         self.setWindowTitle("M.I.R.A. - Modular Interactive Responsive Agent")
@@ -22,17 +28,14 @@ class MainWindow(QMainWindow):
         self.debug_drawer_width = 340
         self.resize(self.compact_size)
 
-        # --- Core systems ---
-        self.event_bus = EventBus()
-        self.state_manager = StateManager(self.event_bus)
-        self.scheduler = QtScheduler()
-        self.brain = Brain(
-            self.event_bus, self.state_manager, scheduler=self.scheduler
-        )
-        self.interaction_manager = InteractionManager(self.event_bus, self.state_manager)
-        self.embodied_behavior = EmbodiedBehavior(
-            self.event_bus, self.state_manager, scheduler=self.scheduler
-        )
+        # The only two parts of the graph the UI touches, unpacked here rather
+        # than kept as the whole `Application`. Holding the record itself would
+        # leave `state_manager`, `scheduler`, `interaction_manager` and
+        # `embodied_behavior` one attribute hop away, and reaching them that way
+        # needs no import — so `scripts/check_layering.py`, which reads imports,
+        # would never see it. Unpacking keeps the narrowed allowlist meaningful.
+        self.event_bus = application.event_bus
+        self.brain = application.brain
 
         # --- UI root ---
         central_widget = QWidget()
@@ -90,6 +93,10 @@ class MainWindow(QMainWindow):
         self.apply_visual_style()
 
         # --- Event wiring ---
+        # The window's own presentation handlers, registered after the graph's
+        # subscribers because the graph was composed first. Rendering runs last
+        # for a given event, which is the order this had before composition
+        # moved out.
         self.event_bus.subscribe("state_changed", self.on_state_changed)
         self.event_bus.subscribe("action_started", self.on_action_started)
         self.event_bus.subscribe("action_completed", self.on_action_completed)

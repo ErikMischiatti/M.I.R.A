@@ -21,8 +21,19 @@ Rule D (direction)
         mira.cognition  -> domain, memory, actions
         mira.core       -> domain, messaging, memory, actions, cognition
         mira.adapters   -> domain             (port implementations)
-        mira.ui         -> domain, messaging, core, adapters
+        mira.application-> domain, messaging, core, adapters   (composition root)
+        mira.ui         -> domain, application
         mira.main       -> unrestricted       (composition entry point)
+
+    Composition creates, domain executes, UI presents. `mira.application` builds
+    the graph and is the only layer that chooses concrete adapters for it. It
+    must not import `mira.ui`: the dependency runs UI -> application and never
+    back, so the composition root stays constructible with no widgets.
+
+    `mira.ui` lost `messaging`, `core` and `adapters` when composition moved out
+    of `MainWindow`. Nothing in the package needed them afterwards, and
+    withholding them is what stops the UI reacquiring the habit of constructing
+    its own subsystems.
 
     DIRECTION_DEBT holds exceptions and is currently empty.
 
@@ -67,7 +78,21 @@ LAYER_IMPORTS: dict[str, frozenset[str]] = {
         }
     ),
     "mira.adapters": frozenset({"mira.domain"}),
-    "mira.ui": frozenset({"mira.domain", "mira.messaging", "mira.core", "mira.adapters"}),
+    # The composition root: it constructs the graph, so it reaches the layers it
+    # builds from. Deliberately not `mira.memory`, `mira.actions` or
+    # `mira.cognition` — `Brain` still builds those itself, and granting reach it
+    # does not use would make the next widening invisible.
+    "mira.application": frozenset(
+        {
+            "mira.domain",
+            "mira.messaging",
+            "mira.core",
+            "mira.adapters",
+        }
+    ),
+    # Presentation only. It receives a built graph and renders it; `domain` for
+    # FaceState, `application` for the graph it is handed.
+    "mira.ui": frozenset({"mira.domain", "mira.application"}),
 }
 
 # Layers exempt from every rule. The composition entry point must be able to

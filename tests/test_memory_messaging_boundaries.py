@@ -70,6 +70,9 @@ CYCLE_ENTRY_POINTS = [
     "mira.messaging.events",
     "mira.actions.builtin_actions",
     "mira.ui.main_window",
+    # The composition root pulls adapters, core and messaging together in one
+    # module, which makes it the likeliest place for a future cycle to appear.
+    "mira.application.composition",
 ]
 
 # (case id, module path, source, expected message fragment)
@@ -119,10 +122,53 @@ REJECTION_CASES = [
         "[qt] mira.messaging must not import a GUI toolkit",
         id="no-qt-in-messaging",
     ),
+    # The composition root builds the graph; the UI receives it. Reversing that
+    # edge would let composition reach into widgets and close a cycle with the
+    # `mira.ui -> mira.application` import the window already makes.
+    pytest.param(
+        "mira/application/offender.py",
+        "from mira.ui.main_window import MainWindow\n\nUSED = MainWindow\n",
+        "[direction] mira.application must not import mira.ui",
+        id="composition-must-not-import-ui",
+    ),
+    # `mira.ui` was narrowed to {domain, application} when composition moved out
+    # of MainWindow. Without these three, restoring the old wide allowlist —
+    # and with it the UI's licence to build its own subsystems — would leave the
+    # whole suite green.
+    pytest.param(
+        "mira/ui/offender.py",
+        "from mira.core.brain import Brain\n\nUSED = Brain\n",
+        "[direction] mira.ui must not import mira.core",
+        id="ui-must-not-import-orchestration",
+    ),
+    pytest.param(
+        "mira/ui/offender.py",
+        "from mira.adapters.qt_scheduler import QtScheduler\n\nUSED = QtScheduler\n",
+        "[direction] mira.ui must not import mira.adapters",
+        id="ui-must-not-import-adapters",
+    ),
+    pytest.param(
+        "mira/ui/offender.py",
+        "from mira.messaging.events import EventBus\n\nUSED = EventBus\n",
+        "[direction] mira.ui must not import mira.messaging",
+        id="ui-must-not-import-messaging",
+    ),
 ]
 
 # Dependencies that must be permitted, so the rules are not merely restrictive.
 ACCEPTANCE_CASES = [
+    pytest.param(
+        "mira/application/ok.py",
+        "from mira.core.brain import Brain\n"
+        "from mira.adapters.qt_scheduler import QtScheduler\n\n"
+        "USED = (Brain, QtScheduler)\n",
+        id="composition-may-build-from-core-and-adapters",
+    ),
+    pytest.param(
+        "mira/ui/ok.py",
+        "from mira.application.composition import Application\n\nUSED = Application\n",
+        id="ui-may-receive-the-composed-application",
+    ),
     pytest.param(
         "mira/memory/ok.py",
         "from mira.domain.models import UserInput\n\nUSED = UserInput\n",
