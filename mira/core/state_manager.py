@@ -1,4 +1,5 @@
 from mira.domain.state import FaceState
+from mira.domain.embodiment import EmbodimentIntent
 from mira.messaging.events import EventBus
 
 
@@ -7,7 +8,12 @@ class StateManager:
         self.event_bus = event_bus
         self.current_state = FaceState.IDLE
 
-    def set_state(self, new_state: FaceState) -> None:
+    def set_state(
+        self,
+        new_state: FaceState,
+        *,
+        embodiment: EmbodimentIntent | None = None,
+    ) -> None:
         if new_state == self.current_state:
             return
 
@@ -19,6 +25,7 @@ class StateManager:
             {
                 "previous_state": previous_state,
                 "new_state": new_state,
+                "embodiment": embodiment,
             },
         )
 

@@ -30,6 +30,8 @@ Main modules:
   - UI-independent shared vocabulary
   - embodiment semantics: `ActivityState`, `AffectState`, `ExpressionKey`,
     `EmbodimentIntent` (`mira/domain/embodiment.py`)
+  - renderer-independent pose: `EmbodimentFrame`, `EyeFrame`, pure expression
+    definitions and resolution (`mira/domain/embodiment_frame.py`)
   - legacy presentation compatibility: `FaceState` (`mira/domain/state.py`)
   - `UserInput`, `IntentResult`, `BrainResponse` (`mira/domain/models.py`)
   - depends on nothing else in `mira`; must never import PySide6
@@ -93,6 +95,8 @@ Main modules:
 - Do not import PySide6 outside `mira/adapters`, `mira/ui` and `mira/main.py`.
   Timing belongs behind the `Scheduler` port in `mira/domain/scheduler.py`; the
   core is constructible and testable with no GUI toolkit installed.
+- Keep Qt geometry, timers, disk I/O, EventBus access and cognitive concepts out
+  of `EmbodimentFrame`; it is an outward pose value, not animation state.
 - Session memory lives in `mira/memory` and the event bus in `mira/messaging`,
   not in `mira/core`. The layering checker declares zero exceptions; keep it
   that way rather than adding one.

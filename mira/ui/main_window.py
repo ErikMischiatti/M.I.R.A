@@ -154,10 +154,14 @@ class MainWindow(QMainWindow):
 
     def on_state_changed(self, payload):
         new_state = payload["new_state"]
+        embodiment = payload.get("embodiment")
 
         print(f"[STATE] {new_state}")
 
-        self.face_widget.controller.set_state(new_state)
+        if embodiment is None:
+            self.face_widget.controller.set_state(new_state)
+        else:
+            self.face_widget.controller.set_intent(embodiment)
         self.face_widget.update()
 
     def on_action_started(self, payload):
@@ -187,5 +191,4 @@ class MainWindow(QMainWindow):
     def on_brain_response(self, response):
         self.chat_panel.add_mira_message(response.text)
         print(f"[mira] {response.text}")
-
 

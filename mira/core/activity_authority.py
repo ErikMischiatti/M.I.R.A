@@ -115,4 +115,4 @@ class ActivityAuthority:
 
     def _replace(self, intent: EmbodimentIntent) -> None:
         self._intent = intent
-        self.state_manager.set_state(resolve_face_state(intent))
+        self.state_manager.set_state(resolve_face_state(intent), embodiment=intent)

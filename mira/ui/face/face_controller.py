@@ -2,6 +2,19 @@ import math
 import random
 
 from mira.ui.face.expression_store import load_expression_library, reset_expression
+from mira.domain.embodiment import (
+    ActivityState,
+    EmbodimentIntent,
+    ExpressionKey,
+    resolve_expression_key,
+)
+from mira.domain.embodiment_frame import (
+    EmbodimentFrame,
+    EyeFrame,
+    FACE_HEIGHT_UNITS,
+    FACE_WIDTH_UNITS,
+    resolve_embodiment_frame,
+)
 from mira.domain.state import FaceState
 
 
@@ -10,6 +23,8 @@ class FaceController:
         self.expression_library = load_expression_library()
 
         self.state = FaceState.IDLE
+        self.intent = EmbodimentIntent(ActivityState.IDLE)
+        self.expression_key = ExpressionKey.IDLE
         self.profile = self.expression_library[self.state]
 
         self.left_eye_closed = False
@@ -84,20 +99,51 @@ class FaceController:
         return random.randint(min_frames, max_frames)
 
     def set_state(self, new_state: FaceState):
-        self.state = new_state
+        """Legacy presentation entry point for debug and compatibility callers."""
+        self.set_intent(
+            EmbodimentIntent(
+                activity=ActivityState.IDLE,
+                expression=ExpressionKey[new_state.name],
+            )
+        )
+
+    def set_intent(self, intent: EmbodimentIntent):
+        self.intent = intent
+        self.expression_key = resolve_expression_key(intent)
+        self.state = FaceState[self.expression_key.name]
         self.profile = self.expression_library[self.state]
         self.apply_profile()
 
     def apply_profile(self):
-        self.target_width_scale = self.profile.width_scale
+        definitions = {
+            ExpressionKey[state.name]: profile.to_definition()
+            for state, profile in self.expression_library.items()
+        }
+        self.base_frame = resolve_embodiment_frame(self.intent, definitions)
+        left = self.base_frame.left_eye
+        right = self.base_frame.right_eye
+        self.target_width_scale = (left.width_scale + right.width_scale) / 2.0
+        self.target_offset_x = (
+            (left.offset_x + right.offset_x) / 2.0 * FACE_WIDTH_UNITS
+        )
+        self.target_offset_y = (
+            left.offset_y * FACE_HEIGHT_UNITS
+            - self.profile.asymmetry_offset_y_left
+            + right.offset_y * FACE_HEIGHT_UNITS
+            - self.profile.asymmetry_offset_y_right
+        ) / 2.0
+        # The frame deliberately stores the two *resolved* heights. The shared
+        # pre-asymmetry animation scalar is not recoverable when either eye is
+        # scaled to zero, so this one controller-internal seed stays in the
+        # compatibility profile until animation state itself is extracted.
         self.target_height_scale = self.profile.height_scale
-        self.target_offset_x = self.profile.offset_x
-        self.target_offset_y = self.profile.offset_y
-        self.target_corner_radius = self.profile.corner_radius
+        self.target_corner_radius = (
+            (left.corner_radius + right.corner_radius) / 2.0 * FACE_WIDTH_UNITS
+        )
 
-        self.target_eyelid_tired = self.profile.eyelid_tired
-        self.target_eyelid_angry = self.profile.eyelid_angry
-        self.target_eyelid_happy = self.profile.eyelid_happy
+        self.target_eyelid_tired = (left.tired_lid + right.tired_lid) / 2.0
+        self.target_eyelid_angry = (left.angry_lid + right.angry_lid) / 2.0
+        self.target_eyelid_happy = (left.happy_lid + right.happy_lid) / 2.0
 
         self.blink_duration_frames = self.profile.blink_duration_frames
         self.blink_interval_frames = self.random_blink_interval()
@@ -237,6 +283,42 @@ class FaceController:
 
     def get_profile(self):
         return self.profile
+
+    def get_frame(self) -> EmbodimentFrame:
+        """Snapshot the fully resolved instantaneous pose for any renderer."""
+
+        common = {
+            "offset_x": self.current_offset_x / FACE_WIDTH_UNITS,
+            "width_scale": self.current_width_scale,
+            "corner_radius": self.current_corner_radius / FACE_WIDTH_UNITS,
+            "tired_lid": self.current_eyelid_tired,
+            "angry_lid": self.current_eyelid_angry,
+            "happy_lid": self.current_eyelid_happy,
+        }
+        return EmbodimentFrame(
+            left_eye=EyeFrame(
+                **common,
+                offset_y=(
+                    self.current_offset_y + self.profile.asymmetry_offset_y_left
+                )
+                / FACE_HEIGHT_UNITS,
+                height_scale=(
+                    self.current_height_scale * self.profile.asymmetry_height_left
+                ),
+                closed=self.left_eye_closed,
+            ),
+            right_eye=EyeFrame(
+                **common,
+                offset_y=(
+                    self.current_offset_y + self.profile.asymmetry_offset_y_right
+                )
+                / FACE_HEIGHT_UNITS,
+                height_scale=(
+                    self.current_height_scale * self.profile.asymmetry_height_right
+                ),
+                closed=self.right_eye_closed,
+            ),
+        )
 
     def refresh_profile_targets(self):
         self.apply_profile()
