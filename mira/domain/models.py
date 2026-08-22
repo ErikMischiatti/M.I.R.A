@@ -1,6 +1,6 @@
 from dataclasses import dataclass, field
 from typing import Any
-from mira.domain.state import FaceState
+from mira.domain.embodiment import EmbodimentIntent
 
 
 @dataclass
@@ -20,5 +20,5 @@ class IntentResult:
 @dataclass
 class BrainResponse:
     text: str
-    face_state: FaceState
+    embodiment: EmbodimentIntent
     metadata: dict[str, Any] = field(default_factory=dict)

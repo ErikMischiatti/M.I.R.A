@@ -25,6 +25,7 @@ from __future__ import annotations
 from mira.actions.action_models import ActionRequest, ActionResult
 from mira.core.activity_authority import ActivityAuthority
 from mira.core.brain import Brain
+from mira.domain.embodiment import ActivityState, EmbodimentIntent
 from mira.domain.models import BrainResponse, IntentResult, UserInput
 from mira.domain.scheduler import ManualScheduler
 from mira.domain.state import FaceState
@@ -59,7 +60,7 @@ class RecordingStateManager:
     Replaced four variants: two identical, two omitting `states` and/or
     `get_state`. Nothing asserted those omissions, so this superset satisfies all
     four. `get_state` is required by `EmbodiedBehavior._decay_to_neutral`
-    (`mira/core/embodied_behavior.py:93`).
+    (`mira/core/embodied_behavior.py:94`).
     """
 
     def __init__(self) -> None:
@@ -161,7 +162,7 @@ class RecordingResponseBuilder:
         text = action_result.message if action_result is not None else "no action"
         return BrainResponse(
             text=text,
-            face_state=FaceState.SPEAKING,
+            embodiment=EmbodimentIntent(ActivityState.SPEAKING),
             metadata={"intent": intent.intent},
         )
 

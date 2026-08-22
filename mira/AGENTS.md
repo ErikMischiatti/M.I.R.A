@@ -28,7 +28,9 @@ Main modules:
 
 - `mira/domain`
   - UI-independent shared vocabulary
-  - `FaceState` (`mira/domain/state.py`)
+  - embodiment semantics: `ActivityState`, `AffectState`, `ExpressionKey`,
+    `EmbodimentIntent` (`mira/domain/embodiment.py`)
+  - legacy presentation compatibility: `FaceState` (`mira/domain/state.py`)
   - `UserInput`, `IntentResult`, `BrainResponse` (`mira/domain/models.py`)
   - depends on nothing else in `mira`; must never import PySide6
 
@@ -161,7 +163,7 @@ Rules:
 - Action responses have priority over LLM conversational text.
 - `llm_response_text` may be used only for non-action responses.
 - `empty_input` remains deterministic.
-- `llm_emotion` must be mapped to `FaceState` through an explicit allowlist.
+- `llm_emotion` must be mapped to `AffectState`/`EmbodimentIntent` through an explicit allowlist.
 - Do not use unchecked dynamic enum lookup for emotions.
 - Do not expose raw LLM JSON or internal metadata in the UI.
 - Successful actions should produce clear user-facing feedback.

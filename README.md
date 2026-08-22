@@ -176,8 +176,10 @@ Face UI + Chat Response
 
 The project is organized around a modular separation of responsibilities:
 
-- `domain/` — UI-independent shared vocabulary: expressive state and the core
-  interaction models. Depends on nothing else in `mira` and imports no GUI toolkit.
+- `domain/` — UI-independent shared vocabulary: activity, affect, semantic
+  expression keys, embodiment intent, and the core interaction models. Depends
+  on nothing else in `mira` and imports no GUI toolkit. `FaceState` remains only
+  as the compatibility contract consumed by the current face presentation.
 
 - `messaging/` — in-process notification: subscription and synchronous fan-out.
   Depends on nothing else in `mira`.
@@ -207,6 +209,18 @@ The project is organized around a modular separation of responsibilities:
 ---
 
 ## Current Interaction Flow
+
+The semantic embodiment model keeps activity and affect independent. Until the
+renderer is redesigned, a pure compatibility resolver collapses them to the
+existing `FaceState` with this precedence:
+
+1. an explicit expression override wins;
+2. otherwise a non-neutral affect colours the activity;
+3. otherwise activity selects the legacy face state.
+
+Activity requests clear a prior affect, preserving the current transition
+sequence. Affect requests retain the semantic activity even though the legacy
+renderer displays only one resulting profile.
 
 A typical interaction currently follows this pipeline:
 

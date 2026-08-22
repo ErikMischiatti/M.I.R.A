@@ -22,6 +22,7 @@ from __future__ import annotations
 from doubles import RecordingActivityAuthority, RecordingEventBus, make_recording_brain
 
 from mira.core.embodied_behavior import EmbodiedBehavior
+from mira.domain.embodiment import ActivityState, AffectState, EmbodimentIntent
 from mira.domain.models import IntentResult
 from mira.domain.scheduler import ManualScheduler
 from mira.domain.state import FaceState
@@ -50,16 +51,22 @@ def test_request_ids_are_monotonic_and_allocation_claims_latest():
 
 def test_decay_delay_table_is_unchanged():
     behavior = make_embodied_behavior()
-    assert behavior._get_decay_delay(FaceState.HAPPY) == 2200
-    assert behavior._get_decay_delay(FaceState.CONFUSED) == 1600
-    assert behavior._get_decay_delay(FaceState.SPEAKING) == 1800
-    assert behavior._get_decay_delay(FaceState.THINKING) == 1200
-    assert behavior._get_decay_delay(FaceState.IDLE) == 1500
+    assert behavior._get_decay_delay(
+        EmbodimentIntent(ActivityState.SPEAKING, AffectState.HAPPY)
+    ) == 2200
+    assert behavior._get_decay_delay(
+        EmbodimentIntent(ActivityState.SPEAKING, AffectState.CONFUSED)
+    ) == 1600
+    assert behavior._get_decay_delay(EmbodimentIntent(ActivityState.SPEAKING)) == 1800
+    assert behavior._get_decay_delay(EmbodimentIntent(ActivityState.THINKING)) == 1200
+    assert behavior._get_decay_delay(EmbodimentIntent(ActivityState.IDLE)) == 1500
 
 
 def test_decay_only_fires_while_still_in_the_held_state():
     behavior = make_embodied_behavior()
-    behavior.last_response_state = FaceState.HAPPY
+    behavior.last_response_intent = EmbodimentIntent(
+        ActivityState.SPEAKING, AffectState.HAPPY
+    )
     behavior.activity.current_state = FaceState.THINKING
 
     behavior._decay_to_neutral()
@@ -70,7 +77,7 @@ def test_decay_only_fires_while_still_in_the_held_state():
 
 def test_decay_returns_to_listening_when_input_is_engaged():
     behavior = make_embodied_behavior()
-    behavior.last_response_state = FaceState.SPEAKING
+    behavior.last_response_intent = EmbodimentIntent(ActivityState.SPEAKING)
     behavior.activity.current_state = FaceState.SPEAKING
     behavior.input_has_focus = True
 
@@ -81,7 +88,7 @@ def test_decay_returns_to_listening_when_input_is_engaged():
 
 def test_decay_returns_to_idle_when_input_is_not_engaged():
     behavior = make_embodied_behavior()
-    behavior.last_response_state = FaceState.SPEAKING
+    behavior.last_response_intent = EmbodimentIntent(ActivityState.SPEAKING)
     behavior.activity.current_state = FaceState.SPEAKING
     behavior.input_has_focus = False
     behavior.input_has_text = False

@@ -65,6 +65,14 @@ Rule D (no silent writes)
     change while emitting nothing, which desynchronizes every subscriber from
     the state they are meant to render. Only `mira/core/state_manager.py` may
     assign it.
+
+Rule E (semantic boundary)
+    Cognition, application and core policy must use `EmbodimentIntent`,
+    `ActivityState` and `AffectState`, not the legacy `FaceState` presentation
+    model or `BrainResponse.face_state`. `StateManager` is the sole core
+    exception because it is the compatibility presentation store. The legacy
+    resolver itself may only be imported by the activity authority (the runtime
+    bridge) and session memory (the existing serialized metadata bridge).
 """
 
 from __future__ import annotations
@@ -113,6 +121,17 @@ AUTHORITY_COMMANDS = frozenset(
 # Rule D: the module that owns the storage.
 STATE_STORAGE_ATTR = "current_state"
 MAY_ASSIGN_STATE_STORAGE = frozenset({"mira/core/state_manager.py"})
+
+FACE_STATE_CORE_BOUNDARY = "mira/core/state_manager.py"
+SEMANTIC_LAYERS = ("mira/cognition/", "mira/application/", "mira/core/")
+COMPATIBILITY_MODULE = "mira.domain.embodiment_compatibility"
+MAY_IMPORT_COMPATIBILITY = frozenset(
+    {
+        THE_AUTHORITY,
+        "mira/domain/embodiment_compatibility.py",
+        "mira/memory/session_memory.py",
+    }
+)
 
 
 class Finding(NamedTuple):
@@ -171,6 +190,8 @@ def check_file(path: Path) -> list[Finding]:
         return [Finding(f"{relative}:{exc.lineno}", "[parse] could not parse", exc.msg)]
 
     findings: list[Finding] = []
+    semantic_layer = relative.startswith(SEMANTIC_LAYERS)
+    face_state_allowed = relative in {FACE_STATE_CORE_BOUNDARY, THE_AUTHORITY}
 
     for node in ast.walk(tree):
         if isinstance(node, ast.Call) and receiver_is_a_state_manager(node):
@@ -217,6 +238,63 @@ def check_file(path: Path) -> list[Finding]:
         if isinstance(node, ast.ImportFrom) and node.module == "mira.core.state_manager":
             # `from mira.core.state_manager import anything`
             imported.append((node.lineno, "StateManager"))
+
+        if semantic_layer and not face_state_allowed:
+            imports_legacy_state = (
+                isinstance(node, ast.ImportFrom)
+                and node.module == "mira.domain.state"
+                and any(alias.name == "FaceState" for alias in node.names)
+            ) or (
+                isinstance(node, ast.Import)
+                and any(alias.name == "mira.domain.state" for alias in node.names)
+            ) or (
+                isinstance(node, ast.ImportFrom)
+                and node.module == "mira.domain"
+                and any(alias.name in {"state", "FaceState", "*"} for alias in node.names)
+            )
+            if imports_legacy_state:
+                findings.append(
+                    Finding(
+                        f"{relative}:{node.lineno}",
+                        "[semantics] semantic policy may not import FaceState",
+                        "use ActivityState, AffectState and EmbodimentIntent; "
+                        "FaceState is confined to compatibility/presentation",
+                    )
+                )
+
+        imports_compatibility = (
+            isinstance(node, ast.ImportFrom)
+            and node.module == COMPATIBILITY_MODULE
+        ) or (
+            isinstance(node, ast.Import)
+            and any(alias.name == COMPATIBILITY_MODULE for alias in node.names)
+        ) or (
+            isinstance(node, ast.ImportFrom)
+            and node.module == "mira.domain"
+            and any(alias.name == "embodiment_compatibility" for alias in node.names)
+        )
+        if imports_compatibility and relative not in MAY_IMPORT_COMPATIBILITY:
+            findings.append(
+                Finding(
+                    f"{relative}:{node.lineno}",
+                    "[semantics] legacy resolver may only be used at a compatibility boundary",
+                    f"permitted: {', '.join(sorted(MAY_IMPORT_COMPATIBILITY))}",
+                )
+            )
+
+        if (
+            semantic_layer
+            and not face_state_allowed
+            and isinstance(node, ast.Attribute)
+            and node.attr == "face_state"
+        ):
+            findings.append(
+                Finding(
+                    f"{relative}:{node.lineno}",
+                    "[semantics] semantic policy may not read response.face_state",
+                    "consume BrainResponse.embodiment instead",
+                )
+            )
 
         for lineno, name in imported:
             # Every form that yields the module or the type:

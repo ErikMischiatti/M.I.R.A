@@ -2,6 +2,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from mira.domain.models import UserInput, IntentResult, BrainResponse
+from mira.domain.embodiment_compatibility import resolve_face_state
 
 
 @dataclass
@@ -45,7 +46,9 @@ class SessionMemory:
                 role="assistant",
                 text=response.text,
                 metadata={
-                    "face_state": response.face_state.name,
+                    # Preserve the existing serialized metadata at this
+                    # explicit persistence compatibility boundary.
+                    "face_state": resolve_face_state(response.embodiment).name,
                     **response.metadata,
                 },
             )

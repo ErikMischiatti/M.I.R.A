@@ -18,8 +18,8 @@ must not change semantics.
 from __future__ import annotations
 
 from mira.memory.session_memory import MemoryMessage, SessionMemory
+from mira.domain.embodiment import ActivityState, AffectState, EmbodimentIntent
 from mira.domain.models import BrainResponse, IntentResult, UserInput
-from mira.domain.state import FaceState
 
 
 # --- tiers and their meanings -------------------------------------------
@@ -46,7 +46,11 @@ def test_user_input_becomes_an_episodic_message():
 def test_response_becomes_an_episodic_message_carrying_the_state_name():
     memory = SessionMemory()
     memory.add_response(
-        BrainResponse(text="hi", face_state=FaceState.HAPPY, metadata={"intent": "greeting"})
+        BrainResponse(
+            text="hi",
+            embodiment=EmbodimentIntent(ActivityState.SPEAKING, AffectState.HAPPY),
+            metadata={"intent": "greeting"},
+        )
     )
 
     assert memory.history == [
@@ -63,7 +67,11 @@ def test_caller_metadata_overrides_the_keys_the_store_sets():
     memory = SessionMemory()
     memory.add_user_input(UserInput(text="a", source="text", metadata={"source": "OVERRIDE"}))
     memory.add_response(
-        BrainResponse(text="b", face_state=FaceState.HAPPY, metadata={"face_state": "OVERRIDE"})
+        BrainResponse(
+            text="b",
+            embodiment=EmbodimentIntent(ActivityState.SPEAKING, AffectState.HAPPY),
+            metadata={"face_state": "OVERRIDE"},
+        )
     )
 
     assert memory.history[0].metadata == {"source": "OVERRIDE"}
@@ -84,7 +92,9 @@ def test_history_is_bounded_and_keeps_the_newest():
 def test_history_preserves_insertion_order_across_roles():
     memory = SessionMemory()
     memory.add_user_input(UserInput(text="u1"))
-    memory.add_response(BrainResponse(text="a1", face_state=FaceState.SPEAKING))
+    memory.add_response(
+        BrainResponse(text="a1", embodiment=EmbodimentIntent(ActivityState.SPEAKING))
+    )
     memory.add_user_input(UserInput(text="u2"))
 
     assert [(m.role, m.text) for m in memory.history] == [
