@@ -74,7 +74,7 @@ class InteractionManager:
         self.is_processing = False
 
         if isinstance(response, BrainResponse):
-            self.activity.conclude(response.face_state)
+            self.activity.conclude(response.embodiment)
             return
 
         # Fallback safety path

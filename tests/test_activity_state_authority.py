@@ -27,6 +27,7 @@ from layering_harness import run_checker
 
 from mira.application.composition import build_application
 from mira.domain.scheduler import ManualScheduler
+from mira.domain.embodiment import ActivityState, AffectState, EmbodimentIntent
 from mira.domain.state import FaceState
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -363,6 +364,36 @@ def test_the_repository_has_exactly_one_committer():
             "may not assign the state storage directly",
             id="nobody-may-write-the-storage-silently",
         ),
+        pytest.param(
+            "mira/cognition/offender.py",
+            "from mira.domain.state import FaceState\n\nVALUE = FaceState.HAPPY\n",
+            "semantic policy may not import FaceState",
+            id="cognition-may-not-use-the-legacy-semantic-model",
+        ),
+        pytest.param(
+            "mira/application/offender.py",
+            "import mira.domain.state\n\nVALUE = mira.domain.state.FaceState.IDLE\n",
+            "semantic policy may not import FaceState",
+            id="application-may-not-use-the-legacy-semantic-model",
+        ),
+        pytest.param(
+            "mira/core/offender.py",
+            "from mira.domain import state\n\nVALUE = state.FaceState.IDLE\n",
+            "semantic policy may not import FaceState",
+            id="package-state-import-may-not-bypass-the-semantic-boundary",
+        ),
+        pytest.param(
+            "mira/core/offender.py",
+            "from mira.domain.embodiment_compatibility import resolve_face_state\n",
+            "legacy resolver may only be used at a compatibility boundary",
+            id="core-policy-may-not-import-the-legacy-resolver",
+        ),
+        pytest.param(
+            "mira/core/offender.py",
+            "def conclude(response):\n    return response.face_state\n",
+            "semantic policy may not read response.face_state",
+            id="core-may-not-project-a-response-back-to-face-state",
+        ),
     ],
 )
 def test_the_checker_rejects_a_bypass(tmp_path, module_path, source, expected):
@@ -457,3 +488,28 @@ def test_the_authority_reports_what_was_committed(app):
     assert activity.current() is FaceState.IDLE
     activity.deliberate()
     assert activity.current() is FaceState.THINKING
+
+
+def test_affect_colours_activity_without_replacing_it(app):
+    application, _scheduler, observed = app
+    activity = application.activity
+
+    activity.deliberate()
+    activity.express(AffectState.HAPPY)
+
+    assert activity.current_intent() == EmbodimentIntent(
+        activity=ActivityState.THINKING,
+        affect=AffectState.HAPPY,
+    )
+    assert names(observed) == ["THINKING", "HAPPY"]
+
+
+def test_a_new_activity_clears_the_previous_affect_as_before(app):
+    application, _scheduler, observed = app
+    activity = application.activity
+
+    activity.express(AffectState.CONFUSED)
+    activity.attend()
+
+    assert activity.current_intent() == EmbodimentIntent(ActivityState.LISTENING)
+    assert names(observed) == ["CONFUSED", "LISTENING"]

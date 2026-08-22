@@ -14,6 +14,7 @@ from doubles import make_recording_brain
 
 from mira.actions.action_models import ActionRequest
 from mira.core.brain import BrainComputationResult
+from mira.domain.embodiment import ActivityState
 from mira.domain.models import IntentResult, UserInput
 from mira.domain.state import FaceState
 
@@ -117,6 +118,7 @@ def test_current_async_result_finalization_emits_response_and_invokes_callback()
         "response_ready",
     ]
     assert brain.activity.states == [FaceState.SPEAKING]
+    assert brain.activity.current_intent().activity is ActivityState.SPEAKING
 
 
 def test_invalid_llm_action_marker_prevents_rule_based_action_fallback():

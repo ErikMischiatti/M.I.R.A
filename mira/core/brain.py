@@ -38,7 +38,7 @@ from mira.domain.scheduler import Scheduler
 from mira.domain.models import BrainResponse, IntentResult, UserInput
 from mira.memory.session_memory import SessionMemory
 from mira.core.activity_authority import ActivityAuthority
-from mira.domain.state import FaceState
+from mira.domain.embodiment import ActivityState, AffectState, EmbodimentIntent
 
 
 @dataclass
@@ -144,7 +144,7 @@ class Brain:
         response = self._build_response(user_input)
 
         self.event_bus.emit("response_ready", response)
-        self.activity.conclude(response.face_state)
+        self.activity.conclude(response.embodiment)
 
         return response
 
@@ -203,7 +203,7 @@ class Brain:
         response = self._finalize_computation_result(result)
 
         self.event_bus.emit("response_ready", response)
-        self.activity.conclude(response.face_state)
+        self.activity.conclude(response.embodiment)
 
         if on_response is not None:
             on_response(response)
@@ -341,7 +341,10 @@ class Brain:
             )
             response = BrainResponse(
                 text="Si è verificato un errore durante l'elaborazione.",
-                face_state=FaceState.CONFUSED,
+                embodiment=EmbodimentIntent(
+                    activity=ActivityState.SPEAKING,
+                    affect=AffectState.CONFUSED,
+                ),
                 metadata={"intent": intent.intent, "error": str(exc)},
             )
             return BrainComputationResult(

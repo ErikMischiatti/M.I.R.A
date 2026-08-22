@@ -16,13 +16,17 @@ import pytest
 from layering_harness import BLOCKER, CHECKER, REPO_ROOT, isolated_tree, run_checker, run_python
 
 IMPORT_DOMAIN = BLOCKER + """
+import mira.domain.embodiment
 import mira.domain.models
 import mira.domain.state
+import mira.domain.embodiment_compatibility
 
 # The vocabulary must be usable, not merely importable.
-state = mira.domain.state.FaceState.SPEAKING
-response = mira.domain.models.BrainResponse(text="ok", face_state=state)
-assert response.face_state is mira.domain.state.FaceState.SPEAKING
+intent = mira.domain.embodiment.EmbodimentIntent(
+    activity=mira.domain.embodiment.ActivityState.SPEAKING,
+)
+response = mira.domain.models.BrainResponse(text="ok", embodiment=intent)
+assert mira.domain.embodiment_compatibility.resolve_face_state(response.embodiment) is mira.domain.state.FaceState.SPEAKING
 assert "PySide6" not in sys.modules
 print("OK")
 """
@@ -30,6 +34,17 @@ print("OK")
 IMPORT_PYSIDE6 = BLOCKER + """
 import PySide6  # must raise
 print("BLOCKER FAILED: PySide6 imported anyway")
+"""
+
+IMPORT_EMBODIMENT_VOCABULARY = BLOCKER + """
+from mira.domain.embodiment import ActivityState, AffectState, EmbodimentIntent, ExpressionKey
+
+intent = EmbodimentIntent(ActivityState.LISTENING, AffectState.HAPPY)
+assert intent.activity is ActivityState.LISTENING
+assert ExpressionKey.HAPPY.value == "happy"
+assert "mira.domain.state" not in sys.modules
+assert "PySide6" not in sys.modules
+print("OK")
 """
 
 # (module path, source, expected message fragment, expected reported location)
@@ -142,6 +157,12 @@ def test_domain_vocabulary_imports_without_pyside6():
     assert result.returncode == 0, (
         f"domain vocabulary requires PySide6.\nstdout: {result.stdout}\nstderr: {result.stderr}"
     )
+    assert result.stdout.strip().endswith("OK")
+
+
+def test_embodiment_vocabulary_does_not_load_legacy_presentation_or_qt():
+    result = run_python(IMPORT_EMBODIMENT_VOCABULARY)
+    assert result.returncode == 0, result.stderr
     assert result.stdout.strip().endswith("OK")
 
 

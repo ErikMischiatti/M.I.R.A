@@ -1,4 +1,4 @@
-"""The single component permitted to commit a face-state transition.
+"""The single component permitted to commit an embodiment transition.
 
 Before this module, three components wrote state directly: `Brain` (6 call
 sites), `InteractionManager` (10) and `EmbodiedBehavior` (4). They did not
@@ -19,28 +19,22 @@ than resolved. What moved is the commit itself and the vocabulary: no caller
 names a `FaceState` for an activity transition any more, and no caller reaches
 `StateManager`. `scripts/check_state_authority.py` enforces that mechanically.
 
-Activity and affect
--------------------
-`FaceState` is one variable carrying two things:
-
-    activity  IDLE, LISTENING, THINKING          what the system is doing
-    affect    HAPPY, TIRED, ANGRY, CONFUSED      how it is reacting
-    mixed     SPEAKING                            delivering a response, which
-                                                  is both an activity and an
-                                                  expression
-
-Because affect lands in the same variable, an activity authority that ignored it
-would leave a second writer for the same slot — so `express` is here too, marked
-as affect rather than pretending to be activity. Separating them properly means
-two independent variables, a `FaceState` split, and a face-subsystem that can
-render a combination; that is an embodiment redesign, deliberately not attempted
-here. `TIRED` and `ANGRY` are unreachable today: nothing constructs them outside
-`mira/ui/debug_panel.py`'s manual override.
+Activity and affect are now independent in `EmbodimentIntent`. The current face
+still accepts one `FaceState`, so this authority resolves the semantic intent at
+the compatibility boundary before committing it. That preserves every existing
+event and renderer consumer while preventing new core policy from using
+`FaceState` as its semantic model.
 """
 
 from __future__ import annotations
 
 from mira.core.state_manager import StateManager
+from mira.domain.embodiment import (
+    ActivityState,
+    AffectState,
+    EmbodimentIntent,
+)
+from mira.domain.embodiment_compatibility import resolve_face_state
 from mira.domain.state import FaceState
 
 
@@ -57,16 +51,17 @@ class ActivityAuthority:
         # Public so tests can read what was committed without reaching through
         # a private name; nothing in production touches it.
         self.state_manager = state_manager
+        self._intent = EmbodimentIntent(activity=ActivityState.IDLE)
 
     # --- activity -------------------------------------------------------
 
     def attend(self) -> None:
         """The user is engaging: input focused, text present, or a turn opened."""
-        self._commit(FaceState.LISTENING)
+        self._replace(EmbodimentIntent(activity=ActivityState.LISTENING))
 
     def deliberate(self) -> None:
         """Interpretation has started."""
-        self._commit(FaceState.THINKING)
+        self._replace(EmbodimentIntent(activity=ActivityState.THINKING))
 
     def settle(self, *, engaged: bool) -> None:
         """Return to a passive state, choosing by whether the user is still there.
@@ -79,34 +74,45 @@ class ActivityAuthority:
         if engaged:
             self.attend()
         else:
-            self._commit(FaceState.IDLE)
+            self._replace(EmbodimentIntent(activity=ActivityState.IDLE))
 
-    def conclude(self, face_state: FaceState) -> None:
-        """A response is ready; it carries the state it wants to be seen in.
+    def conclude(self, intent: EmbodimentIntent) -> None:
+        """A response is ready; commit its complete embodiment intent.
 
-        The value comes from the response rather than from this class, which is
-        why it is a parameter — `BrainResponse.face_state` is decided by the
-        response builder and is part of the reply, not of the activity model.
+        The response builder chooses this value. This authority owns committing
+        it, not deciding which response affect is appropriate.
         """
-        self._commit(face_state)
+        self._replace(intent)
 
     # --- affect ---------------------------------------------------------
 
-    def express(self, face_state: FaceState) -> None:
-        """Commit an affective reaction.
+    def express(self, affect: AffectState) -> None:
+        """Colour the current activity without replacing that semantic axis.
 
-        Separate from the activity methods because it is a different kind of
-        transition that happens to share the variable. See the module docstring
-        for why the two are not yet separate variables.
+        The legacy face may still collapse the combination to the affective
+        profile, but the underlying intent retains both values.
         """
-        self._commit(face_state)
+        self._replace(EmbodimentIntent(activity=self._intent.activity, affect=affect))
 
     # --- reading --------------------------------------------------------
 
     def current(self) -> FaceState:
+        """Return the legacy presentation state while the bridge exists."""
         return self.state_manager.get_state()
+
+    def is_presenting(self, intent: EmbodimentIntent) -> bool:
+        """Whether the legacy presentation still represents ``intent``.
+
+        Projection stays here, at the compatibility commit/read boundary, so
+        semantic policy never needs to import the temporary resolver.
+        """
+        return self.current() is resolve_face_state(intent)
+
+    def current_intent(self) -> EmbodimentIntent:
+        return self._intent
 
     # --- the one commit point -------------------------------------------
 
-    def _commit(self, face_state: FaceState) -> None:
-        self.state_manager.set_state(face_state)
+    def _replace(self, intent: EmbodimentIntent) -> None:
+        self._intent = intent
+        self.state_manager.set_state(resolve_face_state(intent))

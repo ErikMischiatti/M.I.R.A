@@ -15,13 +15,16 @@ import pytest
 from layering_harness import BLOCKER, REPO_ROOT, isolated_tree, run_checker, run_python
 
 IMPORT_MEMORY = BLOCKER + """
+from mira.domain.embodiment import ActivityState, AffectState, EmbodimentIntent
 from mira.domain.models import BrainResponse, IntentResult, UserInput
-from mira.domain.state import FaceState
 from mira.memory.session_memory import MemoryMessage, SessionMemory
 
 memory = SessionMemory(max_history=2)
 memory.add_user_input(UserInput(text="ciao"))
-memory.add_response(BrainResponse(text="hi", face_state=FaceState.HAPPY))
+memory.add_response(BrainResponse(
+    text="hi",
+    embodiment=EmbodimentIntent(ActivityState.SPEAKING, AffectState.HAPPY),
+))
 memory.set_last_intent(IntentResult(intent="greeting"))
 memory.set_context("name", "Erik")
 

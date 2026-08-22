@@ -30,6 +30,8 @@ from mira.actions.action_models import ActionRequest
 from mira.domain.models import IntentResult, UserInput
 from mira.domain.scheduler import ManualScheduler
 from mira.domain.state import FaceState
+from mira.domain.embodiment import ActivityState, EmbodimentIntent
+from mira.domain.embodiment_compatibility import resolve_face_state
 
 TESTS_DIR = pathlib.Path(__file__).resolve().parent
 REPO_ROOT = TESTS_DIR.parent
@@ -273,7 +275,7 @@ def test_recording_response_builder_derives_text_from_the_action_result():
 
     assert with_action.text == "executed get_time"
     assert without_action.text == "no action"
-    assert with_action.face_state is FaceState.SPEAKING
+    assert resolve_face_state(with_action.embodiment) is FaceState.SPEAKING
     assert with_action.metadata == {"intent": "time_query"}
     assert builder.calls == [
         (intent, user_input, result),
@@ -302,7 +304,7 @@ def test_make_recording_brain_returns_an_independent_brain_each_call():
     first = make_recording_brain(IntentResult(intent="time_query"))
     second = make_recording_brain(IntentResult(intent="greeting"))
 
-    first.activity.conclude(FaceState.SPEAKING)
+    first.activity.conclude(EmbodimentIntent(ActivityState.SPEAKING))
     first.event_bus.emit("response_ready", None)
 
     assert second.activity.states == []

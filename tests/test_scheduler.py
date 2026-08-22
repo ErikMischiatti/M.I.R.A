@@ -15,6 +15,8 @@ from doubles import RecordingActionExecutor, RecordingActivityAuthority, StaticI
 
 from mira.core.brain import Brain
 from mira.core.embodied_behavior import EmbodiedBehavior
+from mira.domain.embodiment import ActivityState, AffectState, EmbodimentIntent
+from mira.domain.embodiment_compatibility import resolve_face_state
 from mira.domain.models import BrainResponse, IntentResult, UserInput
 from mira.domain.scheduler import (
     ManualScheduler,
@@ -35,7 +37,7 @@ class EchoResponseBuilder:
     def build(self, intent, user_input, action_result=None) -> BrainResponse:
         return BrainResponse(
             text=f"answer:{user_input.text}",
-            face_state=FaceState.SPEAKING,
+            embodiment=EmbodimentIntent(ActivityState.SPEAKING),
             metadata={"intent": intent.intent},
         )
 
@@ -304,7 +306,7 @@ def test_interpretation_failure_still_reports_to_the_user():
     scheduler.run_all()
 
     assert len(responses) == 1
-    assert responses[0].face_state is FaceState.CONFUSED
+    assert resolve_face_state(responses[0].embodiment) is FaceState.CONFUSED
     assert "errore" in responses[0].text.lower()
     assert brain.activity.states[-1] is FaceState.CONFUSED
 
@@ -319,7 +321,7 @@ def test_decay_fires_after_its_delay():
 
     activity.current_state = FaceState.SPEAKING
     behavior.on_response_ready(
-        BrainResponse(text="hi", face_state=FaceState.SPEAKING)
+        BrainResponse(text="hi", embodiment=EmbodimentIntent(ActivityState.SPEAKING))
     )
 
     assert scheduler.pending_timers() == 1
@@ -335,10 +337,17 @@ def test_new_response_cancels_the_previous_decay():
     activity = RecordingActivityAuthority()
     behavior = EmbodiedBehavior(EventBus(), activity, scheduler=scheduler)
 
-    behavior.on_response_ready(BrainResponse(text="a", face_state=FaceState.HAPPY))
+    behavior.on_response_ready(
+        BrainResponse(
+            text="a",
+            embodiment=EmbodimentIntent(ActivityState.SPEAKING, AffectState.HAPPY),
+        )
+    )
     first_handle = behavior._decay_handle
 
-    behavior.on_response_ready(BrainResponse(text="b", face_state=FaceState.SPEAKING))
+    behavior.on_response_ready(
+        BrainResponse(text="b", embodiment=EmbodimentIntent(ActivityState.SPEAKING))
+    )
 
     assert first_handle is not None and first_handle.is_pending() is False
     assert scheduler.pending_timers() == 1
