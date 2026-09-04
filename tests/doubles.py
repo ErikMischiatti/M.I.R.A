@@ -67,7 +67,7 @@ class RecordingStateManager:
         self.states: list[FaceState] = []
         self.current_state = FaceState.IDLE
 
-    def set_state(self, state: FaceState) -> None:
+    def set_state(self, state: FaceState, **_metadata) -> None:
         self.states.append(state)
         self.current_state = state
 

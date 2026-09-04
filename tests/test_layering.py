@@ -20,6 +20,7 @@ import mira.domain.embodiment
 import mira.domain.models
 import mira.domain.state
 import mira.domain.embodiment_compatibility
+import mira.domain.embodiment_frame
 
 # The vocabulary must be usable, not merely importable.
 intent = mira.domain.embodiment.EmbodimentIntent(
@@ -27,6 +28,11 @@ intent = mira.domain.embodiment.EmbodimentIntent(
 )
 response = mira.domain.models.BrainResponse(text="ok", embodiment=intent)
 assert mira.domain.embodiment_compatibility.resolve_face_state(response.embodiment) is mira.domain.state.FaceState.SPEAKING
+frame = mira.domain.embodiment_frame.EmbodimentFrame(
+    left_eye=mira.domain.embodiment_frame.EyeFrame(),
+    right_eye=mira.domain.embodiment_frame.EyeFrame(),
+)
+assert frame.left_eye == frame.right_eye
 assert "PySide6" not in sys.modules
 print("OK")
 """
@@ -69,6 +75,13 @@ REJECTION_CASES = [
         "[qt] mira.domain must not import a GUI toolkit",
         "mira/domain/offender.py:1",
         id="qt-in-domain",
+    ),
+    pytest.param(
+        "mira/domain/embodiment_frame.py",
+        "from PySide6.QtCore import QRectF\n\nUSED = QRectF\n",
+        "[qt] mira.domain must not import a GUI toolkit",
+        "mira/domain/embodiment_frame.py:1",
+        id="embodiment-frame-cannot-acquire-qt-types",
     ),
     pytest.param(
         # Since the scheduler port there is no Qt exception for mira.core.

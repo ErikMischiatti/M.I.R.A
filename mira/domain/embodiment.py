@@ -47,3 +47,26 @@ class EmbodimentIntent:
     activity: ActivityState
     affect: AffectState = AffectState.NEUTRAL
     expression: ExpressionKey | None = None
+
+
+_ACTIVITY_EXPRESSION = {
+    ActivityState.IDLE: ExpressionKey.IDLE,
+    ActivityState.LISTENING: ExpressionKey.LISTENING,
+    ActivityState.THINKING: ExpressionKey.THINKING,
+    ActivityState.SPEAKING: ExpressionKey.SPEAKING,
+}
+
+_AFFECT_EXPRESSION = {
+    AffectState.HAPPY: ExpressionKey.HAPPY,
+    AffectState.CONFUSED: ExpressionKey.CONFUSED,
+}
+
+
+def resolve_expression_key(intent: EmbodimentIntent) -> ExpressionKey:
+    """Choose an expression using override, affect, then activity precedence."""
+
+    if intent.expression is not None:
+        return intent.expression
+    if intent.affect is not AffectState.NEUTRAL:
+        return _AFFECT_EXPRESSION[intent.affect]
+    return _ACTIVITY_EXPRESSION[intent.activity]

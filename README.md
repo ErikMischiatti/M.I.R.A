@@ -222,6 +222,13 @@ Activity requests clear a prior affect, preserving the current transition
 sequence. Affect requests retain the semantic activity even though the legacy
 renderer displays only one resulting profile.
 
+The selected pure expression definition also resolves to an immutable
+`EmbodimentFrame`. Its per-eye offsets and corner radii are normalized from the
+current face coordinate space; scales, eyelid amounts and closed/open state are
+unitless. The Qt widget consumes this frame. Existing gaze, blink, drift, pulse
+and interpolation logic remains in `FaceController`: this is an output-boundary
+extraction, not a playback or renderer redesign.
+
 A typical interaction currently follows this pipeline:
 
 ```text
