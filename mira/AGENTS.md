@@ -221,6 +221,7 @@ Use these after changes:
 ```bash
 python3 -m compileall mira
 python3 scripts/check_layering.py
+python3 scripts/check_state_authority.py
 git diff --check
 ```
 
