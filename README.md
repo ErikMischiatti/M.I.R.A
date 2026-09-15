@@ -225,9 +225,10 @@ renderer displays only one resulting profile.
 The selected pure expression definition also resolves to an immutable
 `EmbodimentFrame`. Its per-eye offsets and corner radii are normalized from the
 current face coordinate space; scales, eyelid amounts and closed/open state are
-unitless. The Qt widget consumes this frame. Existing gaze, blink, drift, pulse
-and interpolation logic remains in `FaceController`: this is an output-boundary
-extraction, not a playback or renderer redesign.
+unitless. The Qt widget consumes this frame. `FaceController` still owns gaze,
+blink, drift, pulse and other motion-target policy, while the pure domain
+`EmbodimentPlayback` advances the shared pose using explicit elapsed time and
+resolves per-eye asymmetry into each immutable frame.
 
 A typical interaction currently follows this pipeline:
 

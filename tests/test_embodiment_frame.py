@@ -15,6 +15,7 @@ from mira.domain.embodiment_frame import (
     frame_from_definition,
     resolve_embodiment_frame,
 )
+from mira.domain.embodiment_playback import PlaybackPose
 from mira.domain.state import FaceState
 from mira.domain.scheduler import ManualScheduler
 from mira.application.composition import build_application
@@ -33,16 +34,10 @@ def definitions():
 def test_current_profile_maps_to_the_same_resolved_pose(state):
     controller = FaceController()
     controller.set_state(state)
-    controller.current_offset_x = controller.target_offset_x
-    controller.current_offset_y = controller.target_offset_y
-    controller.current_width_scale = controller.target_width_scale
-    controller.current_height_scale = controller.target_height_scale
-    controller.current_corner_radius = controller.target_corner_radius
-    controller.current_eyelid_tired = controller.target_eyelid_tired
-    controller.current_eyelid_angry = controller.target_eyelid_angry
-    controller.current_eyelid_happy = controller.target_eyelid_happy
 
-    assert controller.get_frame() == frame_from_definition(controller.profile.to_definition())
+    definition = controller.profile.to_definition()
+    assert controller.base_frame == frame_from_definition(definition)
+    assert controller.target_pose == PlaybackPose.from_definition(definition)
 
 
 def test_resolution_is_deterministic_and_has_value_semantics():
@@ -133,42 +128,26 @@ def test_full_turn_delivers_the_same_visual_sequence_as_resolved_frames():
     assert len({frame for _state, _key, frame in observed}) == 3
 
 
-def test_resolver_output_materially_drives_controller_targets(monkeypatch):
-    sentinel = EmbodimentFrame(
-        left_eye=EyeFrame(
-            offset_x=0.1,
-            offset_y=0.2,
-            width_scale=1.3,
-            height_scale=0.7,
-            corner_radius=0.05,
-            tired_lid=0.11,
-            angry_lid=0.12,
-            happy_lid=0.13,
-        ),
-        right_eye=EyeFrame(
-            offset_x=0.1,
-            offset_y=0.2,
-            width_scale=1.3,
-            height_scale=0.7,
-            corner_radius=0.05,
-            tired_lid=0.11,
-            angry_lid=0.12,
-            happy_lid=0.13,
-        ),
-    )
-    monkeypatch.setattr(
-        "mira.ui.face.face_controller.resolve_embodiment_frame",
-        lambda _intent, _definitions: sentinel,
-    )
-
+def test_expression_definition_materially_drives_controller_target_pose():
     controller = FaceController()
+    controller.profile.offset_x = 70.0
+    controller.profile.offset_y = 90.0
+    controller.profile.width_scale = 1.3
+    controller.profile.height_scale = 0.7
+    controller.profile.corner_radius = 35.0
+    controller.profile.eyelid_tired = 0.11
+    controller.profile.eyelid_angry = 0.12
+    controller.profile.eyelid_happy = 0.13
 
-    assert controller.base_frame is sentinel
-    assert controller.target_offset_x == 70.0
-    assert controller.target_offset_y == 90.0
-    assert controller.target_width_scale == 1.3
-    assert controller.target_height_scale == controller.profile.height_scale
-    assert controller.target_corner_radius == 35.0
-    assert controller.target_eyelid_tired == 0.11
-    assert controller.target_eyelid_angry == 0.12
-    assert controller.target_eyelid_happy == 0.13
+    controller.refresh_profile_targets()
+
+    assert controller.target_pose == PlaybackPose(
+        offset_x=70.0,
+        offset_y=90.0,
+        width_scale=1.3,
+        height_scale=0.7,
+        corner_radius=35.0,
+        eyelid_tired=0.11,
+        eyelid_angry=0.12,
+        eyelid_happy=0.13,
+    )
