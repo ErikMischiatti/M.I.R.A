@@ -21,8 +21,8 @@ if [ ! -x "$python_bin" ]; then
     printf 'MIRA: no virtual environment at %s\n' "$repo_root/venv" >&2
     printf 'MIRA: create it with\n' >&2
     printf '  cd %s\n' "$repo_root" >&2
-    printf '  python3 -m venv venv\n' >&2
-    printf '  venv/bin/pip install -r requirements.txt\n' >&2
+    printf '  python3.12 -m venv venv\n' >&2
+    printf '  venv/bin/python -m pip install --requirement requirements.txt\n' >&2
     exit 1
 fi
 

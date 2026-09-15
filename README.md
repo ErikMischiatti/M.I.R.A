@@ -340,9 +340,8 @@ Without `MIRA_INTENT_ENGINE`, the system defaults to the rule-based engine.
 
 ## Requirements
 
-- Python 3.12 or newer
+- Python 3.12
 - PySide6
-- Requests
 - Ollama, only required when using the optional local LLM-backed intent engine
 
 ---
@@ -419,6 +418,7 @@ Without `MIRA_INTENT_ENGINE`, the system defaults to the rule-based engine.
 │   └── main.py
 │
 ├── LICENSE
+├── constraints.txt
 ├── pyproject.toml
 ├── README.md
 ├── requirements.txt
@@ -441,19 +441,20 @@ cd M.I.R.A.
 ### 2. Create and activate a virtual environment
 
 ```bash
-python3 -m venv venv
+python3.12 -m venv venv
 source venv/bin/activate
 ```
 
 ### 3. Install the dependencies and the package
 
 ```bash
-pip install -r requirements.txt
-pip install -e .
+python -m pip install --requirement requirements.txt
 ```
 
-The second command is what makes `import mira` independent of the working
-directory. Without it the package is found only when the repository root
+This installs M.I.R.A. in editable mode with the exact development and CI
+dependency versions recorded in `constraints.txt`. Editable installation makes
+`import mira` independent of the working directory. Without it the package is
+found only when the repository root
 happens to be on `sys.path`, which is why `python3 -m mira.main` and
 `python -m pytest` work from the repository root and nothing works from
 anywhere else — those two commands put the working directory on `sys.path`,
@@ -461,6 +462,36 @@ while the `pytest` console script does not.
 
 Editable (`-e`) keeps the working tree authoritative: no reinstall after an
 edit or a `git pull`. Reinstall only if the repository moves.
+
+`pyproject.toml` is the single source of truth for direct runtime and
+development compatibility. `constraints.txt` records the exact runtime/dev
+dependency resolution tested on Python 3.12/Linux; `requirements.txt` only
+applies that file and requests the `dev` extra. This makes those Python package
+versions deterministic on the validated platform, but does not pin pip or the
+isolated build backend and does not promise byte-identical wheels or identical
+platform-specific packages on other operating systems.
+
+For a runtime-only editable install within the supported ranges, without the
+tested development lock, use:
+
+```bash
+python -m pip install --editable .
+```
+
+### Updating dependencies
+
+Dependency upgrades are intentional changes:
+
+1. Update a direct compatibility range in `pyproject.toml` only when support
+   policy changes.
+2. In a fresh Python 3.12 virtual environment, resolve the development install
+   without the old constraints: `python -m pip install --editable ".[dev]"`.
+3. Capture the new tested set with `python -m pip freeze --exclude-editable`,
+   then replace the pinned entries in `constraints.txt` while preserving its
+   explanatory header.
+4. Review direct and transitive version changes.
+5. Recreate clean environments through `requirements.txt` and run the complete
+   validation suite before committing the update.
 
 ### 4. Run the default rule-based version
 

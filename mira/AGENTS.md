@@ -86,6 +86,11 @@ Main modules:
 
 ## Development rules
 
+- Treat `pyproject.toml` as the source of truth for direct runtime and
+  development compatibility. `constraints.txt` records the exact runtime/dev
+  dependency resolution tested on Python 3.12/Linux by CI; install it through
+  `requirements.txt` as documented in the README. Do not add a second manual
+  dependency list.
 - Keep the architecture modular.
 - Do not couple UI directly to LLM logic.
 - Do not couple cognition directly to PySide6 widgets.
@@ -219,16 +224,16 @@ MIRA_INTENT_ENGINE=llm MIRA_OLLAMA_TIMEOUT_S=1 python3 -m mira.main
 Use these after changes:
 
 ```bash
-python3 -m compileall mira
-python3 scripts/check_layering.py
-python3 scripts/check_state_authority.py
+venv/bin/python -m compileall mira
+venv/bin/python scripts/check_layering.py
+venv/bin/python scripts/check_state_authority.py
 git diff --check
 ```
 
 If tests exist:
 
 ```bash
-python3 -m pytest
+QT_QPA_PLATFORM=offscreen venv/bin/python -m pytest
 ```
 
 For UI changes, also manually verify:
