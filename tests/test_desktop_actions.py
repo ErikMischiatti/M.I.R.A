@@ -6,6 +6,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from mira.actions.desktop_actions import (
+    DesktopPaths,
     make_get_project_path_action,
     make_open_app_action,
     make_open_directory_action,
@@ -14,24 +15,39 @@ from mira.actions.desktop_actions import (
 
 
 class DesktopActionTests(unittest.TestCase):
-    def test_open_directory_opens_existing_allowed_directory(self):
-        handler = make_open_directory_action()
+    @staticmethod
+    def _paths(root: Path) -> DesktopPaths:
+        home = root / "home"
+        project = root / "checkout"
+        home.mkdir()
+        project.mkdir()
+        return DesktopPaths(
+            home=home.resolve(),
+            invocation_directory=home.resolve(),
+            project_root=project.resolve(),
+        )
 
-        with tempfile.TemporaryDirectory(dir=Path.cwd()) as tmp_dir:
+    def test_open_directory_opens_existing_allowed_directory(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            paths = self._paths(root)
+            allowed_directory = paths.home / "allowed"
+            allowed_directory.mkdir()
+            handler = make_open_directory_action(paths)
             with patch(
                 "mira.actions.desktop_actions.shutil.which",
                 return_value="/usr/bin/xdg-open",
             ):
                 with patch("mira.actions.desktop_actions.subprocess.Popen") as popen:
-                    result = handler({"directory": tmp_dir})
+                    result = handler({"directory": str(allowed_directory)})
 
         self.assertTrue(result.success)
         self.assertEqual(result.action_name, "open_directory")
-        self.assertEqual(result.data["path"], str(Path(tmp_dir).resolve()))
+        self.assertEqual(result.data["path"], str(allowed_directory.resolve()))
         popen.assert_called_once()
         command = popen.call_args.args[0]
         self.assertEqual(command[0], "/usr/bin/xdg-open")
-        self.assertEqual(command[1], str(Path(tmp_dir).resolve()))
+        self.assertEqual(command[1], str(allowed_directory.resolve()))
 
     def test_open_directory_rejects_missing_directory(self):
         handler = make_open_directory_action()
@@ -43,11 +59,12 @@ class DesktopActionTests(unittest.TestCase):
         self.assertIn("non disponibile", result.message)
 
     def test_open_directory_reports_missing_xdg_open(self):
-        handler = make_open_directory_action()
-
-        with tempfile.TemporaryDirectory(dir=Path.cwd()) as tmp_dir:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            paths = self._paths(root)
+            handler = make_open_directory_action(paths)
             with patch("mira.actions.desktop_actions.shutil.which", return_value=None):
-                result = handler({"directory": tmp_dir})
+                result = handler({"directory": str(paths.home)})
 
         self.assertFalse(result.success)
         self.assertEqual(result.action_name, "open_directory")
@@ -111,13 +128,15 @@ class DesktopActionTests(unittest.TestCase):
         self.assertIn("non disponibile o non consentita", result.message)
 
     def test_get_project_path_reports_current_project_directory(self):
-        handler = make_get_project_path_action()
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            paths = self._paths(Path(tmp_dir))
+            handler = make_get_project_path_action(paths)
 
-        result = handler({})
+            result = handler({})
 
         self.assertTrue(result.success)
         self.assertEqual(result.action_name, "get_project_path")
-        self.assertEqual(result.data["path"], str(Path.cwd().resolve()))
+        self.assertEqual(result.data["path"], str(paths.project_root))
 
 
 

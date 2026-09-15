@@ -18,10 +18,8 @@
 # sits between an edit and the next test run, and `git pull` needs no reinstall.
 #
 # This file adds no runtime behaviour. The application still starts through
-# `python -m mira.main`, and the launcher still pins the working directory to
-# the repository root — `mira/ui/face/expression_store.py:9` and the
-# `Path.cwd()` allowlist in `mira/actions/desktop_actions.py:49-52,82` both
-# resolve against it, and neither is changed here.
+# `python -m mira.main`; runtime resource and desktop-action paths are resolved
+# explicitly and do not rely on the launcher changing the working directory.
 
 [build-system]
 requires = ["setuptools>=64"]
@@ -54,7 +52,7 @@ exclude = ["*__pycache__*"]
 namespaces = true
 
 [tool.setuptools.package-data]
-# `mira/ui/face/expression_store.py` loads mira/config/expression_profiles.json.
+# The debug drawer currently loads and saves this packaged active profile file.
 "mira.config" = ["*.json"]
 
 [tool.pytest.ini_options]

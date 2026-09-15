@@ -20,7 +20,7 @@ import pytest
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 
 # Every MIRA_* variable the production code reads, at its os.getenv site:
-#   MIRA_INTENT_ENGINE              mira/core/brain.py:88
+#   MIRA_INTENT_ENGINE              mira/core/brain.py:93
 #   MIRA_OLLAMA_MODEL               mira/cognition/llm_client.py:34
 #   MIRA_OLLAMA_BASE_URL            mira/cognition/llm_client.py:39
 #   MIRA_OLLAMA_TIMEOUT_S           mira/cognition/llm_client.py:104

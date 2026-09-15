@@ -6,7 +6,13 @@ from mira.ui.face.expression_profile import ExpressionProfile
 from mira.domain.state import FaceState
 
 
-EXPRESSIONS_FILE = Path("mira/config/expression_profiles.json")
+# This is the active profile file used by the debug drawer. It is distributed
+# inside the package and, for now, Save intentionally updates it in place. Use
+# the installed module location rather than the process working directory so
+# editable and regular installs resolve the same resource from any launcher.
+EXPRESSIONS_FILE = (
+    Path(__file__).resolve().parents[2] / "config" / "expression_profiles.json"
+)
 
 
 def save_expression_library(library: dict[FaceState, ExpressionProfile], filepath: Path = EXPRESSIONS_FILE):

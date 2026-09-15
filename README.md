@@ -129,7 +129,7 @@ M.I.R.A. already supports a registry/executor pattern for local actions such as:
 - opening allowed local directories,
 - showing system notifications,
 - retrieving basic system information,
-- and reporting the current project path.
+- and reporting the source-checkout path during development.
 
 ### Debug Drawer
 
@@ -543,13 +543,23 @@ The launcher resolves the repository through the symlink, so it keeps working
 after `git pull` and needs no reinstall. Moving or renaming the repository is
 the only change that requires recreating the symlink.
 
-It also changes into the repository root before starting the application, and
-that is deliberate rather than incidental: `mira/ui/face/expression_store.py`
-loads and saves the expression profiles through the relative path
-`mira/config/expression_profiles.json`, and `mira/actions/desktop_actions.py`
-derives its `open_directory` allowlist from `Path.cwd()`. Editable installation
-makes the package importable from anywhere; it does not make those two paths
-working-directory independent, so the launcher still pins them.
+The launcher preserves the directory from which it was called. Runtime
+resources resolve from the installed package, while desktop directory actions
+use explicit home, invocation-directory, and optional development-checkout
+semantics. The invocation directory is context for relative paths and the
+`current` alias; it does not widen the allowed-directory boundary.
+
+Expression profiles currently use the packaged
+`mira/config/expression_profiles.json` as both the active profile source and the
+Save/Reload target. This preserves the debug drawer's existing persistence in
+editable and other user-writable installations, but a future configuration
+tranche should separate immutable bundled profiles from writable user
+overrides. No user-config directory or migration is introduced here.
+
+The project-path action is development-only. It reports the direct source
+checkout containing the imported package and known project markers; a regular
+installed package has no repository path and returns an unavailable result
+instead of treating the invocation directory or `site-packages` as the project.
 
 ---
 

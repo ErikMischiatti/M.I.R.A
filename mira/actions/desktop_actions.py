@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import platform
+from dataclasses import dataclass
 from pathlib import Path
 import shutil
 import socket
@@ -34,23 +35,78 @@ APP_COMMANDS = {
     "google-chrome": ["google-chrome"],
     "terminal": ["x-terminal-emulator"],
     "calculator": ["gnome-calculator"],
-    "files": ["xdg-open", "."],
+    "files": ["xdg-open"],
 }
 
-DIRECTORY_ALIASES = {
-    "home": Path.home(),
-    "casa": Path.home(),
-    "desktop": Path.home() / "Desktop",
-    "scrivania": Path.home() / "Desktop",
-    "downloads": Path.home() / "Downloads",
-    "download": Path.home() / "Downloads",
-    "documenti": Path.home() / "Documents",
-    "documents": Path.home() / "Documents",
-    "progetto": Path.cwd(),
-    "project": Path.cwd(),
-    "cartella corrente": Path.cwd(),
-    "current": Path.cwd(),
-}
+
+@dataclass(frozen=True)
+class DesktopPaths:
+    """Filesystem context for desktop actions, captured when handlers are built.
+
+    The invocation directory is user input context, not an allowed-root grant.
+    `project_root` exists only for a verified source checkout; installed wheels
+    have no repository path to report.
+    """
+
+    home: Path
+    invocation_directory: Path
+    project_root: Path | None
+
+    @classmethod
+    def discover(cls, *, package_root: Path | None = None) -> DesktopPaths:
+        package_root = (
+            Path(__file__).resolve().parents[1]
+            if package_root is None
+            else package_root.resolve()
+        )
+        return cls(
+            home=Path.home().resolve(),
+            invocation_directory=Path.cwd().resolve(),
+            project_root=_find_development_project_root(package_root),
+        )
+
+
+def _find_development_project_root(package_root: Path) -> Path | None:
+    """Return the direct source-checkout parent, never an ancestor guess."""
+    candidate = package_root.resolve().parent
+    expected_package = candidate / "mira"
+
+    try:
+        package_matches = expected_package.samefile(package_root)
+    except OSError:
+        package_matches = False
+
+    if not package_matches:
+        return None
+    if not (candidate / "pyproject.toml").is_file():
+        return None
+    if not (candidate / "bin" / "mira").is_file():
+        return None
+    return candidate
+
+
+def _directory_aliases(paths: DesktopPaths) -> dict[str, Path | None]:
+    return {
+        "home": paths.home,
+        "casa": paths.home,
+        "desktop": paths.home / "Desktop",
+        "scrivania": paths.home / "Desktop",
+        "downloads": paths.home / "Downloads",
+        "download": paths.home / "Downloads",
+        "documenti": paths.home / "Documents",
+        "documents": paths.home / "Documents",
+        "progetto": paths.project_root,
+        "project": paths.project_root,
+        "cartella corrente": paths.invocation_directory,
+        "current": paths.invocation_directory,
+    }
+
+
+def _expand_user_directory(raw_directory: str, home: Path) -> Path:
+    candidate = Path(raw_directory)
+    if candidate.parts and candidate.parts[0] == "~":
+        return home.joinpath(*candidate.parts[1:])
+    return candidate.expanduser()
 
 
 def _normalize_url(raw_url: str) -> str:
@@ -78,8 +134,11 @@ def _normalize_url(raw_url: str) -> str:
     return url
 
 
-def _is_allowed_directory(path: Path) -> bool:
-    allowed_roots = [Path.home().resolve(), Path.cwd().resolve()]
+def _is_allowed_directory(path: Path, paths: DesktopPaths) -> bool:
+    allowed_roots = [paths.home]
+    if paths.project_root is not None:
+        allowed_roots.append(paths.project_root)
+
     for root in allowed_roots:
         try:
             path.relative_to(root)
@@ -90,16 +149,23 @@ def _is_allowed_directory(path: Path) -> bool:
     return False
 
 
-def _resolve_directory_path(raw_directory: str) -> tuple[str | None, Path | None]:
+def _resolve_directory_path(
+    raw_directory: str,
+    paths: DesktopPaths,
+) -> tuple[str | None, Path | None]:
     normalized = raw_directory.strip().lower()
     if not normalized:
         return None, None
 
-    candidate = DIRECTORY_ALIASES.get(normalized)
-    if candidate is None:
-        candidate = Path(raw_directory).expanduser()
+    aliases = _directory_aliases(paths)
+    if normalized in aliases:
+        candidate = aliases[normalized]
+        if candidate is None:
+            return raw_directory, None
+    else:
+        candidate = _expand_user_directory(raw_directory, paths.home)
         if not candidate.is_absolute():
-            candidate = Path.cwd() / candidate
+            candidate = paths.invocation_directory / candidate
 
     try:
         resolved = candidate.resolve()
@@ -109,22 +175,29 @@ def _resolve_directory_path(raw_directory: str) -> tuple[str | None, Path | None
     if not resolved.exists() or not resolved.is_dir():
         return raw_directory, None
 
-    if not _is_allowed_directory(resolved):
+    if not _is_allowed_directory(resolved, paths):
         return raw_directory, None
 
     return raw_directory, resolved
 
 
-def _resolve_app_command(app_name: str) -> tuple[str | None, list[str] | None]:
+def _resolve_app_command(
+    app_name: str,
+    paths: DesktopPaths,
+) -> tuple[str | None, list[str] | None]:
     normalized = app_name.strip().lower()
     if not normalized:
         return None, None
 
     app_key = APP_ALIASES.get(normalized, normalized)
-    command = APP_COMMANDS.get(app_key)
+    configured_command = APP_COMMANDS.get(app_key)
 
-    if command is None:
+    if configured_command is None:
         return app_key, None
+
+    command = list(configured_command)
+    if app_key == "files":
+        command.append(str(paths.home))
 
     executable = command[0]
     if shutil.which(executable) is None:
@@ -174,7 +247,9 @@ def make_open_url_action():
     return handler
 
 
-def make_open_app_action():
+def make_open_app_action(paths: DesktopPaths | None = None):
+    paths = DesktopPaths.discover() if paths is None else paths
+
     def handler(parameters: dict) -> ActionResult:
         raw_app_name = str(parameters.get("app_name", "")).strip()
 
@@ -185,7 +260,7 @@ def make_open_app_action():
                 message="Nessuna applicazione specificata.",
             )
 
-        resolved_name, command = _resolve_app_command(raw_app_name)
+        resolved_name, command = _resolve_app_command(raw_app_name, paths)
 
         if command is None:
             available_apps = ", ".join(sorted(APP_COMMANDS.keys()))
@@ -264,7 +339,9 @@ def make_show_notification_action():
     return handler
 
 
-def make_open_directory_action():
+def make_open_directory_action(paths: DesktopPaths | None = None):
+    paths = DesktopPaths.discover() if paths is None else paths
+
     def handler(parameters: dict) -> ActionResult:
         raw_directory = str(parameters.get("directory", "")).strip()
 
@@ -275,9 +352,15 @@ def make_open_directory_action():
                 message="Nessuna cartella specificata.",
             )
 
-        requested_directory, directory_path = _resolve_directory_path(raw_directory)
+        requested_directory, directory_path = _resolve_directory_path(raw_directory, paths)
         if directory_path is None:
-            available = ", ".join(sorted(DIRECTORY_ALIASES.keys()))
+            available = ", ".join(
+                sorted(
+                    name
+                    for name, path in _directory_aliases(paths).items()
+                    if path is not None
+                )
+            )
             return ActionResult(
                 success=False,
                 action_name="open_directory",
@@ -355,9 +438,19 @@ def make_get_system_info_action():
     return handler
 
 
-def make_get_project_path_action():
+def make_get_project_path_action(paths: DesktopPaths | None = None):
+    paths = DesktopPaths.discover() if paths is None else paths
+
     def handler(parameters: dict) -> ActionResult:
-        project_path = Path.cwd().resolve()
+        project_path = paths.project_root
+
+        if project_path is None:
+            return ActionResult(
+                success=False,
+                action_name="get_project_path",
+                message="La cartella del progetto non è disponibile in questa installazione.",
+                data={"reason": "project_root_unavailable"},
+            )
 
         return ActionResult(
             success=True,
