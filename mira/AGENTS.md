@@ -42,6 +42,12 @@ Main modules:
     adapter; the only place that knows the turn lifecycle runs on a Qt event loop
   - may import `mira.domain`; never imported by the domain
 
+- `mira/application`
+  - explicit construction root for the shared runtime graph
+  - owns application-level shutdown through the injected scheduler boundary
+  - may import `mira.domain`, `mira.messaging`, `mira.core`, and `mira.adapters`
+  - must not import `mira.ui`
+
 - `mira/messaging`
   - in-process notification: subscription and synchronous fan-out
   - `EventBus` (`mira/messaging/events.py`)
@@ -68,6 +74,7 @@ Main modules:
 
 - `mira/actions`
   - action models
+  - source-independent execution policy
   - action registry
   - action executor
   - built-in actions
@@ -160,6 +167,7 @@ Supported Ollama environment variables:
 MIRA_OLLAMA_MODEL
 MIRA_OLLAMA_BASE_URL
 MIRA_OLLAMA_TIMEOUT_S
+MIRA_LLM_ACTION_MIN_CONFIDENCE
 ```
 
 The LLM path must preserve fallback to `RuleIntentEngine` on Ollama failure or timeout.
@@ -181,6 +189,11 @@ Rules:
 ## Local desktop actions
 
 - All desktop actions must be registered through `ActionRegistry` and executed through `ActionExecutor`.
+- Every registered handler must have an explicit `ActionEffect`; missing
+  contracts and unknown actions fail closed at the execution policy boundary.
+- `requires_confirmation` is enforced before handler invocation. The current
+  runtime returns `confirmation_required`; it does not yet implement a
+  confirmation UI or confirmed-execution flow.
 - Keep desktop actions narrow, explicit, and safe by default.
 - UI classes may display action lifecycle feedback from events, but must not execute actions directly.
 
@@ -271,5 +284,6 @@ Current main focus areas:
 - Polish compact GUI and embodied assistant UX.
 - Keep debug tools available without dominating the normal UI.
 - Improve local LLM behavior while preserving responsiveness.
-- Prepare for future session-context integration in the LLM prompt.
+- Improve the existing bounded session-context integration where concrete
+  behavior requires it.
 - Keep the codebase clean, modular, and easy to extend.
