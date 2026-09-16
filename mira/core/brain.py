@@ -21,6 +21,7 @@ from mira.actions.builtin_actions import (
     make_get_last_user_message_action,
 )
 from mira.actions.desktop_actions import (
+    DesktopPaths,
     make_open_url_action,
     make_open_app_action,
     make_show_notification_action,
@@ -59,6 +60,7 @@ class Brain:
         response_builder=None,
         *,
         scheduler: Scheduler,
+        desktop_paths: DesktopPaths | None = None,
     ):
         self.event_bus = event_bus
         self.activity = activity
@@ -71,7 +73,10 @@ class Brain:
 
         self.action_registry = ActionRegistry()
         self.action_executor = ActionExecutor(self.action_registry, self.event_bus)
-        self._register_builtin_actions()
+        desktop_paths = (
+            DesktopPaths.discover() if desktop_paths is None else desktop_paths
+        )
+        self._register_builtin_actions(desktop_paths)
 
         self.listening_delay_ms = 500
         self.thinking_delay_ms = 900
@@ -98,7 +103,7 @@ class Brain:
     # ACTION REGISTRATION
     # ============================================================
 
-    def _register_builtin_actions(self) -> None:
+    def _register_builtin_actions(self, desktop_paths: DesktopPaths) -> None:
         def register_builtin(name, handler):
             self.action_registry.register(
                 name,
@@ -121,11 +126,11 @@ class Brain:
 
         # Desktop
         register_builtin("open_url", make_open_url_action())
-        register_builtin("open_app", make_open_app_action())
+        register_builtin("open_app", make_open_app_action(desktop_paths))
         register_builtin("show_notification", make_show_notification_action())
-        register_builtin("open_directory", make_open_directory_action())
+        register_builtin("open_directory", make_open_directory_action(desktop_paths))
         register_builtin("get_system_info", make_get_system_info_action())
-        register_builtin("get_project_path", make_get_project_path_action())
+        register_builtin("get_project_path", make_get_project_path_action(desktop_paths))
 
     # ============================================================
     # PUBLIC API

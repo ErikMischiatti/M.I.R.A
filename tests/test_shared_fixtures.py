@@ -122,7 +122,7 @@ def test_absent_variables_select_the_production_defaults():
 
     bus = EventBus()
     brain = Brain(bus, RecordingActivityAuthority(), scheduler=ManualScheduler())
-    # mira/core/brain.py:88 defaults to "rule" when the variable is absent.
+    # mira/core/brain.py:93 defaults to "rule" when the variable is absent.
     assert type(brain.intent_engine).__name__ == "RuleIntentEngine"
 
     # Constructing the client performs no request; only generate_structured does.

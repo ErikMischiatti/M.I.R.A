@@ -1,5 +1,6 @@
 import math
 import random
+from dataclasses import replace
 
 from mira.ui.face.expression_store import load_expression_library, reset_expression
 from mira.domain.embodiment import (
@@ -10,10 +11,12 @@ from mira.domain.embodiment import (
 )
 from mira.domain.embodiment_frame import (
     EmbodimentFrame,
-    EyeFrame,
-    FACE_HEIGHT_UNITS,
-    FACE_WIDTH_UNITS,
     resolve_embodiment_frame,
+)
+from mira.domain.embodiment_playback import (
+    EmbodimentPlayback,
+    EyeAsymmetry,
+    PlaybackPose,
 )
 from mira.domain.state import FaceState
 
@@ -30,28 +33,9 @@ class FaceController:
         self.left_eye_closed = False
         self.right_eye_closed = False
 
-        self.current_offset_x = 0.0
-        self.current_offset_y = 0.0
-        self.target_offset_x = 0.0
-        self.target_offset_y = 0.0
-
-        self.current_height_scale = 1.0
-        self.target_height_scale = 1.0
-
-        self.current_width_scale = 1.0
-        self.target_width_scale = 1.0
-
-        self.current_corner_radius = 28.0
-        self.target_corner_radius = 28.0
-
-        self.current_eyelid_tired = 0.0
-        self.target_eyelid_tired = 0.0
-
-        self.current_eyelid_angry = 0.0
-        self.target_eyelid_angry = 0.0
-
-        self.current_eyelid_happy = 0.0
-        self.target_eyelid_happy = 0.0
+        self._playback = EmbodimentPlayback()
+        self._target_pose = PlaybackPose()
+        self._asymmetry = EyeAsymmetry()
 
         self.look_tracking_enabled = False
         self.look_target_x = 0.5
@@ -120,30 +104,9 @@ class FaceController:
             for state, profile in self.expression_library.items()
         }
         self.base_frame = resolve_embodiment_frame(self.intent, definitions)
-        left = self.base_frame.left_eye
-        right = self.base_frame.right_eye
-        self.target_width_scale = (left.width_scale + right.width_scale) / 2.0
-        self.target_offset_x = (
-            (left.offset_x + right.offset_x) / 2.0 * FACE_WIDTH_UNITS
-        )
-        self.target_offset_y = (
-            left.offset_y * FACE_HEIGHT_UNITS
-            - self.profile.asymmetry_offset_y_left
-            + right.offset_y * FACE_HEIGHT_UNITS
-            - self.profile.asymmetry_offset_y_right
-        ) / 2.0
-        # The frame deliberately stores the two *resolved* heights. The shared
-        # pre-asymmetry animation scalar is not recoverable when either eye is
-        # scaled to zero, so this one controller-internal seed stays in the
-        # compatibility profile until animation state itself is extracted.
-        self.target_height_scale = self.profile.height_scale
-        self.target_corner_radius = (
-            (left.corner_radius + right.corner_radius) / 2.0 * FACE_WIDTH_UNITS
-        )
-
-        self.target_eyelid_tired = (left.tired_lid + right.tired_lid) / 2.0
-        self.target_eyelid_angry = (left.angry_lid + right.angry_lid) / 2.0
-        self.target_eyelid_happy = (left.happy_lid + right.happy_lid) / 2.0
+        definition = definitions[self.expression_key]
+        self._target_pose = PlaybackPose.from_definition(definition)
+        self._asymmetry = EyeAsymmetry.from_definition(definition)
 
         self.blink_duration_frames = self.profile.blink_duration_frames
         self.blink_interval_frames = self.random_blink_interval()
@@ -169,13 +132,18 @@ class FaceController:
         if not self.profile.idle_enabled:
             return
 
-        self.target_offset_x = self.profile.offset_x + random.uniform(
-            -self.profile.idle_amplitude_x,
-            self.profile.idle_amplitude_x,
-        )
-        self.target_offset_y = self.profile.offset_y + random.uniform(
-            -self.profile.idle_amplitude_y,
-            self.profile.idle_amplitude_y,
+        self._target_pose = replace(
+            self._target_pose,
+            offset_x=self.profile.offset_x
+            + random.uniform(
+                -self.profile.idle_amplitude_x,
+                self.profile.idle_amplitude_x,
+            ),
+            offset_y=self.profile.offset_y
+            + random.uniform(
+                -self.profile.idle_amplitude_y,
+                self.profile.idle_amplitude_y,
+            ),
         )
 
     def lerp(self, current: float, target: float, alpha: float) -> float:
@@ -236,24 +204,43 @@ class FaceController:
 
         weight = self.get_state_look_weight()
 
-        self.target_offset_x = self.profile.offset_x + look_x * self.look_strength_x * weight
-        self.target_offset_y = self.profile.offset_y + look_y * self.look_strength_y * weight
+        self._target_pose = replace(
+            self._target_pose,
+            offset_x=self.profile.offset_x
+            + look_x * self.look_strength_x * weight,
+            offset_y=self.profile.offset_y
+            + look_y * self.look_strength_y * weight,
+        )
 
     def update_state_animation(self):
-        self.target_width_scale = self.profile.width_scale
-        self.target_height_scale = self.profile.height_scale
+        self._target_pose = replace(
+            self._target_pose,
+            width_scale=self.profile.width_scale,
+            height_scale=self.profile.height_scale,
+        )
 
         if not self.profile.idle_enabled:
-            self.target_offset_x = self.profile.offset_x
-            self.target_offset_y = self.profile.offset_y
+            self._target_pose = replace(
+                self._target_pose,
+                offset_x=self.profile.offset_x,
+                offset_y=self.profile.offset_y,
+            )
 
         if self.profile.thinking_drift:
-            self.target_offset_x = self.profile.offset_x + (-8.0 + 8.0 * math.sin(self.speaking_phase * 0.35))
-            self.target_offset_y = self.profile.offset_y
+            self._target_pose = replace(
+                self._target_pose,
+                offset_x=self.profile.offset_x
+                + (-8.0 + 8.0 * math.sin(self.speaking_phase * 0.35)),
+                offset_y=self.profile.offset_y,
+            )
 
         if self.profile.speaking_pulse:
             self.speaking_phase += 0.22
-            self.target_height_scale = self.profile.height_scale + 0.16 * abs(math.sin(self.speaking_phase))
+            self._target_pose = replace(
+                self._target_pose,
+                height_scale=self.profile.height_scale
+                + 0.16 * abs(math.sin(self.speaking_phase)),
+            )
 
         if self.look_tracking_enabled or self.look_hold_frames > 0:
             self.apply_mouse_look_target()
@@ -262,62 +249,38 @@ class FaceController:
 
         self.speaking_phase += 0.05
 
-    def update_interpolation(self):
-        self.current_offset_x = self.lerp(self.current_offset_x, self.target_offset_x, 0.1)
-        self.current_offset_y = self.lerp(self.current_offset_y, self.target_offset_y, 0.1)
-        self.current_height_scale = self.lerp(self.current_height_scale, self.target_height_scale, 0.07)
-        self.current_width_scale = self.lerp(self.current_width_scale, self.target_width_scale, 0.07)
-        self.current_corner_radius = self.lerp(self.current_corner_radius, self.target_corner_radius, 0.10)
-
-        self.current_eyelid_tired = self.lerp(self.current_eyelid_tired, self.target_eyelid_tired, 0.10)
-        self.current_eyelid_angry = self.lerp(self.current_eyelid_angry, self.target_eyelid_angry, 0.10)
-        self.current_eyelid_happy = self.lerp(self.current_eyelid_happy, self.target_eyelid_happy, 0.10)
-
-    def update(self):
+    def update(self, dt_seconds: float):
         self.update_blink()
         self.update_idle_behavior()
         self.update_attention_target()
         self.update_scrutiny_motion()
         self.update_state_animation()
-        self.update_interpolation()
+        self._playback.advance(
+            self._target_pose,
+            dt_seconds,
+            asymmetry=self._asymmetry,
+            left_eye_closed=self.left_eye_closed,
+            right_eye_closed=self.right_eye_closed,
+        )
 
     def get_profile(self):
         return self.profile
 
+    @property
+    def target_pose(self) -> PlaybackPose:
+        return self._target_pose
+
+    @property
+    def current_pose(self) -> PlaybackPose:
+        return self._playback.current_pose
+
     def get_frame(self) -> EmbodimentFrame:
         """Snapshot the fully resolved instantaneous pose for any renderer."""
 
-        common = {
-            "offset_x": self.current_offset_x / FACE_WIDTH_UNITS,
-            "width_scale": self.current_width_scale,
-            "corner_radius": self.current_corner_radius / FACE_WIDTH_UNITS,
-            "tired_lid": self.current_eyelid_tired,
-            "angry_lid": self.current_eyelid_angry,
-            "happy_lid": self.current_eyelid_happy,
-        }
-        return EmbodimentFrame(
-            left_eye=EyeFrame(
-                **common,
-                offset_y=(
-                    self.current_offset_y + self.profile.asymmetry_offset_y_left
-                )
-                / FACE_HEIGHT_UNITS,
-                height_scale=(
-                    self.current_height_scale * self.profile.asymmetry_height_left
-                ),
-                closed=self.left_eye_closed,
-            ),
-            right_eye=EyeFrame(
-                **common,
-                offset_y=(
-                    self.current_offset_y + self.profile.asymmetry_offset_y_right
-                )
-                / FACE_HEIGHT_UNITS,
-                height_scale=(
-                    self.current_height_scale * self.profile.asymmetry_height_right
-                ),
-                closed=self.right_eye_closed,
-            ),
+        return self._playback.get_frame(
+            asymmetry=self._asymmetry,
+            left_eye_closed=self.left_eye_closed,
+            right_eye_closed=self.right_eye_closed,
         )
 
     def refresh_profile_targets(self):
@@ -338,8 +301,8 @@ class FaceController:
         self.apply_profile()
 
     def apply_look_deformation(self):
-        look_dx = self.target_offset_x - self.profile.offset_x
-        look_dy = self.target_offset_y - self.profile.offset_y
+        look_dx = self._target_pose.offset_x - self.profile.offset_x
+        look_dy = self._target_pose.offset_y - self.profile.offset_y
 
         horizontal_amount = min(abs(look_dx) / 25.0, 1.0)
         vertical_amount = min(abs(look_dy) / 20.0, 1.0)
@@ -353,9 +316,15 @@ class FaceController:
         elif look_dy > 0:
             vertical_height_adjust = -0.06 * vertical_amount
 
-        self.target_width_scale += width_boost
-        self.target_height_scale += vertical_height_adjust
-        self.target_height_scale -= height_squash
+        self._target_pose = replace(
+            self._target_pose,
+            width_scale=self._target_pose.width_scale + width_boost,
+            height_scale=(
+                self._target_pose.height_scale
+                + vertical_height_adjust
+                - height_squash
+            ),
+        )
 
     def get_state_look_weight(self) -> float:
         if self.state == FaceState.IDLE:

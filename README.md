@@ -119,7 +119,8 @@ The assistant stores:
 
 ### Local Action System
 
-M.I.R.A. already supports a registry/executor pattern for local actions such as:
+M.I.R.A. routes local actions through contracts, a source-independent execution
+policy, and a registry/executor boundary. Current actions include:
 
 - retrieving current time and date,
 - repeating text,
@@ -129,7 +130,11 @@ M.I.R.A. already supports a registry/executor pattern for local actions such as:
 - opening allowed local directories,
 - showing system notifications,
 - retrieving basic system information,
-- and reporting the current project path.
+- and reporting the source-checkout path during development.
+
+Read-only actions and explicitly allowed desktop side effects execute directly.
+Clearing session memory is confirmation-required and remains blocked with an
+explicit result until a confirmation flow is implemented.
 
 ### Debug Drawer
 
@@ -148,110 +153,24 @@ Profiles can be saved and reloaded from configuration files without modifying th
 
 ## Architecture Overview
 
-A historical technical analysis from 2026-06-28 is kept at
-[`docs/MIRA_technical_analysis.md`](docs/MIRA_technical_analysis.md). It is a
-snapshot, not current guidance — the package layout has changed since. The
-enforced structure lives in `scripts/check_layering.py`.
+The normative Foundation v1 design, dependency map, lifecycle ownership,
+embodiment boundary, action policy, and extension points are documented in
+[`docs/architecture.md`](docs/architecture.md).
+
+Runtime composition and interaction graph:
 
 ```text
-User Input
-   ↓
-Chat / Interaction Layer
-   ↓
-Event Bus
-   ↓
-Brain
-   ├── Intent Engine
-   │     ├── RuleIntentEngine
-   │     └── LLMIntentEngine
-   ├── Session Memory
-   ├── Action Registry
-   ├── Action Executor
-   └── Response Builder
-   ↓
-State Manager / Embodied Behavior
-   ↓
-Face UI + Chat Response
+main
+├── application composition → core → cognition/actions/memory/domain
+└── MainWindow → FaceController → EmbodimentFrame renderer
 ```
 
-The project is organized around a modular separation of responsibilities:
-
-- `domain/` — UI-independent shared vocabulary: activity, affect, semantic
-  expression keys, embodiment intent, and the core interaction models. Depends
-  on nothing else in `mira` and imports no GUI toolkit. `FaceState` remains only
-  as the compatibility contract consumed by the current face presentation.
-
-- `messaging/` — in-process notification: subscription and synchronous fan-out.
-  Depends on nothing else in `mira`.
-
-- `memory/` — what the assistant retains within a session: recent history, the
-  last inferred intent, and session context. Depends only on `domain/`.
-
-- `actions/`  
-  Action models, registry, executor, and concrete system actions.
-
-- `cognition/`  
-  Intent engines, local LLM integration, schemas, and response construction.
-
-- `core/`  
-  Brain orchestration, interaction manager, state manager, and embodied behavior.
-
-- `adapters/` — implementations of domain ports against concrete technologies.
-  Currently the Qt-backed scheduler; the only place that knows the turn
-  lifecycle runs on a Qt event loop.
-
-- `ui/`  
-  Chat panel, debug panel, main window, expressive face rendering, and animation control.
-
-- `config/`  
-  Runtime-configurable expression profiles and related configuration data.
-
----
-
-## Current Interaction Flow
-
-The semantic embodiment model keeps activity and affect independent. Until the
-renderer is redesigned, a pure compatibility resolver collapses them to the
-existing `FaceState` with this precedence:
-
-1. an explicit expression override wins;
-2. otherwise a non-neutral affect colours the activity;
-3. otherwise activity selects the legacy face state.
-
-Activity requests clear a prior affect, preserving the current transition
-sequence. Affect requests retain the semantic activity even though the legacy
-renderer displays only one resulting profile.
-
-The selected pure expression definition also resolves to an immutable
-`EmbodimentFrame`. Its per-eye offsets and corner radii are normalized from the
-current face coordinate space; scales, eyelid amounts and closed/open state are
-unitless. The Qt widget consumes this frame. Existing gaze, blink, drift, pulse
-and interpolation logic remains in `FaceController`: this is an output-boundary
-extraction, not a playback or renderer redesign.
-
-A typical interaction currently follows this pipeline:
-
-```text
-User message
-   ↓
-Input stored in session memory
-   ↓
-LISTENING state
-   ↓
-Intent inference
-   ↓
-Optional action request
-   ↓
-Action execution
-   ↓
-Response building
-   ↓
-Response stored in memory
-   ↓
-Face state update + chat output
-```
-
-This creates a tight link between cognition and embodiment: the system does not only process requests internally, but exposes its current interaction phase through visible expressive states.
+The package is split into technology-independent domain vocabulary, session
+memory and messaging, action/cognition/core orchestration, concrete adapters,
+an explicit application composition root, and Qt presentation. Automated
+checkers enforce dependency direction, Qt containment, and the single semantic
+state authority. A historical, non-normative snapshot remains at
+[`docs/MIRA_technical_analysis.md`](docs/MIRA_technical_analysis.md).
 
 ---
 
@@ -291,7 +210,6 @@ Implemented LLM fallback reasons are:
 The LLM integration is still under active development. Future work focuses on:
 
 - reducing response latency,
-- making inference non-blocking,
 - extending the use of LLM-generated responses,
 - adding persistent memory,
 - adding UI confirmation flow for actions,
@@ -330,7 +248,7 @@ Without `MIRA_INTENT_ENGINE`, the system defaults to the rule-based engine.
 - Event-driven architecture
 - Rule-based intent inference
 - Local LLM integration with Ollama
-- Action registry / executor pattern
+- Action contracts, execution policy, registry, and executor
 - Session memory
 - Procedural animation
 - Desktop automation
@@ -340,9 +258,8 @@ Without `MIRA_INTENT_ENGINE`, the system defaults to the rule-based engine.
 
 ## Requirements
 
-- Python 3.12 or newer
+- Python 3.12
 - PySide6
-- Requests
 - Ollama, only required when using the optional local LLM-backed intent engine
 
 ---
@@ -350,80 +267,22 @@ Without `MIRA_INTENT_ENGINE`, the system defaults to the rule-based engine.
 ## Project Structure
 
 ```text
-.
-├── assets/
-│   └── mira_record.gif
-│
-├── bin/
-│   └── mira
-│
-├── mira/
-│   ├── actions/
-│   │   ├── action_executor.py
-│   │   ├── action_models.py
-│   │   ├── action_registry.py
-│   │   ├── builtin_actions.py
-│   │   └── desktop_actions.py
-│   │
-│   ├── cognition/
-│   │   ├── intent_engine.py
-│   │   ├── llm_client.py
-│   │   ├── llm_intent_engine.py
-│   │   ├── llm_schema.py
-│   │   ├── response_builder.py
-│   │   └── rule_intent_engine.py
-│   │
-│   ├── config/
-│   │   ├── __init__.py
-│   │   └── expression_profiles.json
-│   │
-│   ├── adapters/
-│   │   ├── __init__.py
-│   │   └── qt_scheduler.py
-│   │
-│   ├── core/
-│   │   ├── brain.py
-│   │   ├── embodied_behavior.py
-│   │   ├── __init__.py
-│   │   ├── interaction_manager.py
-│   │   └── state_manager.py
-│   │
-│   ├── domain/
-│   │   ├── __init__.py
-│   │   ├── models.py
-│   │   ├── scheduler.py
-│   │   └── state.py
-│   │
-│   ├── memory/
-│   │   ├── __init__.py
-│   │   └── session_memory.py
-│   │
-│   ├── messaging/
-│   │   ├── __init__.py
-│   │   └── events.py
-│   │
-│   ├── ui/
-│   │   ├── chat_panel.py
-│   │   ├── debug_panel.py
-│   │   ├── main_window.py
-│   │   └── face/
-│   │       ├── __init__.py
-│   │       ├── expression_library.py
-│   │       ├── expression_profile.py
-│   │       ├── expression_store.py
-│   │       ├── eye.py
-│   │       ├── face_controller.py
-│   │       └── face_widget.py
-│   │
-│   ├── __init__.py
-│   └── main.py
-│
-├── LICENSE
-├── pyproject.toml
-├── README.md
-├── requirements.txt
-└── .gitignore
+mira/
+├── domain/       # technology-independent vocabulary and playback
+├── memory/       # session retention
+├── messaging/    # synchronous event bus
+├── actions/      # contracts, execution policy, executor, handlers
+├── cognition/    # rule and optional local-LLM inference
+├── core/         # turn, state, interaction, and behavior orchestration
+├── adapters/     # Qt scheduler implementation
+├── application/  # construction and wiring
+├── ui/           # Qt presentation and face control
+├── config/       # packaged expression profiles
+└── main.py       # process entry point
 ```
+
+See [`docs/architecture.md`](docs/architecture.md) for dependency direction and
+implemented boundaries.
 
 ---
 
@@ -432,35 +291,65 @@ Without `MIRA_INTENT_ENGINE`, the system defaults to the rule-based engine.
 ### 1. Clone the repository
 
 ```bash
-git clone https://github.com/ErikMischiatti/MIRA.git
+git clone https://github.com/ErikMischiatti/H.A.R.O..git M.I.R.A.
 cd M.I.R.A.
 ```
-
-> Replace `MIRA` with the actual repository name if different.
 
 ### 2. Create and activate a virtual environment
 
 ```bash
-python3 -m venv venv
+python3.12 -m venv venv
 source venv/bin/activate
 ```
 
 ### 3. Install the dependencies and the package
 
 ```bash
-pip install -r requirements.txt
-pip install -e .
+python -m pip install --requirement requirements.txt
 ```
 
-The second command is what makes `import mira` independent of the working
-directory. Without it the package is found only when the repository root
+This installs M.I.R.A. in editable mode with the exact development and CI
+dependency versions recorded in `constraints.txt`. Editable installation makes
+`import mira` independent of the working directory. Without it the package is
+found only when the repository root
 happens to be on `sys.path`, which is why `python3 -m mira.main` and
 `python -m pytest` work from the repository root and nothing works from
 anywhere else — those two commands put the working directory on `sys.path`,
 while the `pytest` console script does not.
 
-Editable (`-e`) keeps the working tree authoritative: no reinstall after an
-edit or a `git pull`. Reinstall only if the repository moves.
+Editable (`-e`) keeps Python source edits immediately visible. Reinstall after
+dependency or packaging metadata changes, or if the repository moves; an
+ordinary source-only `git pull` needs no reinstall.
+
+`pyproject.toml` is the single source of truth for direct runtime and
+development compatibility. `constraints.txt` records the exact runtime/dev
+dependency resolution tested on Python 3.12/Linux; `requirements.txt` only
+applies that file and requests the `dev` extra. This makes those Python package
+versions deterministic on the validated platform, but does not pin pip or the
+isolated build backend and does not promise byte-identical wheels or identical
+platform-specific packages on other operating systems.
+
+For a runtime-only editable install within the supported ranges, without the
+tested development lock, use:
+
+```bash
+python -m pip install --editable .
+```
+
+### Updating dependencies
+
+Dependency upgrades are intentional changes:
+
+1. Update a direct compatibility range in `pyproject.toml` only when support
+   policy changes.
+2. In a fresh Python 3.12 virtual environment, resolve the development install
+   without the old constraints: `python -m pip install --editable ".[dev]"`.
+3. Capture the new tested set with `python -m pip freeze --exclude-editable`,
+   then replace the pinned entries in `constraints.txt` while preserving its
+   explanatory header.
+4. Review direct and transitive version changes.
+5. Recreate clean environments through `requirements.txt` and run the complete
+   validation suite before committing the update.
 
 ### 4. Run the default rule-based version
 
@@ -507,17 +396,42 @@ MIRA
 MIRA_INTENT_ENGINE=llm MIRA
 ```
 
-The launcher resolves the repository through the symlink, so it keeps working
-after `git pull` and needs no reinstall. Moving or renaming the repository is
-the only change that requires recreating the symlink.
+The launcher resolves the repository through the symlink, so source-only pulls
+need no launcher update. Dependency or packaging changes still require
+reinstalling the environment; moving or renaming the repository requires
+recreating the symlink.
 
-It also changes into the repository root before starting the application, and
-that is deliberate rather than incidental: `mira/ui/face/expression_store.py`
-loads and saves the expression profiles through the relative path
-`mira/config/expression_profiles.json`, and `mira/actions/desktop_actions.py`
-derives its `open_directory` allowlist from `Path.cwd()`. Editable installation
-makes the package importable from anywhere; it does not make those two paths
-working-directory independent, so the launcher still pins them.
+The launcher preserves the directory from which it was called. Runtime
+resources resolve from the installed package, while desktop directory actions
+use explicit home, invocation-directory, and optional development-checkout
+semantics. The invocation directory is context for relative paths and the
+`current` alias; it does not widen the allowed-directory boundary.
+
+Expression profiles currently use the packaged
+`mira/config/expression_profiles.json` as both the active profile source and the
+Save/Reload target. This preserves the debug drawer's existing persistence in
+editable and other user-writable installations, but a future configuration
+tranche should separate immutable bundled profiles from writable user
+overrides. No user-config directory or migration is introduced here.
+
+The project-path action is development-only. It reports the direct source
+checkout containing the imported package and known project markers; a regular
+installed package has no repository path and returns an unavailable result
+instead of treating the invocation directory or `site-packages` as the project.
+
+### Validation and contribution
+
+Keep changes focused, add tests for changed behavior, and run the complete
+baseline before submitting a change:
+
+```bash
+python -m compileall mira
+python scripts/check_layering.py
+python scripts/check_state_authority.py
+QT_QPA_PLATFORM=offscreen python -m pytest
+python -m pip check
+git diff --check
+```
 
 ---
 
@@ -533,13 +447,12 @@ working-directory independent, so the launcher still pins them.
 - Brain orchestration layer
 - Session memory
 - Rule-based intent engine
-- Local action registry and executor
+- Local action contracts, execution policy, registry, and executor
 - Optional Ollama-backed LLM intent engine
 
 ### In Progress
 
 - Improve LLM response latency
-- Make LLM inference non-blocking
 - Expand use of LLM-generated responses
 - Better integration between cognitive output and expressive behavior
 

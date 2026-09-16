@@ -42,6 +42,12 @@ Main modules:
     adapter; the only place that knows the turn lifecycle runs on a Qt event loop
   - may import `mira.domain`; never imported by the domain
 
+- `mira/application`
+  - explicit construction root for the shared runtime graph
+  - owns application-level shutdown through the injected scheduler boundary
+  - may import `mira.domain`, `mira.messaging`, `mira.core`, and `mira.adapters`
+  - must not import `mira.ui`
+
 - `mira/messaging`
   - in-process notification: subscription and synchronous fan-out
   - `EventBus` (`mira/messaging/events.py`)
@@ -68,6 +74,7 @@ Main modules:
 
 - `mira/actions`
   - action models
+  - source-independent execution policy
   - action registry
   - action executor
   - built-in actions
@@ -86,6 +93,11 @@ Main modules:
 
 ## Development rules
 
+- Treat `pyproject.toml` as the source of truth for direct runtime and
+  development compatibility. `constraints.txt` records the exact runtime/dev
+  dependency resolution tested on Python 3.12/Linux by CI; install it through
+  `requirements.txt` as documented in the README. Do not add a second manual
+  dependency list.
 - Keep the architecture modular.
 - Do not couple UI directly to LLM logic.
 - Do not couple cognition directly to PySide6 widgets.
@@ -155,6 +167,7 @@ Supported Ollama environment variables:
 MIRA_OLLAMA_MODEL
 MIRA_OLLAMA_BASE_URL
 MIRA_OLLAMA_TIMEOUT_S
+MIRA_LLM_ACTION_MIN_CONFIDENCE
 ```
 
 The LLM path must preserve fallback to `RuleIntentEngine` on Ollama failure or timeout.
@@ -176,6 +189,11 @@ Rules:
 ## Local desktop actions
 
 - All desktop actions must be registered through `ActionRegistry` and executed through `ActionExecutor`.
+- Every registered handler must have an explicit `ActionEffect`; missing
+  contracts and unknown actions fail closed at the execution policy boundary.
+- `requires_confirmation` is enforced before handler invocation. The current
+  runtime returns `confirmation_required`; it does not yet implement a
+  confirmation UI or confirmed-execution flow.
 - Keep desktop actions narrow, explicit, and safe by default.
 - UI classes may display action lifecycle feedback from events, but must not execute actions directly.
 
@@ -219,15 +237,16 @@ MIRA_INTENT_ENGINE=llm MIRA_OLLAMA_TIMEOUT_S=1 python3 -m mira.main
 Use these after changes:
 
 ```bash
-python3 -m compileall mira
-python3 scripts/check_layering.py
+venv/bin/python -m compileall mira
+venv/bin/python scripts/check_layering.py
+venv/bin/python scripts/check_state_authority.py
 git diff --check
 ```
 
 If tests exist:
 
 ```bash
-python3 -m pytest
+QT_QPA_PLATFORM=offscreen venv/bin/python -m pytest
 ```
 
 For UI changes, also manually verify:
@@ -265,5 +284,6 @@ Current main focus areas:
 - Polish compact GUI and embodied assistant UX.
 - Keep debug tools available without dominating the normal UI.
 - Improve local LLM behavior while preserving responsiveness.
-- Prepare for future session-context integration in the LLM prompt.
+- Improve the existing bounded session-context integration where concrete
+  behavior requires it.
 - Keep the codebase clean, modular, and easy to extend.

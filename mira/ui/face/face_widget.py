@@ -9,12 +9,14 @@ from mira.domain.embodiment_frame import (
     FACE_HEIGHT_UNITS,
     FACE_WIDTH_UNITS,
 )
+from mira.domain.embodiment_playback import REFERENCE_DT_SECONDS
 from mira.domain.state import FaceState
 
 
 class FaceWidget(QWidget):
     DESIGN_WIDTH = 700.0
     DESIGN_HEIGHT = 450.0
+    FRAME_INTERVAL_MS = round(REFERENCE_DT_SECONDS * 1000)
 
     def __init__(self):
         super().__init__()
@@ -47,13 +49,13 @@ class FaceWidget(QWidget):
 
         self.frame_timer = QTimer(self)
         self.frame_timer.timeout.connect(self.on_frame)
-        self.frame_timer.start(30)
+        self.frame_timer.start(self.FRAME_INTERVAL_MS)
 
     def sizeHint(self) -> QSize:
         return QSize(620, 360)
 
     def on_frame(self):
-        self.controller.update()
+        self.controller.update(REFERENCE_DT_SECONDS)
         self.update()
 
     def get_face_canvas_rect(self) -> QRectF:

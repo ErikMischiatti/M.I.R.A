@@ -184,7 +184,7 @@ def make_recording_brain(intent: IntentResult) -> Brain:
     assert on the echoed text, so it is a different contract.
 
     `action_executor` is assigned after construction because `Brain.__init__`
-    builds its own (`mira/core/brain.py:73`) and takes no parameter for it.
+    builds its own (`mira/core/brain.py:75`) and takes no parameter for it.
     """
     brain = Brain(
         event_bus=RecordingEventBus(),

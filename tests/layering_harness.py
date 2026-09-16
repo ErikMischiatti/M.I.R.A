@@ -30,7 +30,7 @@ CHECKER = REPO_ROOT / "scripts" / "check_layering.py"
 # package being absent. Callers assert on the raised message, e.g.
 # "PySide6 is blocked for this test". Qt is the whole set that matters here: it is
 # what `scripts/check_layering.py` contains, and PySide6 is the only GUI toolkit
-# in requirements.txt.
+# declared as a runtime dependency in pyproject.toml.
 #
 # It deliberately does NOT claim to block a model backend:
 # `mira/cognition/llm_client.py` reaches Ollama through `urllib.request` and

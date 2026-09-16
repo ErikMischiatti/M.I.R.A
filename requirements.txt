@@ -1,3 +1,5 @@
-PySide6
-requests
-pytest
+# Canonical development/CI bootstrap. Direct dependencies and compatibility
+# ranges are declared once in pyproject.toml; constraints.txt selects the exact
+# tested resolution.
+-c constraints.txt
+-e .[dev]

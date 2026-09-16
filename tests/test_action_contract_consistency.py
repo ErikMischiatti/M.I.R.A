@@ -3,7 +3,7 @@ from __future__ import annotations
 from doubles import RecordingActivityAuthority
 
 from mira.actions.action_contracts import ACTION_CONTRACTS
-from mira.actions.action_models import ActionContract
+from mira.actions.action_models import ActionContract, ActionEffect
 from mira.actions.action_registry import ActionRegistry
 from mira.cognition.llm_intent_engine import LLMIntentEngine
 from mira.cognition.llm_schema import (
@@ -107,6 +107,7 @@ def test_llm_validation_uses_supplied_registry_contracts():
     registry.register_contract(
         ActionContract(
             name="custom_action",
+            effect=ActionEffect.READ_ONLY,
             compatible_intents=frozenset({"custom_intent"}),
             required_params={"value": str},
         )

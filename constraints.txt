@@ -1,0 +1,12 @@
+# Exact Python dependency set tested for development and CI on Python 3.12/Linux.
+# pyproject.toml remains the source of truth for direct compatibility ranges;
+# this file records one resolved environment, including transitive packages.
+iniconfig==2.3.0
+packaging==26.2
+pluggy==1.6.0
+Pygments==2.20.0
+PySide6==6.11.1
+PySide6_Addons==6.11.1
+PySide6_Essentials==6.11.1
+pytest==9.0.3
+shiboken6==6.11.1

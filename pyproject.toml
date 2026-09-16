@@ -14,14 +14,13 @@
 #
 #     venv/bin/pip install -e .
 #
-# Editable keeps the working tree the single source of truth: no build step
-# sits between an edit and the next test run, and `git pull` needs no reinstall.
+# Editable keeps Python source edits immediately visible without a build step.
+# Reinstall after dependency or packaging metadata changes; a source-only pull
+# needs no reinstall.
 #
 # This file adds no runtime behaviour. The application still starts through
-# `python -m mira.main`, and the launcher still pins the working directory to
-# the repository root — `mira/ui/face/expression_store.py:9` and the
-# `Path.cwd()` allowlist in `mira/actions/desktop_actions.py:49-52,82` both
-# resolve against it, and neither is changed here.
+# `python -m mira.main`; runtime resource and desktop-action paths are resolved
+# explicitly and do not rely on the launcher changing the working directory.
 
 [build-system]
 requires = ["setuptools>=64"]
@@ -32,19 +31,17 @@ name = "mira"
 version = "0.1.0"
 description = "M.I.R.A. — a local desktop assistant."
 readme = "README.md"
-# The only interpreter this has been validated against. Widen it deliberately,
-# after running the suite on the older version, rather than on the assumption
-# that the syntax happens to parse.
-requires-python = ">=3.12"
-# Mirrors requirements.txt, minus pytest, which is a development dependency and
-# is declared as one below.
+# Python 3.12 is the only interpreter series currently validated by CI. Widen
+# this range deliberately after adding coverage for another series.
+requires-python = ">=3.12,<3.13"
+# Direct runtime compatibility belongs here. Exact versions for the tested
+# development environment live in constraints.txt.
 dependencies = [
-    "PySide6",
-    "requests",
+    "PySide6>=6.11,<7",
 ]
 
 [project.optional-dependencies]
-dev = ["pytest"]
+dev = ["pytest>=9,<10"]
 
 [tool.setuptools.packages.find]
 # `mira.actions` and `mira.cognition` carry no `__init__.py`, so they are
@@ -56,7 +53,7 @@ exclude = ["*__pycache__*"]
 namespaces = true
 
 [tool.setuptools.package-data]
-# `mira/ui/face/expression_store.py` loads mira/config/expression_profiles.json.
+# The debug drawer currently loads and saves this packaged active profile file.
 "mira.config" = ["*.json"]
 
 [tool.pytest.ini_options]

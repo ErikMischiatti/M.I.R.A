@@ -4,7 +4,7 @@
 > as of 2026-06-28 and is preserved as a record, not as guidance. It predates the
 > `mira/domain`, `mira/adapters`, `mira/memory` and `mira/messaging` packages, so
 > several module paths below — including those in the branch-plan table — no
-> longer exist. For the current structure see `README.md` and `mira/AGENTS.md`;
+> longer exist. For the current normative structure see `docs/architecture.md`;
 > for the enforced layering see `scripts/check_layering.py`.
 
 Data analisi: 2026-06-28  

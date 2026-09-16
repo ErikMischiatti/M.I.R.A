@@ -1,7 +1,7 @@
 from collections.abc import Callable
 from typing import Any
 
-from mira.actions.action_models import ActionContract, ActionResult
+from mira.actions.action_models import ActionContract, ActionEffect, ActionResult
 
 
 ActionHandler = Callable[[dict], ActionResult]
@@ -41,6 +41,12 @@ class ActionRegistry:
 
         if not isinstance(contract.required_params, dict):
             raise TypeError("Action required params must be a dict.")
+
+        if not isinstance(contract.effect, ActionEffect):
+            raise TypeError("Action effect must be an ActionEffect.")
+
+        if not isinstance(contract.requires_confirmation, bool):
+            raise TypeError("Action requires_confirmation must be a bool.")
 
         for param_name, param_type in contract.required_params.items():
             if not isinstance(param_name, str) or not param_name.strip():

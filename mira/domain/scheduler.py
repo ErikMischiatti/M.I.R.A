@@ -2,14 +2,15 @@
 
 MIRA's turn lifecycle is a two-phase commit: an interpretation phase that may
 run anywhere and has no authority, and a commitment phase that must run on one
-serialized context and owns every side effect. The domain needs four timing
+serialized context and owns every side effect. The domain needs five lifecycle
 operations to express that, and nothing more:
 
 - run work away from the serialized context, then deliver its result back on it
   (`submit`);
 - run a callback on the serialized context after a delay (`call_later`);
 - cancel a delayed callback that has not run yet (`TimerHandle.cancel`);
-- ask whether a delayed callback is still outstanding (`TimerHandle.is_pending`).
+- ask whether a delayed callback is still outstanding (`TimerHandle.is_pending`);
+- stop accepting work and suppress outstanding callbacks (`shutdown`).
 
 No GUI or threading concept appears in this interface. `ManualScheduler` below
 is the reference implementation: fully deterministic and dependency-free, driven
@@ -59,6 +60,9 @@ class Scheduler(Protocol):
         context. `on_complete` receives whatever `work` returned.
         """
 
+    def shutdown(self) -> None:
+        """Cancel queued callbacks and reject new scheduling; idempotent."""
+
 
 class ManualTimer:
     """A `TimerHandle` driven by `ManualScheduler`'s logical clock."""
@@ -92,16 +96,32 @@ class ManualScheduler:
         self.now_ms = 0
         self._timers: list[ManualTimer] = []
         self._queue: list[tuple[Callable[[], Any], Callable[[Any], None]]] = []
+        self._shutdown = False
 
     # --- Scheduler ------------------------------------------------------
 
     def call_later(self, delay_ms: int, callback: Callable[[], None]) -> ManualTimer:
+        self._require_running("call_later")
         timer = ManualTimer(due_ms=self.now_ms + delay_ms, callback=callback)
         self._timers.append(timer)
         return timer
 
     def submit(self, work: Callable[[], T], on_complete: Callable[[T], None]) -> None:
+        self._require_running("submit")
         self._queue.append((work, on_complete))
+
+    def shutdown(self) -> None:
+        if self._shutdown:
+            return
+        self._shutdown = True
+        for timer in self._timers:
+            timer.cancel()
+        self._timers.clear()
+        self._queue.clear()
+
+    def _require_running(self, operation: str) -> None:
+        if self._shutdown:
+            raise RuntimeError(f"ManualScheduler.{operation} called after shutdown")
 
     # --- inspection -----------------------------------------------------
 
