@@ -14,8 +14,9 @@
 #
 #     venv/bin/pip install -e .
 #
-# Editable keeps the working tree the single source of truth: no build step
-# sits between an edit and the next test run, and `git pull` needs no reinstall.
+# Editable keeps Python source edits immediately visible without a build step.
+# Reinstall after dependency or packaging metadata changes; a source-only pull
+# needs no reinstall.
 #
 # This file adds no runtime behaviour. The application still starts through
 # `python -m mira.main`; runtime resource and desktop-action paths are resolved
