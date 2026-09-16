@@ -1,5 +1,12 @@
 from dataclasses import dataclass, field
+from enum import Enum
 from typing import Any
+
+
+class ActionEffect(str, Enum):
+    READ_ONLY = "read_only"
+    SIDE_EFFECT = "side_effect"
+    DENIED = "denied"
 
 
 @dataclass
@@ -13,6 +20,7 @@ class ActionRequest:
 @dataclass(frozen=True)
 class ActionContract:
     name: str
+    effect: ActionEffect
     compatible_intents: frozenset[str] = field(default_factory=frozenset)
     required_params: dict[str, type] = field(default_factory=dict)
     requires_confirmation: bool = False

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from mira.actions.action_models import ActionContract
+from mira.actions.action_models import ActionContract, ActionEffect
 from mira.actions.action_registry import ActionRegistry
 from mira.cognition.llm_client import LLMClientError
 from mira.cognition.llm_intent_engine import LLMIntentEngine
@@ -78,6 +78,7 @@ def test_llm_action_validation_uses_supplied_action_metadata():
     registry.register_contract(
         ActionContract(
             name="custom_echo",
+            effect=ActionEffect.READ_ONLY,
             compatible_intents=frozenset({"echo_request"}),
             required_params={"text": str},
         )
@@ -111,6 +112,7 @@ def test_prompt_action_list_and_required_params_come_from_action_metadata():
     registry.register_contract(
         ActionContract(
             name="custom_echo",
+            effect=ActionEffect.READ_ONLY,
             compatible_intents=frozenset({"echo_request"}),
             required_params={"text": str},
         )

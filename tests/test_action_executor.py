@@ -9,7 +9,12 @@ from doubles import RecordingEventBus
 
 from mira.actions.action_contracts import ACTION_CONTRACTS, build_action_contract_registry
 from mira.actions.action_executor import ActionExecutor
-from mira.actions.action_models import ActionContract, ActionRequest, ActionResult
+from mira.actions.action_models import (
+    ActionContract,
+    ActionEffect,
+    ActionRequest,
+    ActionResult,
+)
 from mira.actions.action_registry import ActionRegistry
 
 
@@ -26,7 +31,11 @@ class ActionExecutorTests(unittest.TestCase):
                 data={"text": parameters["text"]},
             )
 
-        registry.register("echo", handler)
+        registry.register(
+            "echo",
+            handler,
+            contract=ActionContract(name="echo", effect=ActionEffect.READ_ONLY),
+        )
         executor = ActionExecutor(registry, event_bus)
 
         result = executor.execute(ActionRequest("echo", {"text": "hello"}))
@@ -58,7 +67,7 @@ class ActionExecutorTests(unittest.TestCase):
         self.assertEqual(result.data["reason"], "action_unknown")
         self.assertEqual(
             [event_name for event_name, _ in event_bus.emitted],
-            ["action_started", "action_failed"],
+            ["action_failed"],
         )
 
     def test_action_exception_returns_failure_result(self):
@@ -68,7 +77,11 @@ class ActionExecutorTests(unittest.TestCase):
         def handler(parameters):
             raise RuntimeError("boom")
 
-        registry.register("explode", handler)
+        registry.register(
+            "explode",
+            handler,
+            contract=ActionContract(name="explode", effect=ActionEffect.READ_ONLY),
+        )
         executor = ActionExecutor(registry, event_bus)
 
         result = executor.execute(ActionRequest("explode"))
@@ -87,6 +100,10 @@ class ActionExecutorTests(unittest.TestCase):
             (object(), "request_type"),
             (ActionRequest(""), "action_name"),
             (ActionRequest("valid_name", parameters=[]), "parameters"),
+            (
+                ActionRequest("valid_name", requires_confirmation="yes"),
+                "requires_confirmation",
+            ),
         ]
 
         for request, expected_reason in cases:
@@ -133,7 +150,14 @@ class ActionExecutorTests(unittest.TestCase):
                 data={"value": 1},
             )
 
-        registry.register("registered_action", handler)
+        registry.register(
+            "registered_action",
+            handler,
+            contract=ActionContract(
+                name="registered_action",
+                effect=ActionEffect.READ_ONLY,
+            ),
+        )
         executor = ActionExecutor(registry)
 
         result = executor.execute(ActionRequest("registered_action"))
@@ -146,6 +170,7 @@ class ActionExecutorTests(unittest.TestCase):
         registry = ActionRegistry()
         contract = ActionContract(
             name="echo",
+            effect=ActionEffect.READ_ONLY,
             compatible_intents=frozenset({"echo_request"}),
             required_params={"text": str},
         )

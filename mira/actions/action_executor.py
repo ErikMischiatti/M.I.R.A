@@ -5,6 +5,11 @@ from typing import Any, TYPE_CHECKING
 
 from mira.actions.action_models import ActionRequest, ActionResult
 from mira.actions.action_registry import ActionRegistry
+from mira.actions.execution_policy import (
+    ActionExecutionPolicy,
+    ExecutionPolicyDecision,
+    ExecutionPolicyOutcome,
+)
 
 if TYPE_CHECKING:
     from mira.messaging.events import EventBus
@@ -14,9 +19,14 @@ logger = logging.getLogger(__name__)
 
 
 class ActionExecutor:
-    def __init__(self, registry: ActionRegistry, event_bus: EventBus | None = None):
+    def __init__(
+        self,
+        registry: ActionRegistry,
+        event_bus: EventBus | None = None,
+    ):
         self.registry = registry
         self.event_bus = event_bus
+        self.policy = ActionExecutionPolicy(registry)
 
     def execute(self, request: ActionRequest | Any) -> ActionResult:
         validation_error = self._validate_request(request)
@@ -26,9 +36,6 @@ class ActionExecutor:
             return validation_error
 
         action_name = request.action_name
-        logger.info("Action started: %s", action_name)
-
-        self._emit("action_started", request)
 
         handler = self.registry.get(action_name)
         if handler is None:
@@ -36,12 +43,22 @@ class ActionExecutor:
                 success=False,
                 action_name=action_name,
                 message=f"Azione '{action_name}' non disponibile.",
-                data={"reason": "action_unknown"},
+                data={"execution_policy": "denied", "reason": "action_unknown"},
             )
-
             logger.warning("Action failed: %s is not registered", action_name)
             self._emit("action_failed", result)
             return result
+
+        decision = self.policy.evaluate(request)
+        if not decision.allows_execution:
+            result = self._blocked_result(action_name, decision)
+            logger.warning("Action blocked: %s: %s", action_name, decision.reason)
+            self._emit("action_failed", result)
+            return result
+
+        logger.info("Action started: %s", action_name)
+
+        self._emit("action_started", request)
 
         try:
             raw_result = handler(request.parameters)
@@ -68,6 +85,27 @@ class ActionExecutor:
             self._emit("action_failed", result)
             return result
 
+    def _blocked_result(
+        self,
+        action_name: str,
+        decision: ExecutionPolicyDecision,
+    ) -> ActionResult:
+        if decision.outcome is ExecutionPolicyOutcome.CONFIRMATION_REQUIRED:
+            message = f"L'azione '{action_name}' richiede conferma prima dell'esecuzione."
+        else:
+            message = f"L'azione '{action_name}' non è autorizzata."
+
+        data = decision.metadata()
+        if decision.outcome is ExecutionPolicyOutcome.CONFIRMATION_REQUIRED:
+            data["requires_confirmation"] = True
+
+        return ActionResult(
+            success=False,
+            action_name=action_name,
+            message=message,
+            data=data,
+        )
+
     def _validate_request(self, request: ActionRequest | Any) -> ActionResult | None:
         if not isinstance(request, ActionRequest):
             return ActionResult(
@@ -93,6 +131,14 @@ class ActionExecutor:
                 action_name=request.action_name,
                 message="Parametri azione non validi.",
                 data={"reason": "parameters"},
+            )
+
+        if not isinstance(request.requires_confirmation, bool):
+            return ActionResult(
+                success=False,
+                action_name=request.action_name,
+                message="Indicatore di conferma azione non valido.",
+                data={"reason": "requires_confirmation"},
             )
 
         return None
