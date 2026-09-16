@@ -152,6 +152,7 @@ def from_worker():
     for op, call in (
         ("submit", lambda: scheduler.submit(lambda: 1, lambda r: None)),
         ("call_later", lambda: scheduler.call_later(10, lambda: None)),
+        ("shutdown", scheduler.shutdown),
     ):
         try:
             call()
@@ -452,6 +453,68 @@ print("OK")
 """
 
 
+SHUTDOWN_TIMERS_CASE = PREAMBLE + """
+fired = []
+handle = scheduler.call_later(60000, lambda: fired.append(1))
+
+scheduler.shutdown()
+scheduler.shutdown()
+
+assert handle.is_pending() is False
+assert scheduler.pending_timers() == 0
+assert scheduler.pending_completions() == 0
+
+for call in (
+    lambda: scheduler.call_later(1, lambda: None),
+    lambda: scheduler.submit(lambda: None, lambda _: None),
+):
+    try:
+        call()
+        raise AssertionError("scheduling after shutdown did not raise")
+    except RuntimeError as exc:
+        assert "after shutdown" in str(exc), exc
+
+QTimer.singleShot(50, app.quit)
+app.exec()
+assert fired == [], "a callback ran after shutdown"
+print("OK")
+"""
+
+
+SHUTDOWN_DURING_WORK_CASE = PREAMBLE + """
+import threading
+
+completed = []
+started = threading.Event()
+release = threading.Event()
+
+def work():
+    started.set()
+    assert release.wait(5), "shutdown never released the worker"
+    return "done"
+
+scheduler.submit(work, completed.append)
+
+def close_when_started():
+    if not started.is_set():
+        return
+    poll.stop()
+    scheduler.shutdown()
+    release.set()
+    app.quit()
+
+poll = QTimer()
+poll.timeout.connect(close_when_started)
+poll.start(1)
+app.exec()
+
+assert started.is_set(), "worker did not start"
+assert scheduler.pending_completions() == 0
+assert completed == [], "a worker callback re-entered after shutdown"
+print("OK")
+"""
+
+
 def run_case(source: str) -> subprocess.CompletedProcess[str]:
     env = dict(os.environ, QT_QPA_PLATFORM="offscreen")
     return subprocess.run(
@@ -479,6 +542,8 @@ def run_case(source: str) -> subprocess.CompletedProcess[str]:
         pytest.param(TIMER_CANCELLED_LIFETIME_CASE, id="cancelled-timers-are-released"),
         pytest.param(TIMER_DESTRUCTION_THREAD_CASE, id="timers-are-destroyed-on-the-main-thread"),
         pytest.param(CANCEL_WRONG_THREAD_CASE, id="rejects-cancel-from-a-foreign-thread"),
+        pytest.param(SHUTDOWN_TIMERS_CASE, id="shutdown-cancels-pending-timers"),
+        pytest.param(SHUTDOWN_DURING_WORK_CASE, id="shutdown-suppresses-running-work-completion"),
     ],
 )
 def test_qt_scheduler(source):

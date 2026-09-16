@@ -45,6 +45,11 @@ alive — `pending_timers()` reported zero while thousands were live, and
 `EmbodiedBehavior` calls `call_later` once per response. Timers are therefore
 keyed by an integer token that the timeout connection closes over instead, and
 released explicitly through `_release_timer`.
+
+`shutdown` is the application boundary: it cancels delayed callbacks, detaches
+completion callbacks and rejects new scheduling. Python work already running in
+the global pool is not force-cancelled; it retains no authority to re-enter the
+application and Qt remains responsible for its runnable until it returns.
 """
 
 from __future__ import annotations
@@ -97,11 +102,24 @@ class _WorkFailed:
         self.error = error
 
 
+class _ShutdownState:
+    """Plain shared state safe to inspect after Qt objects are torn down."""
+
+    def __init__(self) -> None:
+        self.closed = False
+
+
 class _Worker(QRunnable):
-    def __init__(self, work: Callable[[], object], signals: _WorkerSignals) -> None:
+    def __init__(
+        self,
+        work: Callable[[], object],
+        signals: _WorkerSignals,
+        shutdown_state: _ShutdownState,
+    ) -> None:
         super().__init__()
         self._work = work
         self._signals = signals
+        self._shutdown_state = shutdown_state
 
     def run(self) -> None:
         # The port requires work that does not raise. If that is broken anyway,
@@ -111,7 +129,17 @@ class _Worker(QRunnable):
             result: object = self._work()
         except BaseException as error:  # noqa: BLE001 - deliberately total
             result = _WorkFailed(error)
-        self._signals.completed.emit(result)
+        if self._shutdown_state.closed:
+            return
+        try:
+            self._signals.completed.emit(result)
+        except RuntimeError:
+            # QApplication teardown may delete the QObject after the scheduler
+            # has suppressed this completion but before uncooperative work can
+            # return. Shutdown deliberately drops that result.
+            if self._shutdown_state.closed:
+                return
+            raise
 
 
 class _CompletionReceiver(QObject):
@@ -120,11 +148,13 @@ class _CompletionReceiver(QObject):
     def __init__(self, scheduler: QtScheduler, on_complete: Callable[[object], None]) -> None:
         super().__init__()
         self._scheduler = scheduler
-        self._on_complete = on_complete
+        self._on_complete: Callable[[object], None] | None = on_complete
 
     @Slot(object)
     def handle(self, result: object) -> None:
         try:
+            if self._on_complete is None:
+                return
             if isinstance(result, _WorkFailed):
                 # Surface the contract violation on the serialized context
                 # rather than committing a turn built from nothing.
@@ -132,6 +162,9 @@ class _CompletionReceiver(QObject):
             self._on_complete(result)
         finally:
             self._scheduler._forget_receiver(self)
+
+    def cancel(self) -> None:
+        self._on_complete = None
 
 
 class QtScheduler:
@@ -154,6 +187,8 @@ class QtScheduler:
         # Receiver -> its sender. Keyed by receiver so the receiver is held for
         # exactly as long as the completion it is waiting for.
         self._senders: dict[_CompletionReceiver, _WorkerSignals] = {}
+        self._shutdown = False
+        self._shutdown_state = _ShutdownState()
 
     def _require_home_thread(self, operation: str) -> None:
         if QThread.currentThread() is not self._home_thread:
@@ -165,6 +200,7 @@ class QtScheduler:
 
     def call_later(self, delay_ms: int, callback: Callable[[], None]) -> _QtTimerHandle:
         self._require_home_thread("call_later")
+        self._require_running("call_later")
         token = next(self._timer_tokens)
         # Parented, so C++ owns the timer and the deferred delete in
         # _release_timer is what decides when the destructor runs, on this thread.
@@ -186,13 +222,40 @@ class QtScheduler:
 
     def submit(self, work: Callable[[], T], on_complete: Callable[[T], None]) -> None:
         self._require_home_thread("submit")
+        self._require_running("submit")
         # Parented, so QThreadPool auto-deleting the worker on a pool thread
         # drops a reference that no longer decides when ~QObject runs.
         signals = _WorkerSignals(self._qt_owner)
         receiver = _CompletionReceiver(self, on_complete)
         self._senders[receiver] = signals
         signals.completed.connect(receiver.handle)
-        self._thread_pool.start(_Worker(work, signals))
+        self._thread_pool.start(_Worker(work, signals, self._shutdown_state))
+
+    def shutdown(self) -> None:
+        """Suppress callbacks and release Qt-owned scheduling resources.
+
+        Running work cannot be interrupted safely. It may finish after this
+        method returns, but its result is discarded and cannot re-enter the
+        application graph. The global Qt pool retains responsibility for the
+        runnable itself until it returns.
+        """
+        self._require_home_thread("shutdown")
+        if self._shutdown:
+            return
+        self._shutdown = True
+        self._shutdown_state.closed = True
+
+        for token in list(self._timers):
+            self._cancel_timer(token)
+
+        for receiver, signals in list(self._senders.items()):
+            receiver.cancel()
+            signals.deleteLater()
+        self._senders.clear()
+
+    def _require_running(self, operation: str) -> None:
+        if self._shutdown:
+            raise RuntimeError(f"QtScheduler.{operation} called after shutdown")
 
     def _cancel_timer(self, token: int) -> None:
         # Cancelling elsewhere would stop a timer across threads and destroy it

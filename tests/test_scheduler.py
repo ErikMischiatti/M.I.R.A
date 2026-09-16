@@ -79,7 +79,7 @@ def test_manual_scheduler_conforms_to_the_port():
     assert isinstance(scheduler, Scheduler)
     assert isinstance(scheduler.call_later(1, lambda: None), TimerHandle)
 
-    for name in ("call_later", "submit"):
+    for name in ("call_later", "submit", "shutdown"):
         assert signature_of(scheduler, name) == signature_of(Scheduler, name), name
 
 
@@ -91,7 +91,7 @@ def test_qt_scheduler_conforms_to_the_port():
     assert isinstance(QtScheduler.__new__(QtScheduler), Scheduler)
     assert isinstance(_QtTimerHandle.__new__(_QtTimerHandle), TimerHandle)
 
-    for name in ("call_later", "submit"):
+    for name in ("call_later", "submit", "shutdown"):
         assert signature_of(QtScheduler, name) == signature_of(Scheduler, name), name
     for name in ("cancel", "is_pending"):
         assert signature_of(_QtTimerHandle, name) == signature_of(TimerHandle, name), name
@@ -218,6 +218,27 @@ def test_cancel_is_idempotent_and_safe_after_firing():
     handle.cancel()
     handle.cancel()
     assert handle.is_pending() is False
+
+
+def test_shutdown_cancels_queued_work_and_timers_and_rejects_new_work():
+    scheduler = ManualScheduler()
+    called: list[str] = []
+    handle = scheduler.call_later(10, lambda: called.append("timer"))
+    scheduler.submit(lambda: called.append("work"), lambda _: called.append("complete"))
+
+    scheduler.shutdown()
+    scheduler.shutdown()
+
+    assert handle.is_pending() is False
+    assert scheduler.pending_timers() == 0
+    assert scheduler.pending_work() == 0
+    assert scheduler.advance(100) == 0
+    assert scheduler.run_all() == 0
+    assert called == []
+    with pytest.raises(RuntimeError, match="after shutdown"):
+        scheduler.call_later(1, lambda: None)
+    with pytest.raises(RuntimeError, match="after shutdown"):
+        scheduler.submit(lambda: None, lambda _: None)
 
 
 # --- the turn lifecycle through the port -------------------------------

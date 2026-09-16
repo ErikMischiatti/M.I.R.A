@@ -75,6 +75,10 @@ class Application:
     interaction_manager: InteractionManager
     embodied_behavior: EmbodiedBehavior
 
+    def shutdown(self) -> None:
+        """Stop the resources owned by this application graph."""
+        self.scheduler.shutdown()
+
 
 def build_application(*, scheduler: Scheduler | None = None) -> Application:
     """Construct and wire the application graph.

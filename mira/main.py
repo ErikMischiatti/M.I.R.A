@@ -12,6 +12,7 @@ def main():
     # `QtScheduler` binds whichever thread builds it as the serialized context,
     # and this is the thread that runs the event loop below.
     application = build_application()
+    app.aboutToQuit.connect(application.shutdown)
 
     window = MainWindow(application)
     window.show()
