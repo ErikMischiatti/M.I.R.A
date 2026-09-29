@@ -4,6 +4,18 @@ This is the normative architecture snapshot for the implemented Foundation v1
 baseline. It describes current code first; the final section lists conceptual
 extension directions and does not claim that those APIs or capabilities exist.
 
+For setup and validation commands see [development.md](development.md); for
+environment variables and runtime resources see
+[configuration.md](configuration.md).
+
+**Contents:** [Principles](#1-architectural-principles) ·
+[Layers](#2-layer-map) · [Composition](#3-composition) ·
+[Interaction flow](#4-interaction-flow) · [Messaging](#5-messaging) ·
+[Cognition](#6-cognition) · [Memory](#7-memory) · [Actions](#8-actions) ·
+[Embodiment](#9-embodiment) · [Lifecycle](#10-runtime-resources-and-lifecycle) ·
+[Paths](#11-paths) · [Enforcement](#12-enforcement) ·
+[Future boundaries](#13-intended-future-boundaries-not-implemented)
+
 ## 1. Architectural principles
 
 - `mira.domain` contains technology-independent vocabulary and deterministic
@@ -22,6 +34,8 @@ extension directions and does not claim that those APIs or capabilities exist.
 
 The enforced import direction is summarized below. Imports within a layer are
 allowed; imports not listed are rejected by `scripts/check_layering.py`.
+Permissions are not transitive: `cognition` may import `actions`, but not
+`messaging`.
 
 | Layer | Responsibility | May import other M.I.R.A. layers |
 |---|---|---|
@@ -42,7 +56,7 @@ layering and Qt containment currently have zero declared exceptions.
 
 ## 3. Composition
 
-The production graph is explicit:
+The production graph is explicit (`mira/application/composition.py`):
 
 ```text
 mira.main
@@ -64,6 +78,10 @@ composition root shares one bus, one activity authority, and one scheduler
 across the graph. Tests may inject `ManualScheduler`; no service container or
 runtime registry exists.
 
+Construction order is observable: `InteractionManager` and `EmbodiedBehavior`
+subscribe to the same events from their constructors, so the order they are
+built in is the order their handlers run in.
+
 ## 4. Interaction flow
 
 The UI calls `Brain.process_text_async`. The implemented flow is:
@@ -84,57 +102,64 @@ UserInput
 
 Worker code has no authority to execute actions, mutate session memory, emit
 events, change shared state, or touch widgets. Those effects occur only during
-serialized finalization. `process_text` provides the same logical path
-synchronously for tests and non-UI callers.
+serialized finalization. Each submission receives a request id; a result whose
+id is no longer the latest is discarded before any side effect. `process_text`
+provides the same logical path synchronously for tests and non-UI callers.
 
-## 5. Embodiment
+## 5. Messaging
 
-The semantic-to-renderer path is:
+`EventBus` (`mira/messaging/events.py`) is a synchronous, in-process fan-out:
+`emit` calls every subscriber in subscription order on the caller's thread.
+It holds no state and has no unsubscribe or asynchronous delivery. Events
+currently in use:
 
-```text
-EmbodimentIntent
-  → resolve_expression_key
-  → ExpressionDefinition
-  → PlaybackPose / EmbodimentPlayback
-  → immutable EmbodimentFrame
-  → FaceWidget renderer
-```
+| Event | Emitted by | Subscribed by |
+|---|---|---|
+| `input_focused`, `input_unfocused`, `input_text_changed` | `MainWindow` (from `ChatPanel` signals) | `InteractionManager`, `EmbodiedBehavior` |
+| `user_input_received` | `Brain` | `InteractionManager` |
+| `processing_started` | `Brain` | `InteractionManager` |
+| `intent_inferred` | `Brain` | `EmbodiedBehavior` |
+| `action_started`, `action_completed`, `action_failed` | `ActionExecutor` | `MainWindow` |
+| `response_ready` | `Brain` | `InteractionManager`, `EmbodiedBehavior` |
+| `state_changed` | `StateManager` (via `ActivityAuthority`) | `MainWindow` |
 
-`ActivityState`, `AffectState`, and optional `ExpressionKey` remain independent
-semantic inputs. Override, affect, then activity determines the expression.
-`FaceState` is retained only at the current compatibility/presentation boundary.
+## 6. Cognition
 
-`ExpressionDefinition`, `EmbodimentPlayback`, and `EmbodimentFrame` are pure
-Python and Qt-independent. Playback advances from explicit elapsed time and
-resolves shared pose plus per-eye asymmetry into normalized frame values.
+Intent engines implement `IntentEngine.infer(UserInput) -> IntentResult`
+(`mira/cognition/intent_engine.py`). `Brain` selects one at construction from
+`MIRA_INTENT_ENGINE`:
 
-The extraction is intentionally incomplete: `FaceController` still owns blink
-timing, cursor gaze and hold behavior, idle target selection, scrutiny motion,
-thinking drift, speaking pulse, and target deformation. It feeds their resolved
-targets and eye-closed flags into the pure playback object. These behaviors are
-not represented as independent domain services.
+- `RuleIntentEngine` — deterministic substring/prefix matching. Its phrase
+  set is predominantly Italian, with a few English aliases.
+- `LLMIntentEngine` — prompts a local Ollama model (`OllamaClient`, standard
+  library HTTP) for structured JSON constrained to an allowlisted intent enum.
+  The prompt includes the registered action contracts and a bounded, sanitized
+  recent-history block from `SessionContextBuilder`, kept separate from the
+  current input. On client failure it falls back to `RuleIntentEngine`; on
+  schema or policy failures it drops the proposed action and keeps the LLM
+  intent, or `unknown` if the intent is not allowlisted. Every fallback is recorded in `IntentResult.entities`
+  (`llm_fallback_used`, `llm_fallback_reason`).
 
-## 6. Runtime resources and lifecycle
+`Brain.build_action_request` maps the intent to an optional `ActionRequest`,
+either from a validated LLM proposal or from a fixed rule-intent mapping.
+`ResponseBuilder` then produces the `BrainResponse`: action results take
+priority, LLM response text is used only for non-action intents, and LLM
+emotion labels map to `EmbodimentIntent` through an explicit allowlist.
+The builder's fixed response texts and action messages are currently Italian.
 
-`QApplication` owns the process event loop; the main window owns its widget
-tree, and `FaceWidget` owns its parented frame timer. `Application` owns the
-shared scheduler boundary. `QApplication.aboutToQuit` calls
-`Application.shutdown()`, which shuts down the scheduler.
+Configuration and fallback reasons are listed in
+[configuration.md](configuration.md#local-llm).
 
-`QtScheduler` owns delayed timers and completion receivers on its construction
-thread. Shutdown is idempotent: it cancels pending timers, detaches completion
-callbacks, rejects new work, and prevents in-flight results from re-entering the
-application. Already-running Python work is not force-cancelled; the global Qt
-thread pool owns its runnable until it returns. Current LLM network calls use a
-configured socket/I/O timeout; this is not a wall-clock deadline for a worker.
+## 7. Memory
 
-EventBus subscriptions retain application-lifetime components, including the
-single main window. There is no unsubscribe infrastructure because the current
-runtime creates one graph/window and exits when it closes. Desktop applications,
-URLs, directories, and notifications are fire-and-forget external effects;
-processes launched by M.I.R.A. are not retained or terminated at shutdown.
+`SessionMemory` (`mira/memory/session_memory.py`) holds the current process's
+conversation: a bounded history of user and assistant messages (default 20),
+the last inferred intent, and a free-form context dictionary. It has no
+persistence; everything is lost when the process exits. Actions read it for
+session introspection, and `SessionContextBuilder` reads it to build LLM
+prompt context (default: 8 messages, 1200 characters).
 
-## 7. Actions
+## 8. Actions
 
 Action handling separates validation from authorization:
 
@@ -155,7 +180,7 @@ parameters before a request is proposed. `ActionExecutor` validates the generic
 request shape. `ActionExecutionPolicy` then authorizes only from the registered
 contract; it does not inspect whether a request came from rules, an LLM, or
 another future source. Unknown actions and handlers without contracts fail
-closed.
+closed. Contracts live in `mira/actions/action_contracts.py`.
 
 Current classification:
 
@@ -167,9 +192,65 @@ Current classification:
   `confirmation_required` metadata and its handler does not run.
 - Explicitly denied built-ins: none.
 
-No confirmation UI or confirmed-execution token exists yet.
+No confirmation UI or confirmed-execution token exists yet. Desktop handlers
+target a Linux desktop (`xdg-open`, `notify-send`, and fixed application
+commands); see [configuration.md](configuration.md#desktop-actions).
 
-## 8. Paths and configuration
+## 9. Embodiment
+
+The semantic-to-renderer path is:
+
+```text
+EmbodimentIntent
+  → resolve_expression_key
+  → ExpressionDefinition
+  → PlaybackPose / EmbodimentPlayback
+  → immutable EmbodimentFrame
+  → FaceWidget renderer
+```
+
+`ActivityState` (idle, listening, thinking, speaking), `AffectState` (neutral,
+happy, confused), and optional `ExpressionKey` remain independent semantic
+inputs. Override, affect, then activity determines the expression.
+`ExpressionKey` also keeps the `tired` and `angry` profiles, which runtime
+behavior never selects; they are reachable only from the debug drawer.
+`FaceState` is retained only at the current compatibility/presentation boundary.
+
+`ExpressionDefinition`, `EmbodimentPlayback`, and `EmbodimentFrame` are pure
+Python and Qt-independent. Playback advances from explicit elapsed time and
+resolves shared pose plus per-eye asymmetry into normalized frame values.
+
+The extraction is intentionally incomplete: `FaceController` still owns blink
+timing, cursor gaze and hold behavior, idle target selection, scrutiny motion,
+thinking drift, speaking pulse, and target deformation. It feeds their resolved
+targets and eye-closed flags into the pure playback object. These behaviors are
+not represented as independent domain services.
+
+`EmbodiedBehavior` (in `core`) shapes timing around responses: brief affect
+reactions to `greeting`/`unknown` intents and a delayed decay from the response
+expression back to idle or listening.
+
+## 10. Runtime resources and lifecycle
+
+`QApplication` owns the process event loop; the main window owns its widget
+tree, and `FaceWidget` owns its parented frame timer. `Application` owns the
+shared scheduler boundary. `QApplication.aboutToQuit` calls
+`Application.shutdown()`, which shuts down the scheduler.
+
+`QtScheduler` owns delayed timers and completion receivers on its construction
+thread. Shutdown is idempotent: it cancels pending timers, detaches completion
+callbacks, rejects new work, and prevents in-flight results from re-entering the
+application. Already-running Python work is not force-cancelled; the global Qt
+thread pool owns its runnable until it returns. Current LLM network calls use a
+configured socket/I/O timeout; this is not a wall-clock deadline for a worker.
+
+EventBus subscriptions retain application-lifetime components, including the
+single main window. There is no unsubscribe infrastructure because the current
+runtime creates one graph/window and exits when it closes. Desktop applications,
+URLs, directories, and notifications are fire-and-forget external effects;
+processes launched by M.I.R.A. are not retained or terminated at shutdown.
+
+## 11. Paths
 
 - Package resources resolve from the installed `mira` package, not the process
   working directory. The expression profile JSON is currently both the packaged
@@ -181,28 +262,24 @@ No confirmation UI or confirmed-execution token exists yet.
   actions remain constrained to the home tree and, in a verified source checkout,
   the project tree.
 - A project root is reported only when the imported package is the direct `mira`
-  child of a checkout containing known project markers. Installed distributions
-  do not infer a checkout from the working directory or `site-packages`.
+  child of a checkout containing known project markers (`pyproject.toml` and
+  `bin/mira`). Installed distributions do not infer a checkout from the working
+  directory or `site-packages`.
 
-## 9. Testing and enforcement
+## 12. Enforcement
 
-The repository baseline is checked with:
+Two standard-library checkers turn the boundaries above into CI failures:
 
-```bash
-venv/bin/python -m compileall mira
-venv/bin/python scripts/check_layering.py
-venv/bin/python scripts/check_state_authority.py
-QT_QPA_PLATFORM=offscreen venv/bin/python -m pytest
-venv/bin/python -m pip check
-git diff --check
-```
+- `scripts/check_layering.py` — import direction (section 2), Qt containment,
+  and a declared layer for every package under `mira/`.
+- `scripts/check_state_authority.py` — only `mira/core/activity_authority.py`
+  commits state, and only declared modules may reference `StateManager`.
 
-CI installs through `requirements.txt` on Python 3.12 and runs compilation,
-layering, state-authority, and the offscreen test suite. `pyproject.toml` is the
-single direct-dependency compatibility source; `constraints.txt` records the
-exact Linux/Python 3.12 development resolution consumed by `requirements.txt`.
+Both declare zero exceptions, and both are exercised by the test suite
+(`tests/test_layering.py`, `tests/test_activity_state_authority.py`). The full
+validation baseline is in [development.md](development.md#validation).
 
-## 10. Intended future boundaries (not implemented)
+## 13. Intended future boundaries (not implemented)
 
 The following are extension directions, not existing APIs:
 

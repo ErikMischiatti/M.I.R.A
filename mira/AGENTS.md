@@ -96,7 +96,7 @@ Main modules:
 - Treat `pyproject.toml` as the source of truth for direct runtime and
   development compatibility. `constraints.txt` records the exact runtime/dev
   dependency resolution tested on Python 3.12/Linux by CI; install it through
-  `requirements.txt` as documented in the README. Do not add a second manual
+  `requirements.txt` as documented in `docs/development.md`. Do not add a second manual
   dependency list.
 - Keep the architecture modular.
 - Do not couple UI directly to LLM logic.
