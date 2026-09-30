@@ -10,6 +10,11 @@ slower than the camera analyses fewer frames, and nothing queues up.
 The perception thread never reads the camera device, never touches Qt or the
 event bus, and never calls into the UI. Detector failures stay on the thread
 and become status.
+
+Results use the same pull-based data plane as frames, not the event bus: the
+newest `PersonDetections` is kept, `latest_detections` never blocks, and
+`wait_for_detections(after=...)` sleeps until a newer result exists. Turning
+changes such as "someone arrived" into semantic events is a later layer's job.
 """
 
 from __future__ import annotations
@@ -19,6 +24,7 @@ import threading
 from mira.core.camera_capture import CameraCapture
 from mira.domain.camera import CameraFrame
 from mira.domain.perception import (
+    PersonDetections,
     PerceptionError,
     PerceptionState,
     PerceptionStatus,
@@ -63,6 +69,9 @@ class HumanPerception:
         self._status = PerceptionStatus(
             PerceptionState.STOPPED if detector is not None else PerceptionState.DISABLED
         )
+        self._results = threading.Condition()
+        self._latest: PersonDetections | None = None
+        self._version = 0
 
     @property
     def enabled(self) -> bool:
@@ -77,6 +86,34 @@ class HumanPerception:
     def status(self) -> PerceptionStatus:
         with self._lock:
             return self._status
+
+    def latest_detections(self) -> PersonDetections | None:
+        """The newest result of the current run, or None; never blocks."""
+
+        with self._results:
+            return self._latest
+
+    def wait_for_detections(
+        self, *, after: PersonDetections | None = None, timeout_s: float
+    ) -> PersonDetections | None:
+        """Wait for the newest result other than ``after``.
+
+        Returns None on timeout or once perception stops.
+        """
+
+        stop_requested = self._stop_requested
+
+        def fresh() -> PersonDetections | None:
+            latest = self._latest
+            return latest if latest is not None and latest is not after else None
+
+        with self._results:
+            self._results.wait_for(
+                lambda: stop_requested.is_set() or fresh() is not None, timeout=timeout_s
+            )
+            if stop_requested.is_set():
+                return None
+            return fresh()
 
     def start(self) -> None:
         with self._lock:
@@ -105,6 +142,7 @@ class HumanPerception:
             self._stop_requested.set()
             if self._status.state in _STOPPABLE and self._detector is not None:
                 self._set_status(PerceptionStatus(PerceptionState.STOPPED))
+        self._clear_results()
         if thread is None:
             return True
         thread.join(self._join_timeout_s)
@@ -135,6 +173,12 @@ class HumanPerception:
             return
         self._report(stop_requested, PerceptionStatus(PerceptionState.STARTING, "waiting for camera"))
 
+        try:
+            self._analyse(detector, stop_requested)
+        finally:
+            self._clear_results()
+
+    def _analyse(self, detector: PersonDetector, stop_requested: threading.Event) -> None:
         last_frame: CameraFrame | None = None
         failures = 0
         while not stop_requested.is_set():
@@ -168,7 +212,24 @@ class HumanPerception:
         persons: tuple[PersonObservation, ...],
         stop_requested: threading.Event,
     ) -> None:
-        """Hand a detection result to consumers; results are dropped for now."""
+        with self._results:
+            # A result finishing after stop was requested is not published:
+            # stop clears results under this same lock after setting the flag.
+            if stop_requested.is_set():
+                return
+            self._version += 1
+            self._latest = PersonDetections(
+                version=self._version,
+                frame_sequence=frame.sequence,
+                observed_at=frame.timestamp_s,
+                persons=persons,
+            )
+            self._results.notify_all()
+
+    def _clear_results(self) -> None:
+        with self._results:
+            self._latest = None
+            self._results.notify_all()
 
     def _report(self, stop_requested: threading.Event, status: PerceptionStatus) -> None:
         with self._lock:

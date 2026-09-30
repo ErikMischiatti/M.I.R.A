@@ -125,6 +125,34 @@ class PersonObservation:
         return self.bounds.center
 
 
+@dataclass(frozen=True, slots=True)
+class PersonDetections:
+    """Everyone found in one analysed frame, possibly no one.
+
+    ``version`` counts published results from one and never restarts, even
+    when perception or the camera does, so a consumer can tell results apart
+    and order them. ``frame_sequence`` and ``observed_at`` identify the frame.
+    """
+
+    version: int
+    frame_sequence: int
+    observed_at: float
+    persons: tuple[PersonObservation, ...] = ()
+
+    def __post_init__(self) -> None:
+        if self.version < 1:
+            raise ValueError("detections version starts at 1")
+        if self.frame_sequence < 0:
+            raise ValueError("frame sequence must not be negative")
+        if not math.isfinite(self.observed_at):
+            raise ValueError("observation time must be finite")
+        object.__setattr__(self, "persons", tuple(self.persons))
+
+    @property
+    def count(self) -> int:
+        return len(self.persons)
+
+
 class PersonDetector(Protocol):
     """Find the people visible in a camera frame.
 

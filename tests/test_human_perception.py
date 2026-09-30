@@ -347,3 +347,120 @@ def test_detection_configuration_is_read_from_the_environment(monkeypatch):
     monkeypatch.setenv("MIRA_PERSON_DETECTION", "TRUE")
 
     assert person_detection_configuration_from_environment().enabled
+
+
+# --- detections data plane ------------------------------------------------------------
+
+
+def test_there_are_no_detections_before_the_first_analysed_frame():
+    detector = FakePersonDetector()
+    detector.hold = threading.Event()
+    camera, perception, _ = running_pair(detector)
+    assert detector.detect_started.wait(1.0)
+
+    assert perception.latest_detections() is None
+    assert perception.wait_for_detections(timeout_s=0.02) is None
+
+    detector.hold.set()
+    stop_pair(camera, perception)
+
+
+def test_each_result_describes_one_frame_and_everyone_in_it():
+    two_people = [(0.1, 0.2, 0.3, 0.6), (0.6, 0.1, 0.9, 0.7)]
+    detector = FakePersonDetector(default=two_people)
+    camera, perception, _ = running_pair(detector)
+
+    result = perception.wait_for_detections(timeout_s=1.0)
+    stop_pair(camera, perception)
+
+    assert result.count == 2
+    assert result.frame_sequence in detector.seen
+    assert all(seen.frame_sequence == result.frame_sequence for seen in result.persons)
+    assert all(seen.observed_at == result.observed_at for seen in result.persons)
+
+
+def test_a_frame_with_nobody_in_it_is_still_a_result():
+    camera, perception, _ = running_pair(FakePersonDetector(default=[]))
+
+    result = perception.wait_for_detections(timeout_s=1.0)
+    stop_pair(camera, perception)
+
+    assert result is not None and result.persons == () and result.count == 0
+
+
+def test_versions_increase_by_one_and_frames_move_forward():
+    camera, perception, _ = running_pair(FakePersonDetector())
+    results = [perception.wait_for_detections(timeout_s=1.0)]
+    for _ in range(15):
+        results.append(perception.wait_for_detections(after=results[-1], timeout_s=1.0))
+    stop_pair(camera, perception)
+
+    versions = [result.version for result in results]
+    assert versions == sorted(set(versions))
+    assert all(later - earlier >= 1 for earlier, later in zip(versions, versions[1:]))
+    frames = [result.frame_sequence for result in results]
+    assert frames == sorted(set(frames))
+
+
+def test_waiting_for_a_newer_result_times_out_while_the_detector_is_busy():
+    detector = FakePersonDetector()
+    camera, perception, _ = running_pair(detector)
+    first = perception.wait_for_detections(timeout_s=1.0)
+    detector.hold = threading.Event()
+    detector.detect_started.clear()
+    assert detector.detect_started.wait(1.0)
+    held = perception.latest_detections()
+
+    assert perception.wait_for_detections(after=held, timeout_s=0.03) is None
+    assert perception.latest_detections() is held and held.version >= first.version
+
+    detector.hold.set()
+    stop_pair(camera, perception)
+
+
+def test_versions_keep_increasing_across_a_restart():
+    camera, perception, _ = running_pair(FakePersonDetector())
+    before = perception.wait_for_detections(timeout_s=1.0)
+    perception.stop()
+    assert perception.latest_detections() is None
+
+    perception.start()
+    after = perception.wait_for_detections(timeout_s=1.0)
+    stop_pair(camera, perception)
+
+    assert after.version > before.version
+
+
+def test_no_results_are_available_or_published_after_shutdown():
+    detector = FakePersonDetector()
+    camera, perception, _ = running_pair(detector, join_timeout_s=0.02)
+    assert perception.wait_for_detections(timeout_s=1.0) is not None
+    detector.hold = threading.Event()
+    detector.detect_started.clear()
+    assert detector.detect_started.wait(1.0)
+
+    perception.shutdown()  # the in-flight inference has not returned yet
+    assert perception.latest_detections() is None
+    detector.hold.set()
+    assert wait_until(lambda: not perception.running)
+
+    assert perception.latest_detections() is None
+    assert perception.wait_for_detections(timeout_s=0.01) is None
+    camera.shutdown()
+
+
+def test_a_waiting_consumer_is_released_when_perception_stops():
+    detector = FakePersonDetector()
+    detector.hold = threading.Event()
+    camera, perception, _ = running_pair(detector, join_timeout_s=0.02)
+    assert detector.detect_started.wait(1.0)
+    results = []
+    waiter = threading.Thread(target=lambda: results.append(perception.wait_for_detections(timeout_s=5.0)))
+    waiter.start()
+
+    perception.stop()
+    waiter.join(1.0)
+
+    assert results == [None]
+    detector.hold.set()
+    stop_pair(camera, perception)

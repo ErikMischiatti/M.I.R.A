@@ -13,6 +13,7 @@ from mira.domain.perception import (
     BoundingBox,
     ImagePoint,
     PerceptionError,
+    PersonDetections,
     PersonDetector,
     PersonObservation,
 )
@@ -158,3 +159,27 @@ def test_perception_boundary_imports_no_detector_library_or_toolkit():
 
     assert not any(name.split(".")[0] in {"cv2", "numpy", "mediapipe", "PySide6"} for name in names)
     assert {name for name in names if name.startswith("mira.")} <= {"mira.domain.camera"}
+
+
+# --- PersonDetections -------------------------------------------------------------
+
+
+def test_detections_hold_everyone_found_in_a_frame_as_an_immutable_tuple():
+    persons = [observation(), observation(bounds=BoundingBox(0.7, 0.1, 0.9, 0.5))]
+
+    result = PersonDetections(version=3, frame_sequence=7, observed_at=12.5, persons=persons)
+
+    assert result.count == 2
+    assert isinstance(result.persons, tuple)
+    assert PersonDetections(1, 0, 0.0).persons == ()
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [{"version": 0}, {"frame_sequence": -1}, {"observed_at": float("nan")}],
+)
+def test_invalid_detections_are_rejected(overrides):
+    values = dict(version=1, frame_sequence=0, observed_at=0.0)
+    values.update(overrides)
+    with pytest.raises(ValueError):
+        PersonDetections(**values)
