@@ -1,10 +1,11 @@
 """Standalone notch demo: ``python -m mira.ui.notch``.
 
 Developer tooling only; M.I.R.A.'s normal startup never shows the notch. The
-demo cycles compact, expanded, compact and hidden so placement, stacking and
-show/hide can be watched. Clicking the notch toggles compact and expanded for
-the rest of the current step, which makes the input mask observable: clicks
-beside the notch reach whatever window lies underneath. Ctrl+C quits.
+demo loops through animated transitions — show, expand, collapse, hide — and
+two deliberate reversals: an expansion collapsed part-way and a close reopened
+part-way. Clicking the notch toggles compact and expanded, which also makes the
+input mask observable: clicks beside the notch reach the window underneath.
+Ctrl+C quits.
 """
 
 import signal
@@ -17,23 +18,28 @@ from mira.ui.notch.notch_window import NotchWindow
 from mira.ui.notch.presence import NotchPresence
 
 
-CYCLE = (
-    (NotchPresence.COMPACT, 3000),
-    (NotchPresence.EXPANDED, 3000),
-    (NotchPresence.COMPACT, 2000),
-    (NotchPresence.HIDDEN, 2000),
+# (request, milliseconds until the next one). The short gaps interrupt the
+# running transition to show reversals.
+SCRIPT = (
+    ("show_notch", 1500),
+    ("expand_notch", 1500),
+    ("collapse_notch", 1500),
+    ("expand_notch", 80),
+    ("collapse_notch", 1500),
+    ("hide_notch", 90),
+    ("show_notch", 1500),
+    ("hide_notch", 1500),
 )
 
 
 class DemoNotchWindow(NotchWindow):
     def mousePressEvent(self, event):
-        toggled = (
-            NotchPresence.COMPACT
-            if self.presence is NotchPresence.EXPANDED
-            else NotchPresence.EXPANDED
-        )
-        print(f"[notch] click -> {toggled}")
-        self.set_presence(toggled)
+        if self.presence is NotchPresence.EXPANDED:
+            print("[notch] click -> collapse")
+            self.collapse_notch()
+        else:
+            print("[notch] click -> expand")
+            self.expand_notch()
         super().mousePressEvent(event)
 
 
@@ -53,11 +59,14 @@ def main():
 
     def advance():
         nonlocal step
-        presence, duration = CYCLE[step % len(CYCLE)]
+        request, delay = SCRIPT[step % len(SCRIPT)]
         step += 1
-        window.set_presence(presence)
-        print(f"[notch] {presence} (window visible: {window.isVisible()})")
-        QTimer.singleShot(duration, advance)
+        getattr(window, request)()
+        print(
+            f"[notch] {request} -> {window.presence} "
+            f"({window.transition.duration()} ms, window visible: {window.isVisible()})"
+        )
+        QTimer.singleShot(delay, advance)
 
     advance()
     sys.exit(app.exec())

@@ -1,6 +1,6 @@
 """`NotchWindow`: a frameless overlay that draws the notch, verified offscreen.
 
-These tests pin configuration, placement, presence and the input mask. What
+These tests pin configuration, placement, settled presence and the input mask. What
 only a real window manager decides — stacking, taskbar or dash exclusion,
 whether focus is actually withheld — is left to manual verification; the
 offscreen platform activates any shown window and does not apply masks.
@@ -69,6 +69,9 @@ def application():
 @pytest.fixture
 def window():
     notch = NotchWindow(GEOMETRY)
+    # These tests check settled states, not timing: make transitions instant.
+    # Animated transitions are covered in test_notch_transitions.py.
+    notch.TRANSITION_DURATION_MS = 0
     yield notch
     notch.hide()
     notch.deleteLater()

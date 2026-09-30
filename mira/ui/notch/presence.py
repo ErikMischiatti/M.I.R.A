@@ -184,11 +184,43 @@ def window_bounds(area: Rect, geometry: NotchGeometry) -> Rect:
 
 
 def window_shape(window: Rect, geometry: NotchGeometry, presence: NotchPresence) -> NotchShape:
-    """The notch at ``presence`` in window-local coordinates of ``window``.
+    """The notch at ``presence`` in window-local coordinates of ``window``."""
 
-    The window's own origin already carries the top margin, so the notch hangs
-    from the window's top edge.
+    return window_shape_for_size(window, geometry, geometry.size_for(presence))
+
+
+def window_shape_for_size(window: Rect, geometry: NotchGeometry, size: NotchSize) -> NotchShape:
+    """A notch of any ``size`` in window-local coordinates of ``window``.
+
+    The size need not belong to a presence: mid-transition sizes are placed the
+    same way. The window's own origin already carries the top margin, so the
+    notch hangs from the window's top edge.
     """
 
     local = Rect(x=0.0, y=0.0, width=window.width, height=window.height)
-    return replace(geometry, top_margin=0.0).shape_for(local, presence)
+    return replace(geometry, top_margin=0.0).place(local, size)
+
+
+def size_distance(a: NotchSize, b: NotchSize) -> float:
+    """How far apart two sizes look: the Euclidean distance of width and height.
+
+    The corner radius follows the size and is left out.
+    """
+
+    return math.hypot(a.width - b.width, a.height - b.height)
+
+
+def remaining_fraction(current: NotchSize, origin: NotchSize, target: NotchSize) -> float:
+    """The share of the ``origin`` → ``target`` path still ahead of ``current``.
+
+    ``origin`` is where the notch last settled or was heading, so a transition
+    interrupted halfway and reversed has about half its path left, and a new
+    transition from rest has all of it. Clamped to [0, 1]; 0 when the path is
+    empty. Along a straight blend every dimension moves in proportion, so any
+    distance gives the same share; off it, this is an approximation.
+    """
+
+    path = size_distance(origin, target)
+    if path == 0.0:
+        return 0.0
+    return min(size_distance(current, target) / path, 1.0)

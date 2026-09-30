@@ -1,4 +1,4 @@
-from PySide6.QtCore import QRect, QRectF, Qt
+from PySide6.QtCore import QEasingCurve, QRect, QRectF, Qt, QVariantAnimation
 from PySide6.QtGui import (
     QColor,
     QGuiApplication,
@@ -14,9 +14,11 @@ from mira.ui.notch.presence import (
     NotchGeometry,
     NotchPresence,
     NotchShape,
+    NotchSize,
     Rect,
+    remaining_fraction,
     window_bounds,
-    window_shape,
+    window_shape_for_size,
 )
 
 
@@ -51,6 +53,18 @@ def notch_path(shape: NotchShape) -> QPainterPath:
 # stepped. One pixel keeps the whole antialiased edge inside the mask.
 MASK_MARGIN_PX = 1.0
 
+# Below this height the notch counts as retracted: nothing is painted and the
+# mask shrinks to `RETRACTED_MASK`, so no invisible strip catches clicks.
+MIN_VISIBLE_HEIGHT_PX = 1.0
+
+# A shown window needs some mask: Qt treats an empty one as no mask, which would
+# let the whole window catch input. One pixel in the top-left corner stands in.
+RETRACTED_MASK = QRect(0, 0, 1, 1)
+
+
+def is_retracted(shape: NotchShape) -> bool:
+    return shape.bounds.width <= 0 or shape.bounds.height < MIN_VISIBLE_HEIGHT_PX
+
 
 def notch_mask(shape: NotchShape) -> QRegion:
     """The notch's input and bounding region; empty for an empty shape."""
@@ -69,19 +83,25 @@ class NotchWindow(QWidget):
 
     The window keeps one fixed size, the expanded notch rounded to whole pixels,
     hung top-centre from the primary screen's available geometry — so below a
-    desktop panel such as GNOME's top bar. Presence changes only the shape drawn
-    inside it, which later lets the shape animate without resizing the window.
+    desktop panel such as GNOME's top bar. Presence only changes the shape drawn
+    inside it; the window is never resized to follow the notch.
 
-    Presence and Qt visibility are distinct. `NotchPresence.HIDDEN` is a logical
-    geometry (the compact notch retracted to zero height); on reaching it the
-    window is also hidden, because an empty input mask cannot be expressed —
-    Qt treats an empty mask as no mask at all, which would make the whole
-    window catch clicks. Visible presences show the window and mask it to the
-    drawn shape plus `MASK_MARGIN_PX`, so clicks beside the notch reach the
-    windows underneath. Transitions are currently instant.
+    Three things are kept apart:
+
+    - `presence`, the semantic target: hidden, compact or expanded;
+    - `visual_size`, what is drawn now, which mid-transition lies between sizes;
+    - one `transition` animation that blends the visual size to the target's.
+
+    A new target restarts the blend from the current visual size, so reversing
+    mid-transition never jumps, and the duration shrinks with the share of the
+    path still left. Showing shows the window before the notch grows out of the
+    top edge; hiding keeps the window shown until the notch has retracted and
+    only then hides it. The mask follows the drawn shape on every frame.
 
     The window never takes keyboard focus and shows without activating.
     """
+
+    TRANSITION_DURATION_MS = 200
 
     def __init__(
         self,
@@ -106,8 +126,18 @@ class NotchWindow(QWidget):
         self.color = QColor(0, 0, 0) if color is None else color
 
         self._presence = NotchPresence.HIDDEN
+        self._visual_size = self.notch_geometry.size_for(NotchPresence.HIDDEN)
+        self._from_size = self._visual_size
+        self._to_size = self._visual_size
         self._window_bounds = Rect(0.0, 0.0, 0.0, 0.0)
         self._screen: QScreen | None = None
+
+        self._transition = QVariantAnimation(self)
+        self._transition.setStartValue(0.0)
+        self._transition.setEndValue(1.0)
+        self._transition.setEasingCurve(QEasingCurve.OutCubic)
+        self._transition.valueChanged.connect(self._on_transition_value)
+        self._transition.finished.connect(self._on_transition_finished)
 
         QGuiApplication.instance().primaryScreenChanged.connect(self.track_screen)
         self.track_screen(QGuiApplication.primaryScreen())
@@ -116,12 +146,21 @@ class NotchWindow(QWidget):
 
     @property
     def presence(self) -> NotchPresence:
+        """The semantic target; mid-transition the drawn notch lags behind it."""
         return self._presence
 
     @property
+    def visual_size(self) -> NotchSize:
+        return self._visual_size
+
+    @property
     def shape(self) -> NotchShape:
-        """The notch as drawn, in window-local coordinates."""
-        return window_shape(self._window_bounds, self.notch_geometry, self._presence)
+        """The notch as drawn now, in window-local coordinates."""
+        return window_shape_for_size(self._window_bounds, self.notch_geometry, self._visual_size)
+
+    @property
+    def transition(self) -> QVariantAnimation:
+        return self._transition
 
     def show_notch(self):
         """Show the compact notch if hidden; a shown notch keeps its presence."""
@@ -131,15 +170,64 @@ class NotchWindow(QWidget):
     def hide_notch(self):
         self.set_presence(NotchPresence.HIDDEN)
 
-    def set_presence(self, presence: NotchPresence):
-        """Apply ``presence`` immediately: shape, input mask and visibility."""
+    def expand_notch(self):
+        self.set_presence(NotchPresence.EXPANDED)
 
+    def collapse_notch(self):
+        self.set_presence(NotchPresence.COMPACT)
+
+    def set_presence(self, presence: NotchPresence, *, animated: bool = True):
+        """Move towards ``presence`` from wherever the notch is drawn now.
+
+        Requesting the current target again changes nothing, even mid-way.
+        """
+
+        if presence is self._presence:
+            return
+
+        origin = self.notch_geometry.size_for(self._presence)
+        target = self.notch_geometry.size_for(presence)
         self._presence = presence
-        self._apply_shape()
-        if presence.is_visible and self.shape.bounds.height > 0:
+
+        # stop() does not emit `finished`, so an interrupted transition never
+        # completes — or hides the window — on behalf of the new target.
+        self._transition.stop()
+        if presence.is_visible:
             self.show()
-        else:
+
+        self._from_size = self._visual_size
+        self._to_size = target
+        duration = round(
+            self.TRANSITION_DURATION_MS * remaining_fraction(self._visual_size, origin, target)
+        )
+        if not animated or duration <= 0:
+            self._set_visual_size(target)
+            self._settle()
+            return
+        self._transition.setDuration(duration)
+        self._transition.start()
+
+    def _on_transition_value(self, progress: float):
+        # A stopped animation still emits: setDuration() re-evaluates the value
+        # at the time the previous run ended, against the new endpoints. That is
+        # no frame of any transition, and applying it would flash a wrong shape
+        # and mask for an instant.
+        if self._transition.state() is QVariantAnimation.State.Stopped:
+            return
+        self._set_visual_size(self._from_size.lerp(self._to_size, progress))
+
+    def _on_transition_finished(self):
+        self._set_visual_size(self._to_size)
+        self._settle()
+
+    def _settle(self):
+        # Reads the current target, never the one a transition started for.
+        if self._presence is NotchPresence.HIDDEN:
             self.hide()
+
+    def _set_visual_size(self, size: NotchSize):
+        self._visual_size = size
+        self._apply_shape()
 
     # --- Screen placement ----------------------------------------------------
 
@@ -187,18 +275,18 @@ class NotchWindow(QWidget):
     # --- Shape ---------------------------------------------------------------
 
     def _apply_shape(self):
-        mask = notch_mask(self.shape)
-        if mask.isEmpty():
-            self.clearMask()
+        shape = self.shape
+        if is_retracted(shape):
+            self.setMask(QRegion(RETRACTED_MASK))
         else:
-            self.setMask(mask)
+            self.setMask(notch_mask(shape))
         self.update()
 
     def paintEvent(self, event):
-        path = notch_path(self.shape)
-        if path.isEmpty():
+        shape = self.shape
+        if is_retracted(shape):
             return
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
         painter.setPen(Qt.NoPen)
-        painter.fillPath(path, self.color)
+        painter.fillPath(notch_path(shape), self.color)

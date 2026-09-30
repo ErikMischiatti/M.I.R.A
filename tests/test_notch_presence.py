@@ -15,8 +15,11 @@ from mira.ui.notch.presence import (
     NotchShape,
     NotchSize,
     Rect,
+    remaining_fraction,
+    size_distance,
     window_bounds,
     window_shape,
+    window_shape_for_size,
 )
 
 
@@ -317,6 +320,45 @@ def test_a_rounded_up_window_contains_the_fractional_expanded_notch():
     assert bounds.x >= 0 and bounds.right <= window.width
     assert bounds.y >= 0 and bounds.bottom <= window.height
     assert bounds.center_x == window.width / 2.0
+
+
+# --- Transition helpers ------------------------------------------------------
+
+
+def test_any_size_is_placed_like_a_presence_size():
+    window = window_bounds(AVAILABLE, GEOMETRY)
+    between = GEOMETRY.size_between(NotchPresence.COMPACT, NotchPresence.EXPANDED, 0.5)
+
+    shape = window_shape_for_size(window, GEOMETRY, between)
+
+    assert shape.bounds == Rect(40.0, 0.0, 280.0, 64.0)
+    assert window_shape_for_size(window, GEOMETRY, GEOMETRY.compact) == window_shape(
+        window, GEOMETRY, NotchPresence.COMPACT
+    )
+
+
+def test_size_distance_measures_width_and_height():
+    assert size_distance(NotchSize(0.0, 0.0), NotchSize(3.0, 4.0)) == 5.0
+    assert size_distance(GEOMETRY.compact, GEOMETRY.compact) == 0.0
+
+
+def test_a_transition_from_rest_has_its_whole_path_ahead():
+    assert remaining_fraction(GEOMETRY.compact, GEOMETRY.compact, GEOMETRY.expanded) == 1.0
+
+
+@pytest.mark.parametrize("progress", [0.25, 0.4, 0.5, 0.9])
+def test_a_reversed_transition_has_only_the_travelled_share_left(progress):
+    current = GEOMETRY.compact.lerp(GEOMETRY.expanded, progress)
+
+    # Interrupted on the way to expanded and sent back to compact.
+    assert remaining_fraction(current, GEOMETRY.expanded, GEOMETRY.compact) == pytest.approx(progress)
+
+
+def test_the_remaining_fraction_is_clamped_and_empty_paths_are_done():
+    beyond = NotchSize(width=900.0, height=300.0)
+
+    assert remaining_fraction(beyond, GEOMETRY.compact, GEOMETRY.expanded) == 1.0
+    assert remaining_fraction(GEOMETRY.expanded, GEOMETRY.compact, GEOMETRY.compact) == 0.0
 
 
 # --- Boundary ----------------------------------------------------------------
