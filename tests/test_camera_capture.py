@@ -325,7 +325,9 @@ def test_consumers_see_the_newest_frame_and_its_metadata():
 
     capture.start()
     first = capture.wait_for_frame(timeout_s=1.0)
-    later = capture.wait_for_frame(newer_than=first.sequence + 5, timeout_s=1.0)
+    later = first
+    for _ in range(6):
+        later = capture.wait_for_frame(after=later, timeout_s=1.0)
     capture.stop()
 
     assert first is not None and later is not None
@@ -342,7 +344,7 @@ def test_waiting_for_a_newer_frame_times_out_when_none_arrives():
     assert source.blocked.wait(1.0)
 
     assert frame.sequence == 0
-    assert capture.wait_for_frame(newer_than=0, timeout_s=0.05) is None
+    assert capture.wait_for_frame(after=frame, timeout_s=0.05) is None
     assert capture.latest_frame() is frame
 
     source.unblock.set()
@@ -353,11 +355,12 @@ def test_a_waiting_consumer_is_woken_with_none_when_capture_stops():
     source = FakeCameraSource([make_frame(0)], then="block")
     capture = CameraCapture(source, join_timeout_s=0.05)
     capture.start()
-    assert capture.wait_for_frame(timeout_s=1.0).sequence == 0
+    first = capture.wait_for_frame(timeout_s=1.0)
+    assert first.sequence == 0
     assert source.blocked.wait(1.0)
     results = []
     waiter = threading.Thread(
-        target=lambda: results.append(capture.wait_for_frame(newer_than=0, timeout_s=5.0))
+        target=lambda: results.append(capture.wait_for_frame(after=first, timeout_s=5.0))
     )
     waiter.start()
 
@@ -419,8 +422,29 @@ def test_a_frame_a_consumer_holds_stays_intact_as_capture_moves_on():
     held = capture.wait_for_frame(timeout_s=1.0)
     contents = bytes(held.pixels)
 
-    newer = capture.wait_for_frame(newer_than=held.sequence + 3, timeout_s=1.0)
+    newer = held
+    for _ in range(4):
+        newer = capture.wait_for_frame(after=newer, timeout_s=1.0)
     capture.stop()
 
     assert newer is not held
     assert bytes(held.pixels) == contents
+
+
+def test_waiting_after_a_frame_survives_a_camera_restart():
+    source = FakeCameraSource()
+    capture = CameraCapture(source)
+    capture.start()
+    seen = capture.wait_for_frame(timeout_s=1.0)
+    for _ in range(30):
+        seen = capture.wait_for_frame(after=seen, timeout_s=1.0)
+    assert seen.sequence >= 30
+
+    capture.stop()
+    capture.start()
+    restarted = capture.wait_for_frame(after=seen, timeout_s=1.0)
+    capture.stop()
+
+    # The restarted capture counts from zero again; its frames are still new.
+    assert restarted is not None and restarted is not seen
+    assert restarted.sequence < seen.sequence

@@ -304,7 +304,7 @@ webcam (/dev/video*, index or path)
   30 images a second through it would either run every subscriber on the
   capture thread or queue images on the UI thread. The capture keeps only the
   newest frame and consumers pull it: `latest_frame()` never blocks, and
-  `wait_for_frame(newer_than=...)` lets a consumer thread sleep until something
+  `wait_for_frame(after=frame)` lets a consumer thread sleep until something
   newer arrives. A slow consumer sees fewer frames, never a backlog, and no
   consumer code runs on the capture thread. Nothing is published after a stop.
 - **Failure.** A missing, busy or not-permitted device, or missing OpenCV, is
