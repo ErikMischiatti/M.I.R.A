@@ -1,6 +1,4 @@
 import math
-import random
-from dataclasses import replace
 
 from mira.ui.face.expression_store import load_expression_library, reset_expression
 from mira.domain.embodiment import (
@@ -18,7 +16,7 @@ from mira.domain.embodiment_playback import (
     EyeAsymmetry,
     PlaybackPose,
 )
-from mira.domain.micro_motion import BlinkMotion
+from mira.domain.micro_motion import MicroMotions
 from mira.domain.state import FaceState
 
 
@@ -31,9 +29,10 @@ class FaceController:
         self.expression_key = ExpressionKey.IDLE
         self.profile = self.expression_library[self.state]
 
-        self._blink = BlinkMotion()
+        self._motions = MicroMotions()
 
         self._playback = EmbodimentPlayback()
+        self._base_pose = PlaybackPose()
         self._target_pose = PlaybackPose()
         self._asymmetry = EyeAsymmetry()
 
@@ -44,11 +43,6 @@ class FaceController:
         self.look_strength_x = 82.0
         self.look_strength_y = 54.0
         self.look_deadzone = 0.035
-
-        self.speaking_phase = 0.0
-
-        self.idle_change_interval_frames = 60
-        self.idle_frame_counter = 0
 
         self.attention_target_x = 0.5
         self.attention_target_y = 0.5
@@ -89,10 +83,11 @@ class FaceController:
         }
         self.base_frame = resolve_embodiment_frame(self.intent, definitions)
         definition = definitions[self.expression_key]
-        self._target_pose = PlaybackPose.from_definition(definition)
+        self._base_pose = PlaybackPose.from_definition(definition)
         self._asymmetry = EyeAsymmetry.from_definition(definition)
 
-        self._blink.configure(self.profile.to_blink_settings())
+        self._motions.configure(self.profile.to_motion_settings())
+        self._target_pose = self._motions.state.apply_to(self._base_pose)
 
     def set_look_target(self, x_ratio: float, y_ratio: float):
         x_ratio = max(0.0, min(1.0, x_ratio))
@@ -111,38 +106,10 @@ class FaceController:
         self.look_tracking_enabled = False
         self.look_hold_frames = 10
 
-    def choose_idle_target(self):
-        if not self.profile.idle_enabled:
-            return
-
-        self._target_pose = replace(
-            self._target_pose,
-            offset_x=self.profile.offset_x
-            + random.uniform(
-                -self.profile.idle_amplitude_x,
-                self.profile.idle_amplitude_x,
-            ),
-            offset_y=self.profile.offset_y
-            + random.uniform(
-                -self.profile.idle_amplitude_y,
-                self.profile.idle_amplitude_y,
-            ),
-        )
-
     def lerp(self, current: float, target: float, alpha: float) -> float:
         return current + (target - current) * alpha
 
-    def update_idle_behavior(self):
-        if not self.profile.idle_enabled:
-            return
-
-        self.idle_frame_counter += 1
-        if self.idle_frame_counter >= self.idle_change_interval_frames:
-            self.idle_frame_counter = 0
-            self.idle_change_interval_frames = random.randint(40, 90)
-            self.choose_idle_target()
-
-    def apply_mouse_look_target(self):
+    def mouse_look_offset(self) -> tuple[float, float]:
         look_x = (self.attention_target_x - 0.5) * 2.0
         look_y = (self.attention_target_y - 0.5) * 2.0
 
@@ -165,63 +132,25 @@ class FaceController:
 
         weight = self.get_state_look_weight()
 
-        self._target_pose = replace(
-            self._target_pose,
-            offset_x=self.profile.offset_x
-            + look_x * self.look_strength_x * weight,
-            offset_y=self.profile.offset_y
-            + look_y * self.look_strength_y * weight,
+        return (
+            look_x * self.look_strength_x * weight,
+            look_y * self.look_strength_y * weight,
         )
-
-    def update_state_animation(self):
-        self._target_pose = replace(
-            self._target_pose,
-            width_scale=self.profile.width_scale,
-            height_scale=self.profile.height_scale,
-        )
-
-        if not self.profile.idle_enabled:
-            self._target_pose = replace(
-                self._target_pose,
-                offset_x=self.profile.offset_x,
-                offset_y=self.profile.offset_y,
-            )
-
-        if self.profile.thinking_drift:
-            self._target_pose = replace(
-                self._target_pose,
-                offset_x=self.profile.offset_x
-                + (-8.0 + 8.0 * math.sin(self.speaking_phase * 0.35)),
-                offset_y=self.profile.offset_y,
-            )
-
-        if self.profile.speaking_pulse:
-            self.speaking_phase += 0.22
-            self._target_pose = replace(
-                self._target_pose,
-                height_scale=self.profile.height_scale
-                + 0.16 * abs(math.sin(self.speaking_phase)),
-            )
-
-        if self.look_tracking_enabled or self.look_hold_frames > 0:
-            self.apply_mouse_look_target()
-
-        self.apply_look_deformation()
-
-        self.speaking_phase += 0.05
 
     def update(self, dt_seconds: float):
-        self._blink.step()
-        self.update_idle_behavior()
         self.update_attention_target()
         self.update_scrutiny_motion()
-        self.update_state_animation()
+        gaze_offset = None
+        if self.look_tracking_enabled or self.look_hold_frames > 0:
+            gaze_offset = self.mouse_look_offset()
+        motion = self._motions.step(gaze_offset)
+        self._target_pose = motion.apply_to(self._base_pose)
         self._playback.advance(
             self._target_pose,
             dt_seconds,
             asymmetry=self._asymmetry,
-            left_eye_closed=self.eyes_closed,
-            right_eye_closed=self.eyes_closed,
+            left_eye_closed=motion.eyes_closed,
+            right_eye_closed=motion.eyes_closed,
         )
 
     def get_profile(self):
@@ -237,7 +166,7 @@ class FaceController:
 
     @property
     def eyes_closed(self) -> bool:
-        return self._blink.closed
+        return self._motions.state.eyes_closed
 
     def get_frame(self) -> EmbodimentFrame:
         """Snapshot the fully resolved instantaneous pose for any renderer."""
@@ -264,32 +193,6 @@ class FaceController:
         self.expression_library[self.state] = reset_expression(self.state)
         self.profile = self.expression_library[self.state]
         self.apply_profile()
-
-    def apply_look_deformation(self):
-        look_dx = self._target_pose.offset_x - self.profile.offset_x
-        look_dy = self._target_pose.offset_y - self.profile.offset_y
-
-        horizontal_amount = min(abs(look_dx) / 25.0, 1.0)
-        vertical_amount = min(abs(look_dy) / 20.0, 1.0)
-
-        width_boost = 0.10 * horizontal_amount
-        height_squash = 0.12 * horizontal_amount
-
-        vertical_height_adjust = 0.0
-        if look_dy < 0:
-            vertical_height_adjust = 0.04 * vertical_amount
-        elif look_dy > 0:
-            vertical_height_adjust = -0.06 * vertical_amount
-
-        self._target_pose = replace(
-            self._target_pose,
-            width_scale=self._target_pose.width_scale + width_boost,
-            height_scale=(
-                self._target_pose.height_scale
-                + vertical_height_adjust
-                - height_squash
-            ),
-        )
 
     def get_state_look_weight(self) -> float:
         if self.state == FaceState.IDLE:

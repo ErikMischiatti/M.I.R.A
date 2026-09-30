@@ -8,6 +8,7 @@ module so production keeps drawing from the process-wide generator.
 
 from __future__ import annotations
 
+import math
 import random
 from dataclasses import dataclass, replace
 from typing import Protocol
@@ -19,6 +20,8 @@ class RandomSource(Protocol):
     """The draws micro-motions need; `random` and `random.Random` both fit."""
 
     def randint(self, a: int, b: int) -> int: ...
+
+    def uniform(self, a: float, b: float) -> float: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -109,3 +112,145 @@ class BlinkMotion:
         low = min(self._settings.min_interval_steps, self._settings.max_interval_steps)
         high = max(self._settings.min_interval_steps, self._settings.max_interval_steps)
         return self._rng.randint(low, high)
+
+
+class IdleGaze:
+    """Wander to a random offset: after 60 steps, then every 40–90 steps."""
+
+    FIRST_INTERVAL_STEPS = 60
+    INTERVAL_BOUNDS = (40, 90)
+
+    def __init__(self, rng: RandomSource = random):
+        self._rng = rng
+        self._interval = self.FIRST_INTERVAL_STEPS
+        self._elapsed = 0
+
+    def step(self, amplitude_x: float, amplitude_y: float) -> tuple[float, float] | None:
+        """Advance one step; return a new wander offset when one is due."""
+
+        self._elapsed += 1
+        if self._elapsed < self._interval:
+            return None
+        self._elapsed = 0
+        self._interval = self._rng.randint(*self.INTERVAL_BOUNDS)
+        return (
+            self._rng.uniform(-amplitude_x, amplitude_x),
+            self._rng.uniform(-amplitude_y, amplitude_y),
+        )
+
+
+# The drift and the pulse read one shared phase, so a thinking drift that
+# follows speech continues where the pulse left it.
+_PHASE_STEP = 0.05
+_SPEAKING_PHASE_STEP = 0.22
+
+
+def thinking_drift(phase: float) -> float:
+    """Horizontal offset of the slow sideways glance while thinking."""
+
+    return -8.0 + 8.0 * math.sin(phase * 0.35)
+
+
+def speaking_pulse(phase: float) -> float:
+    """Height added by the rhythmic widening while speaking."""
+
+    return 0.16 * abs(math.sin(phase))
+
+
+def gaze_deformation(offset_x: float, offset_y: float) -> tuple[float, float]:
+    """Width and height deltas that make a displaced eye read as turned.
+
+    Looking sideways widens and flattens the eye; looking up lifts it slightly
+    and looking down squashes it.
+    """
+
+    horizontal = min(abs(offset_x) / 25.0, 1.0)
+    vertical = min(abs(offset_y) / 20.0, 1.0)
+    if offset_y < 0:
+        vertical_adjust = 0.04 * vertical
+    elif offset_y > 0:
+        vertical_adjust = -0.06 * vertical
+    else:
+        vertical_adjust = 0.0
+    return (0.10 * horizontal, vertical_adjust - 0.12 * horizontal)
+
+
+@dataclass(frozen=True, slots=True)
+class MotionSettings:
+    """Which micro-motions an expression uses, and how strongly."""
+
+    blink: BlinkSettings = BlinkSettings()
+    idle_gaze: bool = False
+    idle_amplitude_x: float = 18.0
+    idle_amplitude_y: float = 10.0
+    thinking_drift: bool = False
+    speaking_pulse: bool = False
+
+
+class MicroMotions:
+    """Compose an expression's micro-motions into one state per step.
+
+    Each step layers, in order: blink; idle wander (or the neutral offset when
+    idle gaze is off); thinking drift, which replaces the offset; speaking
+    pulse; an external gaze offset, which replaces the offset again; and the
+    deformation that the final offset implies. The offset persists between
+    steps until a later contribution replaces it or `configure` resets it.
+    """
+
+    def __init__(self, rng: RandomSource = random):
+        self._blink = BlinkMotion(rng)
+        self._idle = IdleGaze(rng)
+        self._settings = MotionSettings()
+        self._offset = (0.0, 0.0)
+        self._phase = 0.0
+        self._state = MicroMotionState()
+
+    @property
+    def state(self) -> MicroMotionState:
+        return self._state
+
+    def configure(self, settings: MotionSettings) -> None:
+        """Switch to an expression's motions from its neutral pose.
+
+        The wander offset is discarded; blink and idle schedules and the shared
+        phase continue.
+        """
+
+        self._settings = settings
+        self._blink.configure(settings.blink)
+        self._offset = (0.0, 0.0)
+        self._state = MicroMotionState(eyes_closed=self._blink.closed)
+
+    def step(self, gaze_offset: tuple[float, float] | None = None) -> MicroMotionState:
+        """Advance every micro-motion one step and return the combined state."""
+
+        settings = self._settings
+        eyes_closed = self._blink.step()
+
+        if settings.idle_gaze:
+            wander = self._idle.step(settings.idle_amplitude_x, settings.idle_amplitude_y)
+            if wander is not None:
+                self._offset = wander
+        else:
+            self._offset = (0.0, 0.0)
+
+        pulse = 0.0
+        if settings.thinking_drift:
+            self._offset = (thinking_drift(self._phase), 0.0)
+        if settings.speaking_pulse:
+            self._phase += _SPEAKING_PHASE_STEP
+            pulse = speaking_pulse(self._phase)
+        if gaze_offset is not None:
+            self._offset = gaze_offset
+
+        width_delta, height_delta = gaze_deformation(*self._offset)
+        self._phase += _PHASE_STEP
+
+        self._state = MicroMotionState(
+            offset_x=self._offset[0],
+            offset_y=self._offset[1],
+            width_delta=width_delta,
+            height_delta=pulse + height_delta,
+            eyes_closed=eyes_closed,
+        )
+        return self._state

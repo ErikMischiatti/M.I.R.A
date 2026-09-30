@@ -13,7 +13,19 @@ import mira.domain.attention as attention_module
 import mira.domain.micro_motion as micro_motion_module
 from mira.domain.attention import AttentionTarget
 from mira.domain.embodiment_playback import PlaybackPose
-from mira.domain.micro_motion import BlinkMotion, BlinkSettings, MicroMotionState
+import math
+
+from mira.domain.micro_motion import (
+    BlinkMotion,
+    BlinkSettings,
+    IdleGaze,
+    MicroMotions,
+    MicroMotionState,
+    MotionSettings,
+    gaze_deformation,
+    speaking_pulse,
+    thinking_drift,
+)
 
 
 class SequenceRandom:
@@ -213,6 +225,193 @@ def test_seeded_blinks_are_reproducible():
 
     assert run(7) == run(7)
     assert True in run(7)
+
+
+# --- IdleGaze and modulation functions --------------------------------------
+
+
+def test_idle_gaze_first_wanders_after_sixty_steps_then_at_drawn_intervals():
+    rng = SequenceRandom(ints=[40, 90], floats=[3.0, -2.0, -5.0, 1.0])
+    idle = IdleGaze(rng)
+
+    offsets = [idle.step(18.0, 10.0) for _ in range(100)]
+
+    assert [step for step, offset in enumerate(offsets, 1) if offset] == [60, 100]
+    assert offsets[59] == (3.0, -2.0)
+    assert offsets[99] == (-5.0, 1.0)
+    assert rng.calls[:3] == [("randint", 40, 90), ("uniform", -18.0, 18.0), ("uniform", -10.0, 10.0)]
+
+
+def test_thinking_drift_glances_left_and_back():
+    assert thinking_drift(0.0) == -8.0
+    assert thinking_drift(math.pi / 0.35 / 2) == pytest.approx(0.0)
+    assert thinking_drift(3 * math.pi / 0.35 / 2) == pytest.approx(-16.0)
+
+
+def test_speaking_pulse_is_a_non_negative_rectified_sine():
+    assert speaking_pulse(0.0) == 0.0
+    assert speaking_pulse(math.pi / 2) == pytest.approx(0.16)
+    assert speaking_pulse(-math.pi / 2) == pytest.approx(0.16)
+
+
+@pytest.mark.parametrize(
+    "offset,expected",
+    [
+        ((0.0, 0.0), (0.0, 0.0)),
+        ((12.5, 0.0), (0.05, -0.06)),
+        ((-50.0, 0.0), (0.10, -0.12)),
+        ((0.0, -10.0), (0.0, 0.02)),
+        ((0.0, 30.0), (0.0, -0.06)),
+    ],
+)
+def test_gaze_deformation_widens_sideways_lifts_up_and_squashes_down(offset, expected):
+    assert gaze_deformation(*offset) == pytest.approx(expected)
+
+
+# --- MicroMotions ----------------------------------------------------------
+
+
+NO_BLINK = BlinkSettings(enabled=False)
+
+
+def motions(settings: MotionSettings, rng=None) -> MicroMotions:
+    system = MicroMotions(rng or SequenceRandom(ints=[100] * 10))
+    system.configure(settings)
+    return system
+
+
+def test_micro_motions_start_neutral_and_stay_neutral_without_active_motions():
+    system = motions(MotionSettings(blink=NO_BLINK))
+    assert system.state == MicroMotionState()
+
+    for _ in range(200):
+        assert system.step() == MicroMotionState()
+
+
+def test_micro_motions_report_the_blink_closed_state():
+    system = motions(
+        MotionSettings(blink=BlinkSettings(duration_steps=3)), SequenceRandom(ints=[2, 50])
+    )
+
+    assert [system.step().eyes_closed for _ in range(5)] == [False, False, True, True, False]
+
+
+def test_idle_gaze_offset_persists_and_deforms_until_the_next_wander():
+    rng = SequenceRandom(ints=[100, 45], floats=[10.0, -20.0])
+    system = motions(MotionSettings(blink=NO_BLINK, idle_gaze=True, idle_amplitude_x=30.0), rng)
+
+    states = [system.step() for _ in range(80)]
+
+    assert all(state == MicroMotionState() for state in states[:59])
+    width_delta, height_delta = gaze_deformation(10.0, -20.0)
+    assert set(states[59:]) == {
+        MicroMotionState(
+            offset_x=10.0, offset_y=-20.0, width_delta=width_delta, height_delta=height_delta
+        )
+    }
+
+
+def test_configure_discards_the_wander_offset_but_keeps_the_idle_schedule():
+    rng = SequenceRandom(ints=[100, 100, 45], floats=[10.0, -20.0])
+    settings = MotionSettings(blink=NO_BLINK, idle_gaze=True)
+    system = motions(settings, rng)
+    for _ in range(59):
+        system.step()
+
+    system.configure(settings)
+
+    assert system.state == MicroMotionState()
+    assert system.step().offset_x == 10.0
+
+
+def test_without_idle_gaze_the_offset_returns_to_neutral_once_gaze_stops():
+    system = motions(MotionSettings(blink=NO_BLINK))
+    system.step((20.0, -5.0))
+
+    assert system.step() == MicroMotionState()
+
+
+def test_thinking_drift_advances_with_the_shared_phase():
+    system = motions(MotionSettings(blink=NO_BLINK, thinking_drift=True))
+
+    for step in range(40):
+        state = system.step()
+        drift = thinking_drift(0.05 * step)
+        assert (state.offset_x, state.offset_y) == pytest.approx((drift, 0.0))
+        assert (state.width_delta, state.height_delta) == pytest.approx(
+            gaze_deformation(drift, 0.0)
+        )
+
+
+def test_speaking_pulse_advances_the_phase_faster_and_raises_height_only():
+    system = motions(MotionSettings(blink=NO_BLINK, speaking_pulse=True))
+
+    for step in range(1, 41):
+        state = system.step()
+        assert (state.offset_x, state.offset_y, state.width_delta) == (0.0, 0.0, 0.0)
+        assert state.height_delta == pytest.approx(speaking_pulse(0.27 * (step - 1) + 0.22))
+
+
+def test_switching_from_speaking_to_thinking_continues_the_phase():
+    system = motions(MotionSettings(blink=NO_BLINK, speaking_pulse=True))
+    for _ in range(10):
+        system.step()
+
+    system.configure(MotionSettings(blink=NO_BLINK, thinking_drift=True))
+
+    assert system.step().offset_x == pytest.approx(thinking_drift(10 * 0.27))
+
+
+def test_leaving_a_modulated_expression_restores_the_neutral_state():
+    system = motions(MotionSettings(blink=NO_BLINK, thinking_drift=True, speaking_pulse=True))
+    for _ in range(15):
+        system.step()
+
+    system.configure(MotionSettings(blink=NO_BLINK))
+
+    assert system.state == MicroMotionState()
+    assert system.step() == MicroMotionState()
+
+
+def test_thinking_drift_replaces_the_idle_wander_on_both_axes():
+    rng = SequenceRandom(ints=[100, 45], floats=[12.0, 6.0])
+    system = motions(
+        MotionSettings(blink=NO_BLINK, idle_gaze=True, thinking_drift=True), rng
+    )
+
+    states = [system.step() for _ in range(60)]
+
+    assert (states[-1].offset_x, states[-1].offset_y) == pytest.approx(
+        (thinking_drift(0.05 * 59), 0.0)
+    )
+
+
+def test_an_external_gaze_offset_replaces_drift_and_is_deformed():
+    system = motions(MotionSettings(blink=NO_BLINK, thinking_drift=True, speaking_pulse=True))
+
+    state = system.step((20.0, -5.0))
+
+    width_delta, height_delta = gaze_deformation(20.0, -5.0)
+    assert (state.offset_x, state.offset_y, state.width_delta) == pytest.approx(
+        (20.0, -5.0, width_delta)
+    )
+    assert state.height_delta == pytest.approx(speaking_pulse(0.22) + height_delta)
+
+
+def test_the_last_gaze_offset_persists_when_idle_gaze_is_on():
+    system = motions(MotionSettings(blink=NO_BLINK, idle_gaze=True))
+    system.step((20.0, -5.0))
+
+    assert (system.step().offset_x, system.step().offset_y) == (20.0, -5.0)
+
+
+def test_seeded_micro_motions_are_reproducible():
+    def run(seed: int) -> list[MicroMotionState]:
+        system = MicroMotions(random.Random(seed))
+        system.configure(MotionSettings(idle_gaze=True, speaking_pulse=True))
+        return [system.step() for _ in range(500)]
+
+    assert run(11) == run(11)
 
 
 @pytest.mark.parametrize("module", [attention_module, micro_motion_module])
