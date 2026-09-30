@@ -21,9 +21,10 @@ rather than incidentally, because two parts of it are observable:
     component constructing successfully while events reached nobody and timers
     sat on a scheduler nothing drives.
 
-`scheduler` is the single injection seam, and it exists for two reasons rather
-than for symmetry: it is the adapter choice, and it is what lets the graph be
-built with no Qt event loop at all. Passing `ManualScheduler` from
+`scheduler` and `camera_source` are the only injection seams, and each exists
+for the same two reasons rather than for symmetry: it is an adapter choice, and
+it is what lets the graph be built without the technology behind it — no Qt
+event loop for the scheduler, no webcam or OpenCV for the camera. Passing `ManualScheduler` from
 `mira.domain.scheduler` yields the real graph, fully wired, driven by an
 explicit clock — which is how `tests/test_application_composition.py` exercises
 a whole turn without a `QApplication`.
@@ -38,12 +39,16 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from mira.adapters.opencv_camera import OpenCVCameraSource
 from mira.adapters.qt_scheduler import QtScheduler
+from mira.application.camera_config import camera_configuration_from_environment
 from mira.core.activity_authority import ActivityAuthority
 from mira.core.brain import Brain
+from mira.core.camera_capture import CameraCapture
 from mira.core.embodied_behavior import EmbodiedBehavior
 from mira.core.interaction_manager import InteractionManager
 from mira.core.state_manager import StateManager
+from mira.domain.camera import CameraSource
 from mira.domain.scheduler import Scheduler
 from mira.messaging.events import EventBus
 
@@ -74,13 +79,28 @@ class Application:
     brain: Brain
     interaction_manager: InteractionManager
     embodied_behavior: EmbodiedBehavior
+    camera: CameraCapture
+
+    def start(self) -> None:
+        """Start the long-running resources: currently only camera capture."""
+        self.camera.start()
 
     def shutdown(self) -> None:
-        """Stop the resources owned by this application graph."""
+        """Stop the resources owned by this application graph.
+
+        The camera goes first and releases its device before the scheduler
+        stops; the two are independent, so the order only makes the device
+        free as early as possible.
+        """
+        self.camera.shutdown()
         self.scheduler.shutdown()
 
 
-def build_application(*, scheduler: Scheduler | None = None) -> Application:
+def build_application(
+    *,
+    scheduler: Scheduler | None = None,
+    camera_source: CameraSource | None = None,
+) -> Application:
     """Construct and wire the application graph.
 
     `scheduler` defaults to the production `QtScheduler`, which binds its home
@@ -89,8 +109,14 @@ def build_application(*, scheduler: Scheduler | None = None) -> Application:
     the Qt main thread — `mira.main` does, after creating the `QApplication`,
     which is where `MainWindow` used to build it.
 
-    No side effects: nothing is started, no state transition is triggered, and
-    no timer is armed. The returned graph is idle until the UI feeds it.
+    `camera_source` is the second adapter choice. When omitted, the
+    `MIRA_CAMERA*` environment decides: an `OpenCVCameraSource` when the camera
+    is enabled, otherwise no source and a disabled capture. Tests pass a fake
+    source, so no test needs a webcam.
+
+    No side effects: nothing is started, no state transition is triggered, no
+    timer is armed and no device is opened. The returned graph is idle until
+    `Application.start()` and the UI feed it.
     """
     event_bus = EventBus()
     state_manager = StateManager(event_bus)
@@ -110,6 +136,12 @@ def build_application(*, scheduler: Scheduler | None = None) -> Application:
     interaction_manager = InteractionManager(event_bus, activity)
     embodied_behavior = EmbodiedBehavior(event_bus, activity, scheduler=scheduler)
 
+    if camera_source is None:
+        camera_configuration = camera_configuration_from_environment()
+        if camera_configuration.enabled:
+            camera_source = OpenCVCameraSource(camera_configuration.settings)
+    camera = CameraCapture(camera_source)
+
     return Application(
         event_bus=event_bus,
         activity=activity,
@@ -117,4 +149,5 @@ def build_application(*, scheduler: Scheduler | None = None) -> Application:
         brain=brain,
         interaction_manager=interaction_manager,
         embodied_behavior=embodied_behavior,
+        camera=camera,
     )

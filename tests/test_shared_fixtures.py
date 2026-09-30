@@ -108,7 +108,7 @@ def test_a_test_can_still_choose_its_own_value(monkeypatch):
 
 
 def test_absent_variables_select_the_production_defaults():
-    """All five, so `isolate_mira_env` provably invents no behaviour.
+    """Every variable, so `isolate_mira_env` provably invents no behaviour.
 
     Each assertion reads the value the production code lands on when its variable
     is absent, and compares it with the constant the production module declares
@@ -133,6 +133,14 @@ def test_absent_variables_select_the_production_defaults():
 
     engine = llm_intent_engine.LLMIntentEngine(client=client)
     assert engine.action_min_confidence == llm_intent_engine.DEFAULT_LLM_ACTION_MIN_CONFIDENCE
+
+    # The camera variables default to a disabled camera asking for nothing.
+    from mira.application.camera_config import (
+        CameraConfiguration,
+        camera_configuration_from_environment,
+    )
+
+    assert camera_configuration_from_environment() == CameraConfiguration()
 
 
 # --- the references the shared infrastructure documents itself with -----
