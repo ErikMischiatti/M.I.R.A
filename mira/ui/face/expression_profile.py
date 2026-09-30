@@ -59,7 +59,7 @@ class ExpressionProfile:
             duration_steps=self.blink_duration_frames,
         )
 
-    def to_motion_settings(self) -> MotionSettings:
+    def to_motion_settings(self, *, gaze_weight: float = 1.0) -> MotionSettings:
         return MotionSettings(
             blink=self.to_blink_settings(),
             idle_gaze=self.idle_enabled,
@@ -67,6 +67,7 @@ class ExpressionProfile:
             idle_amplitude_y=self.idle_amplitude_y,
             thinking_drift=self.thinking_drift,
             speaking_pulse=self.speaking_pulse,
+            gaze_weight=gaze_weight,
         )
 
     @classmethod

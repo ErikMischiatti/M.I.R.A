@@ -10,9 +10,12 @@ from pathlib import Path
 import pytest
 
 import mira.domain.attention as attention_module
+import mira.domain.gaze as gaze_module
 import mira.domain.micro_motion as micro_motion_module
 from mira.domain.attention import AttentionTarget
+from mira.domain.embodiment import ExpressionKey
 from mira.domain.embodiment_playback import PlaybackPose
+from mira.domain.gaze import GAZE_STRENGTH_X, GAZE_STRENGTH_Y, GazeAttention, gaze_weight_for
 import math
 
 from mira.domain.micro_motion import (
@@ -324,11 +327,16 @@ def test_configure_discards_the_wander_offset_but_keeps_the_idle_schedule():
     assert system.step().offset_x == 10.0
 
 
-def test_without_idle_gaze_the_offset_returns_to_neutral_once_gaze_stops():
+def test_without_idle_gaze_the_offset_returns_to_neutral_after_the_gaze_hold():
     system = motions(MotionSettings(blink=NO_BLINK))
-    system.step((20.0, -5.0))
+    system.set_attention_target(AttentionTarget(1.0, 0.0))
+    system.step()
+    system.clear_attention_target()
 
-    assert system.step() == MicroMotionState()
+    held = [system.step() for _ in range(GazeAttention.HOLD_STEPS)]
+
+    assert all(state.offset_x > 0.0 for state in held[:-1])
+    assert held[-1] == MicroMotionState()
 
 
 def test_thinking_drift_advances_with_the_shared_phase():
@@ -386,23 +394,46 @@ def test_thinking_drift_replaces_the_idle_wander_on_both_axes():
     )
 
 
-def test_an_external_gaze_offset_replaces_drift_and_is_deformed():
-    system = motions(MotionSettings(blink=NO_BLINK, thinking_drift=True, speaking_pulse=True))
+def test_attention_gaze_replaces_drift_is_weighted_and_is_deformed():
+    system = motions(
+        MotionSettings(blink=NO_BLINK, thinking_drift=True, speaking_pulse=True, gaze_weight=0.5)
+    )
+    reference = GazeAttention()
+    target = AttentionTarget(0.6, -0.4)
+    system.set_attention_target(target)
+    reference.look_at(target)
 
-    state = system.step((20.0, -5.0))
+    state = system.step()
 
-    width_delta, height_delta = gaze_deformation(20.0, -5.0)
+    gaze_x, gaze_y = reference.step(0.5)
+    width_delta, height_delta = gaze_deformation(gaze_x, gaze_y)
     assert (state.offset_x, state.offset_y, state.width_delta) == pytest.approx(
-        (20.0, -5.0, width_delta)
+        (gaze_x, gaze_y, width_delta)
     )
     assert state.height_delta == pytest.approx(speaking_pulse(0.22) + height_delta)
 
 
-def test_the_last_gaze_offset_persists_when_idle_gaze_is_on():
+def test_the_last_gaze_offset_persists_after_the_hold_when_idle_gaze_is_on():
     system = motions(MotionSettings(blink=NO_BLINK, idle_gaze=True))
-    system.step((20.0, -5.0))
+    system.set_attention_target(AttentionTarget(1.0, 1.0))
+    system.step()
+    system.clear_attention_target()
+    for _ in range(GazeAttention.HOLD_STEPS - 1):
+        last_held = system.step()
 
-    assert (system.step().offset_x, system.step().offset_y) == (20.0, -5.0)
+    assert [system.step() for _ in range(20)] == [last_held] * 20
+
+
+def test_attention_survives_an_expression_change():
+    system = motions(MotionSettings(blink=NO_BLINK))
+    target = AttentionTarget(0.5, 0.5)
+    system.set_attention_target(target)
+    system.step()
+
+    system.configure(MotionSettings(blink=NO_BLINK, gaze_weight=0.35))
+
+    assert system.attention_target == target
+    assert system.step().offset_x > 0.0
 
 
 def test_seeded_micro_motions_are_reproducible():
@@ -414,7 +445,100 @@ def test_seeded_micro_motions_are_reproducible():
     assert run(11) == run(11)
 
 
-@pytest.mark.parametrize("module", [attention_module, micro_motion_module])
+# --- GazeAttention ---------------------------------------------------------
+
+
+def test_gaze_is_inactive_until_attention_arrives():
+    gaze = GazeAttention()
+
+    assert gaze.target is None
+    assert [gaze.step(1.0) for _ in range(20)] == [None] * 20
+    assert gaze.point == AttentionTarget()
+
+
+def test_gaze_accepts_a_target_and_enters_quickly():
+    gaze = GazeAttention()
+    gaze.look_at(AttentionTarget(1.0, 0.0))
+
+    offset = gaze.step(1.0)
+
+    assert gaze.point == AttentionTarget(0.32, 0.0)
+    assert offset == pytest.approx((0.32**1.35 * GAZE_STRENGTH_X, 0.0))
+
+
+def test_updating_the_target_retargets_without_restarting_the_entry_boost():
+    gaze = GazeAttention()
+    gaze.look_at(AttentionTarget(1.0, 0.0))
+    for _ in range(GazeAttention.ENTRY_BOOST_STEPS):
+        gaze.step(1.0)
+    x = gaze.point.x
+
+    gaze.look_at(AttentionTarget(-1.0, 0.0))
+    gaze.step(1.0)
+
+    assert gaze.point.x == pytest.approx(x + (-1.0 - x) * 0.18)
+
+
+def test_released_gaze_holds_its_point_then_returns_to_centre():
+    gaze = GazeAttention()
+    gaze.look_at(AttentionTarget(-1.0, 0.0))
+    for _ in range(3):
+        gaze.step(1.0)
+    held = gaze.point
+
+    gaze.release()
+    offsets = [gaze.step(1.0) for _ in range(GazeAttention.HOLD_STEPS)]
+
+    assert gaze.target is None
+    assert gaze.point == held
+    assert all(offset is not None and offset[0] < 0.0 for offset in offsets[:-1])
+    assert offsets[-1] is None
+    gaze.step(1.0)
+    assert gaze.point.x == pytest.approx(held.x * 0.92)
+
+
+def test_gaze_weight_scales_the_offset_linearly():
+    gaze_full, gaze_half = GazeAttention(), GazeAttention()
+    for gaze in (gaze_full, gaze_half):
+        gaze.look_at(AttentionTarget(0.4, -0.8))
+
+    full = gaze_full.step(1.0)
+    half = gaze_half.step(0.5)
+
+    assert half == pytest.approx((full[0] * 0.5, full[1] * 0.5))
+
+
+def test_settled_gaze_orbits_while_following_and_fades_after_release():
+    gaze = GazeAttention()
+    gaze.look_at(AttentionTarget())
+    orbit = [gaze.step(1.0) for _ in range(60)]
+
+    assert orbit[0] == pytest.approx(
+        (math.cos(0.11) * 0.12 * 0.08 * GAZE_STRENGTH_X, math.sin(0.11) * 0.07 * 0.08 * GAZE_STRENGTH_Y)
+    )
+    assert max(abs(x) for x, _ in orbit) <= 0.12 * GAZE_STRENGTH_X
+    assert len({round(x, 6) for x, _ in orbit}) == 60
+
+    gaze.release()
+    fading = [gaze.step(1.0) for _ in range(GazeAttention.HOLD_STEPS - 1)]
+    radii = [math.hypot(x / GAZE_STRENGTH_X / 0.12, y / GAZE_STRENGTH_Y / 0.07) for x, y in fading]
+    assert radii == sorted(radii, reverse=True)
+
+
+def test_every_expression_has_an_explicit_gaze_weight():
+    assert {key: gaze_weight_for(key) for key in ExpressionKey} == {
+        ExpressionKey.IDLE: 1.00,
+        ExpressionKey.LISTENING: 0.95,
+        ExpressionKey.THINKING: 0.45,
+        ExpressionKey.SPEAKING: 0.35,
+        ExpressionKey.HAPPY: 0.80,
+        ExpressionKey.CONFUSED: 0.75,
+        ExpressionKey.TIRED: 0.50,
+        ExpressionKey.ANGRY: 0.65,
+    }
+
+
+@pytest.mark.parametrize("module", [attention_module, gaze_module, micro_motion_module])
 def test_micro_motion_vocabulary_has_no_qt_or_ui_imports(module):
     names = imported_modules(module)
     assert not any(name == "PySide6" or name.startswith("PySide6.") for name in names)

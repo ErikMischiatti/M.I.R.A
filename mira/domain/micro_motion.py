@@ -13,7 +13,9 @@ import random
 from dataclasses import dataclass, replace
 from typing import Protocol
 
+from mira.domain.attention import AttentionTarget
 from mira.domain.embodiment_playback import PlaybackPose
+from mira.domain.gaze import GazeAttention
 
 
 class RandomSource(Protocol):
@@ -185,6 +187,7 @@ class MotionSettings:
     idle_amplitude_y: float = 10.0
     thinking_drift: bool = False
     speaking_pulse: bool = False
+    gaze_weight: float = 1.0
 
 
 class MicroMotions:
@@ -192,14 +195,18 @@ class MicroMotions:
 
     Each step layers, in order: blink; idle wander (or the neutral offset when
     idle gaze is off); thinking drift, which replaces the offset; speaking
-    pulse; an external gaze offset, which replaces the offset again; and the
+    pulse; gaze toward attention, which replaces the offset again; and the
     deformation that the final offset implies. The offset persists between
     steps until a later contribution replaces it or `configure` resets it.
+
+    Attention arrives as an `AttentionTarget` from any source; the gaze keeps
+    following it across expression changes until it is released.
     """
 
     def __init__(self, rng: RandomSource = random):
         self._blink = BlinkMotion(rng)
         self._idle = IdleGaze(rng)
+        self._gaze = GazeAttention()
         self._settings = MotionSettings()
         self._offset = (0.0, 0.0)
         self._phase = 0.0
@@ -221,7 +228,21 @@ class MicroMotions:
         self._offset = (0.0, 0.0)
         self._state = MicroMotionState(eyes_closed=self._blink.closed)
 
-    def step(self, gaze_offset: tuple[float, float] | None = None) -> MicroMotionState:
+    @property
+    def attention_target(self) -> AttentionTarget | None:
+        return self._gaze.target
+
+    def set_attention_target(self, target: AttentionTarget) -> None:
+        """Start or keep following ``target``."""
+
+        self._gaze.look_at(target)
+
+    def clear_attention_target(self) -> None:
+        """Release attention; the gaze holds briefly, then returns home."""
+
+        self._gaze.release()
+
+    def step(self) -> MicroMotionState:
         """Advance every micro-motion one step and return the combined state."""
 
         settings = self._settings
@@ -233,6 +254,8 @@ class MicroMotions:
                 self._offset = wander
         else:
             self._offset = (0.0, 0.0)
+
+        gaze_offset = self._gaze.step(settings.gaze_weight)
 
         pulse = 0.0
         if settings.thinking_drift:

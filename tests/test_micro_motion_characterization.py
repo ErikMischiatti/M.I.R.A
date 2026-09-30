@@ -18,6 +18,7 @@ import random
 
 import pytest
 
+from mira.domain.attention import AttentionTarget
 from mira.domain.embodiment import ActivityState, EmbodimentIntent
 from mira.domain.state import FaceState
 from mira.ui.face.face_controller import FaceController
@@ -84,11 +85,13 @@ def controller_in(state: FaceState, *, blink_enabled: bool = False, **overrides)
 
 def look_at_ratio(controller: FaceController, x_ratio: float, y_ratio: float) -> None:
     """Cursor position as a fraction of the face canvas, (0.5, 0.5) centred."""
-    controller.set_look_target(x_ratio, y_ratio)
+    controller.set_attention_target(
+        AttentionTarget.clamped(x_ratio * 2.0 - 1.0, y_ratio * 2.0 - 1.0)
+    )
 
 
 def release_gaze(controller: FaceController) -> None:
-    controller.clear_look_target()
+    controller.clear_attention_target()
 
 
 def target_offset(controller: FaceController) -> tuple[float, float]:
