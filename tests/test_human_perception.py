@@ -538,3 +538,16 @@ def test_presence_uses_the_injected_clock_when_no_frames_arrive():
     assert wait_until(lambda: not perception.presence.present)
     source.unblock.set()
     stop_pair(camera, perception)
+
+
+def test_a_slow_first_inference_is_reported_as_analysing_not_waiting():
+    detector = FakePersonDetector()
+    detector.hold = threading.Event()
+    camera, perception, _ = running_pair(detector)
+    assert detector.detect_started.wait(1.0)
+
+    assert perception.status == PerceptionStatus(PerceptionState.STARTING, "analysing first frame")
+
+    detector.hold.set()
+    assert wait_until(lambda: perception.status.state is PerceptionState.ACTIVE)
+    stop_pair(camera, perception)

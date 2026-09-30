@@ -229,6 +229,13 @@ class HumanPerception:
                         self._stabilizer.expire(self._clock())
                 stop_requested.wait(self.IDLE_BACKOFF_S)
                 continue
+            if last_frame is None:
+                # The first inference can be slow (OpenCV initializes lazily,
+                # about 1.6 s measured), and the camera is no longer the wait.
+                self._report(
+                    stop_requested,
+                    PerceptionStatus(PerceptionState.STARTING, "analysing first frame"),
+                )
             last_frame = frame
 
             started = self._clock()
