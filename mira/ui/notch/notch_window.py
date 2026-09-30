@@ -10,6 +10,11 @@ from PySide6.QtGui import (
 )
 from PySide6.QtWidgets import QWidget
 
+from mira.domain.embodiment_frame import FACE_HEIGHT_UNITS, FACE_WIDTH_UNITS
+from mira.ui.face.eye import Eye
+from mira.ui.face.eye_painter import EyePainter
+from mira.ui.face.face_animator import FaceAnimator
+from mira.ui.notch.eye_layout import NotchEyeLayout, notch_eye_layout
 from mira.ui.notch.presence import (
     NotchGeometry,
     NotchPresence,
@@ -78,6 +83,34 @@ def notch_mask(shape: NotchShape) -> QRegion:
     return QRegion(outline.toFillPolygon().toPolygon())
 
 
+EYE_COLOR = QColor(245, 245, 245)
+
+
+def eye_canvas(layout: NotchEyeLayout) -> QRectF:
+    """The face design canvas at the layout's fixed scale, eye tops at its top."""
+
+    return QRectF(
+        layout.center_x - FACE_WIDTH_UNITS / 2.0 * layout.scale,
+        layout.top,
+        FACE_WIDTH_UNITS * layout.scale,
+        FACE_HEIGHT_UNITS * layout.scale,
+    )
+
+
+def layout_eyes(layout: NotchEyeLayout) -> tuple[Eye, Eye]:
+    """The layout's resting eyes as `EyePainter` placements on `eye_canvas`."""
+
+    def eye(side: str) -> Eye:
+        return Eye(
+            x_ratio=(FACE_WIDTH_UNITS / 2.0 + layout.eye_left_units(side)) / FACE_WIDTH_UNITS,
+            y_ratio=0.0,
+            width_ratio=layout.eye_width / FACE_WIDTH_UNITS,
+            height_ratio=layout.eye_height / FACE_HEIGHT_UNITS,
+        )
+
+    return eye("left"), eye("right")
+
+
 class NotchWindow(QWidget):
     """A frameless top-level overlay that draws the notch and nothing else.
 
@@ -98,6 +131,14 @@ class NotchWindow(QWidget):
     top edge; hiding keeps the window shown until the notch has retracted and
     only then hides it. The mask follows the drawn shape on every frame.
 
+    Given a `FaceAnimator`, the notch is also a view of that embodiment: it
+    repaints on each tick and draws the controller's current frame with the
+    same `EyePainter` as the face, clipped to the drawn shape, at a layout fixed
+    by the compact notch (`notch_eye_layout`) — so expanding reveals space
+    around the eyes rather than rescaling them. It never steps the controller
+    and never starts or stops the animator; that clock belongs to its owner.
+    Without an animator the notch is a plain overlay.
+
     The window never takes keyboard focus and shows without activating.
     """
 
@@ -108,6 +149,7 @@ class NotchWindow(QWidget):
         geometry: NotchGeometry | None = None,
         *,
         color: QColor | None = None,
+        animator: FaceAnimator | None = None,
     ):
         super().__init__(None)
 
@@ -123,6 +165,11 @@ class NotchWindow(QWidget):
         self.setWindowTitle("M.I.R.A. notch")
 
         self.notch_geometry = NotchGeometry() if geometry is None else geometry
+        self.animator = animator
+        self._eye_layout = notch_eye_layout(self.notch_geometry, Rect(0.0, 0.0, 0.0, 0.0))
+        left, right = layout_eyes(self._eye_layout)
+        # The eyelids cut into the eyes in the notch colour; see `color`.
+        self.eye_painter = EyePainter(left, right, eye_color=EYE_COLOR, lid_color=QColor(0, 0, 0))
         self.color = QColor(0, 0, 0) if color is None else color
 
         self._presence = NotchPresence.HIDDEN
@@ -141,6 +188,31 @@ class NotchWindow(QWidget):
 
         QGuiApplication.instance().primaryScreenChanged.connect(self.track_screen)
         self.track_screen(QGuiApplication.primaryScreen())
+
+        if animator is not None:
+            animator.frame_advanced.connect(self.update)
+
+    @property
+    def color(self) -> QColor:
+        """The notch fill, which is also the eyelid colour.
+
+        Eyelids are drawn by covering part of an eye in the colour beneath it,
+        so both must stay one setting.
+        """
+        return self._color
+
+    @color.setter
+    def color(self, color: QColor):
+        self._color = color
+        self.eye_painter.lid_color = color
+
+    @property
+    def eye_layout(self) -> NotchEyeLayout:
+        return self._eye_layout
+
+    @property
+    def eye_canvas(self) -> QRectF:
+        return eye_canvas(self._eye_layout)
 
     # --- Presence ------------------------------------------------------------
 
@@ -265,6 +337,8 @@ class NotchWindow(QWidget):
             rect_from_qrect(self._screen.availableGeometry()), self.notch_geometry
         )
         bounds = self._window_bounds
+        self._eye_layout = notch_eye_layout(self.notch_geometry, bounds)
+        self.eye_painter.left, self.eye_painter.right = layout_eyes(self._eye_layout)
         self.setFixedSize(int(bounds.width), int(bounds.height))
         self.move(int(bounds.x), int(bounds.y))
         self._apply_shape()
@@ -275,6 +349,11 @@ class NotchWindow(QWidget):
     # --- Shape ---------------------------------------------------------------
 
     def _apply_shape(self):
+        # Known issue (X11, not reproduced): one capture during a fast reversal
+        # showed a stale and a current frame at once. setMask() reaches the X
+        # server at once while the repaint lands with the next flush, so the
+        # two are not atomic. No deterministic failure exists yet; do not
+        # reorder mask and paint until one does.
         shape = self.shape
         if is_retracted(shape):
             self.setMask(QRegion(RETRACTED_MASK))
@@ -283,10 +362,16 @@ class NotchWindow(QWidget):
         self.update()
 
     def paintEvent(self, event):
+        # The surface outside the notch stays transparent (WA_TranslucentBackground).
         shape = self.shape
         if is_retracted(shape):
             return
+        path = notch_path(shape)
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
         painter.setPen(Qt.NoPen)
-        painter.fillPath(notch_path(shape), self.color)
+        painter.fillPath(path, self.color)
+
+        if self.animator is not None:
+            painter.setClipPath(path)
+            self.eye_painter.paint(painter, self.eye_canvas, self.animator.controller.get_frame())
