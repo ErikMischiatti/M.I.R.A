@@ -47,6 +47,30 @@ class CameraInfo:
             raise ValueError("camera fps must be positive and finite when reported")
 
 
+@dataclass(frozen=True, slots=True)
+class CameraSettings:
+    """What to ask a camera for. Devices may deliver something else.
+
+    ``device`` is an opaque identifier interpreted by the chosen source (for
+    OpenCV: a device index such as ``"0"`` or a device path). Unset capture
+    properties leave the device's own defaults in place.
+    """
+
+    device: str = "0"
+    width: int | None = None
+    height: int | None = None
+    fps: float | None = None
+
+    def __post_init__(self) -> None:
+        if not self.device.strip():
+            raise ValueError("camera device must not be empty")
+        for name, value in (("width", self.width), ("height", self.height)):
+            if value is not None and value <= 0:
+                raise ValueError(f"requested camera {name} must be positive")
+        if self.fps is not None and not (math.isfinite(self.fps) and self.fps > 0):
+            raise ValueError("requested camera fps must be positive and finite")
+
+
 @dataclass(frozen=True, slots=True, eq=False)
 class CameraFrame:
     """One captured image.
