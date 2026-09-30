@@ -51,6 +51,7 @@ class FakeCameraSource:
         self.info = info or CameraInfo(device="fake0", width=4, height=2, fps=30.0)
         self.then = then
         self.hold: threading.Event | None = None
+        self.open_hold: threading.Event | None = None
         self.calls: list[str] = []
         self.threads: set[str] = set()
         self.read_started = threading.Event()
@@ -62,6 +63,8 @@ class FakeCameraSource:
 
     def open(self):
         self._record("open")
+        if self.open_hold is not None:
+            self.open_hold.wait(5.0)
         if self.open_error is not None:
             raise self.open_error
         self.is_open = True

@@ -24,7 +24,17 @@ from __future__ import annotations
 
 import threading
 
-from mira.domain.camera import CameraError, CameraFrame, CameraSource
+from mira.domain.camera import (
+    CameraError,
+    CameraFrame,
+    CameraSource,
+    CameraState,
+    CameraStatus,
+)
+
+# States a stop turns into STOPPED. A failure reason is kept instead, so it
+# stays visible after the application stops the camera.
+_STOPPABLE = frozenset({CameraState.STOPPED, CameraState.OPENING, CameraState.ACTIVE})
 
 
 class CameraCapture:
@@ -35,6 +45,10 @@ class CameraCapture:
     ``join_timeout_s`` for an in-flight read to return; a read that outlasts it
     still releases the device when it returns, and no second reader starts in
     the meantime. `shutdown` stops and refuses any later start.
+
+    `status` is safe to read from any thread and never raises: a missing,
+    busy or broken camera is a state, not an error, so MIRA keeps running
+    without one.
     """
 
     MAX_CONSECUTIVE_READ_FAILURES = 5
@@ -49,10 +63,18 @@ class CameraCapture:
         self._shut_down = False
         self._frames = threading.Condition()
         self._latest: CameraFrame | None = None
+        self._status = CameraStatus(
+            CameraState.STOPPED if source is not None else CameraState.DISABLED
+        )
 
     @property
     def enabled(self) -> bool:
         return self._source is not None
+
+    @property
+    def status(self) -> CameraStatus:
+        with self._lock:
+            return self._status
 
     @property
     def running(self) -> bool:
@@ -99,6 +121,7 @@ class CameraCapture:
             if self._source is None or self._shut_down or self.running:
                 return
             self._stop_requested = threading.Event()
+            self._set_status(CameraStatus(CameraState.OPENING))
             self._thread = threading.Thread(
                 target=self._run,
                 args=(self._source, self._stop_requested),
@@ -113,6 +136,8 @@ class CameraCapture:
         with self._lock:
             thread = self._thread
             self._stop_requested.set()
+            if self._status.state in _STOPPABLE and self._source is not None:
+                self._set_status(CameraStatus(CameraState.STOPPED))
         self._clear_frames()
         if thread is None:
             return True
@@ -137,12 +162,19 @@ class CameraCapture:
             try:
                 info = source.open()
             except CameraError as error:
-                print(f"[Camera] unavailable: {error}")
+                self._report(stop_requested, CameraStatus(CameraState.UNAVAILABLE, str(error)))
                 return
             except Exception as error:  # noqa: BLE001 - a broken source must not escape the thread
-                print(f"[Camera] failed to open: {error!r}")
+                self._report(
+                    stop_requested, CameraStatus(CameraState.FAILED, f"open failed: {error!r}")
+                )
                 return
-            print(f"[Camera] active: {info.device} {info.width}x{info.height}")
+            self._report(
+                stop_requested,
+                CameraStatus(
+                    CameraState.ACTIVE, f"{info.device} {info.width}x{info.height}", info
+                ),
+            )
 
             failures = 0
             while not stop_requested.is_set():
@@ -153,7 +185,12 @@ class CameraCapture:
                 if frame is None:
                     failures += 1
                     if failures >= self.MAX_CONSECUTIVE_READ_FAILURES:
-                        print(f"[Camera] failed: {failures} consecutive reads failed")
+                        self._report(
+                            stop_requested,
+                            CameraStatus(
+                                CameraState.FAILED, f"{failures} consecutive reads failed"
+                            ),
+                        )
                         return
                     continue
                 failures = 0
@@ -164,6 +201,21 @@ class CameraCapture:
                 source.close()
             except Exception as error:  # noqa: BLE001 - release is best effort
                 print(f"[Camera] error while releasing: {error!r}")
+
+    def _report(self, stop_requested: threading.Event, status: CameraStatus) -> None:
+        """Record a capture-thread outcome unless a stop has overtaken it."""
+
+        with self._lock:
+            if not stop_requested.is_set():
+                self._set_status(status)
+
+    def _set_status(self, status: CameraStatus) -> None:
+        # Callers hold `_lock`.
+        if status == self._status:
+            return
+        self._status = status
+        detail = f": {status.detail}" if status.detail else ""
+        print(f"[Camera] {status.state}{detail}")
 
     def _publish(self, frame: CameraFrame, stop_requested: threading.Event) -> None:
         with self._frames:

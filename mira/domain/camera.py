@@ -24,6 +24,26 @@ class PixelFormat(StrEnum):
         return 3
 
 
+class CameraState(StrEnum):
+    """Where a camera is in its life, for status reporting."""
+
+    DISABLED = "disabled"        # no camera configured
+    STOPPED = "stopped"          # configured, not capturing
+    OPENING = "opening"          # acquiring the device
+    ACTIVE = "active"            # delivering frames
+    UNAVAILABLE = "unavailable"  # could not be opened: missing, busy, no driver
+    FAILED = "failed"            # stopped delivering frames, or broke unexpectedly
+
+
+@dataclass(frozen=True, slots=True)
+class CameraStatus:
+    """A camera's state, why it is in it, and what it delivers when active."""
+
+    state: CameraState
+    detail: str = ""
+    info: CameraInfo | None = None
+
+
 class CameraError(Exception):
     """A camera could not be opened; the message says why, for diagnostics."""
 
