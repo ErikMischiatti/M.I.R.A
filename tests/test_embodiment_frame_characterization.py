@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import math
-from unittest.mock import patch
 
 import pytest
 
@@ -29,7 +28,7 @@ def rendered_eye_values(controller: FaceController, side: str) -> tuple[float, .
         pose.eyelid_tired,
         pose.eyelid_angry,
         pose.eyelid_happy,
-        controller.left_eye_closed if side == "left" else controller.right_eye_closed,
+        controller.eyes_closed,
     )
 
 
@@ -50,13 +49,21 @@ def frame_eye_values(controller: FaceController, side: str) -> tuple[float, ...]
     )
 
 
+def blinkless_controller() -> FaceController:
+    controller = FaceController()
+    for profile in controller.expression_library.values():
+        profile.blink_enabled = False
+    controller.refresh_profile_targets()
+    return controller
+
+
 def update_without_blink(controller: FaceController) -> None:
-    controller.blink_interval_frames = 999
     controller.update(REFERENCE_TICK_SECONDS)
+    assert not controller.eyes_closed
 
 
 def test_idle_to_listening_uses_the_legacy_property_specific_alphas():
-    controller = FaceController()
+    controller = blinkless_controller()
     controller.set_state(FaceState.LISTENING)
 
     update_without_blink(controller)
@@ -77,7 +84,7 @@ def test_idle_to_listening_uses_the_legacy_property_specific_alphas():
 
 
 def test_listening_to_thinking_mutates_the_target_before_interpolation():
-    controller = FaceController()
+    controller = blinkless_controller()
     controller.set_state(FaceState.LISTENING)
     update_without_blink(controller)
     controller.set_state(FaceState.THINKING)
@@ -117,7 +124,7 @@ def test_listening_to_thinking_mutates_the_target_before_interpolation():
 
 
 def test_idle_to_confused_applies_asymmetry_after_shared_interpolation():
-    controller = FaceController()
+    controller = blinkless_controller()
     controller.set_state(FaceState.CONFUSED)
 
     assert frame_eye_values(controller, "left") == pytest.approx(
@@ -138,7 +145,7 @@ def test_idle_to_confused_applies_asymmetry_after_shared_interpolation():
 
 
 def test_confused_to_idle_removes_asymmetry_before_shared_pose_converges():
-    controller = FaceController()
+    controller = blinkless_controller()
     controller.set_state(FaceState.CONFUSED)
     update_without_blink(controller)
 
@@ -166,7 +173,7 @@ def test_confused_to_idle_removes_asymmetry_before_shared_pose_converges():
 
 
 def test_expression_switch_mid_transition_retargets_from_the_current_pose():
-    controller = FaceController()
+    controller = blinkless_controller()
     controller.set_state(FaceState.LISTENING)
     update_without_blink(controller)
 
@@ -189,7 +196,7 @@ def test_expression_switch_mid_transition_retargets_from_the_current_pose():
 
 
 def test_repeated_ticks_follow_closed_form_legacy_convergence():
-    controller = FaceController()
+    controller = blinkless_controller()
     controller.set_state(FaceState.LISTENING)
     tick_count = 8
 
@@ -214,7 +221,7 @@ def test_repeated_ticks_follow_closed_form_legacy_convergence():
 
 
 def test_speaking_pulse_mutates_height_target_before_interpolation():
-    controller = FaceController()
+    controller = blinkless_controller()
     controller.set_state(FaceState.SPEAKING)
 
     update_without_blink(controller)
@@ -226,7 +233,7 @@ def test_speaking_pulse_mutates_height_target_before_interpolation():
 
 
 def test_thinking_drift_and_deformation_mutate_target_before_interpolation():
-    controller = FaceController()
+    controller = blinkless_controller()
     controller.set_state(FaceState.THINKING)
 
     update_without_blink(controller)
@@ -242,7 +249,7 @@ def test_thinking_drift_and_deformation_mutate_target_before_interpolation():
 
 
 def test_eyelid_amount_uses_legacy_interpolation_before_frame_resolution():
-    controller = FaceController()
+    controller = blinkless_controller()
     controller.set_state(FaceState.HAPPY)
 
     update_without_blink(controller)
@@ -296,9 +303,8 @@ def test_confused_profile_resolves_independent_left_and_right_eye_geometry():
 
 
 def test_one_frame_preserves_animation_then_interpolation_then_render_order():
-    controller = FaceController()
+    controller = blinkless_controller()
     controller.set_state(FaceState.SPEAKING)
-    controller.blink_interval_frames = 999
 
     controller.update(REFERENCE_TICK_SECONDS)
 
@@ -312,14 +318,16 @@ def test_one_frame_preserves_animation_then_interpolation_then_render_order():
 
 def test_blink_closes_both_resolved_eyes_for_the_existing_duration():
     controller = FaceController()
+    listening = controller.expression_library[FaceState.LISTENING]
+    listening.blink_min_interval_frames = 1
+    listening.blink_max_interval_frames = 1
     controller.set_state(FaceState.LISTENING)
-    controller.blink_interval_frames = 1
 
-    with patch.object(controller, "random_blink_interval", return_value=100):
-        trace = []
-        for _ in range(controller.blink_duration_frames + 2):
-            controller.update_blink()
-            trace.append((controller.left_eye_closed, controller.right_eye_closed))
+    trace = []
+    for _ in range(listening.blink_duration_frames + 2):
+        controller.update(REFERENCE_TICK_SECONDS)
+        frame = controller.get_frame()
+        trace.append((frame.left_eye.closed, frame.right_eye.closed))
 
     assert trace == [(False, False), *[(True, True)] * 3, (False, False), (False, False)]
 

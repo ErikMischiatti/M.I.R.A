@@ -39,7 +39,7 @@ Permissions are not transitive: `cognition` may import `actions`, but not
 
 | Layer | Responsibility | May import other M.I.R.A. layers |
 |---|---|---|
-| `domain` | Shared models, scheduler port, embodiment semantics and playback | none |
+| `domain` | Shared models, scheduler port, embodiment semantics, micro-motions and playback | none |
 | `config` | Packaged configuration resources | none |
 | `messaging` | Synchronous in-process event fan-out | none |
 | `memory` | In-session retention and context | `domain` |
@@ -202,9 +202,18 @@ The semantic-to-renderer path is:
 
 ```text
 EmbodimentIntent
-  → resolve_expression_key
-  → ExpressionDefinition
-  → PlaybackPose / EmbodimentPlayback
+  → resolve_expression_key → ExpressionKey
+      ├── ExpressionDefinition               base pose
+      └── MotionSettings + gaze_weight_for   which motions, gaze strength
+  → MicroMotions
+      ├── BlinkMotion       blink interval, closed phase, rescheduling
+      ├── IdleGaze          random wander offset
+      ├── thinking drift    sideways glance (shared phase)
+      ├── speaking pulse    rhythmic height (shared phase)
+      ├── GazeAttention     follow · hold · return · scrutiny   ← AttentionTarget
+      └── gaze deformation  width/height implied by the offset
+  → MicroMotionState (additive deltas + eyes closed)
+  → PlaybackPose target / EmbodimentPlayback
   → immutable EmbodimentFrame
   → FaceWidget renderer
 ```
@@ -216,15 +225,35 @@ inputs. Override, affect, then activity determines the expression.
 behavior never selects; they are reachable only from the debug drawer.
 `FaceState` is retained only at the current compatibility/presentation boundary.
 
-`ExpressionDefinition`, `EmbodimentPlayback`, and `EmbodimentFrame` are pure
-Python and Qt-independent. Playback advances from explicit elapsed time and
-resolves shared pose plus per-eye asymmetry into normalized frame values.
+Everything from `ExpressionDefinition` to `EmbodimentFrame` is pure Python in
+`mira.domain` and imports no Qt:
 
-The extraction is intentionally incomplete: `FaceController` still owns blink
-timing, cursor gaze and hold behavior, idle target selection, scrutiny motion,
-thinking drift, speaking pulse, and target deformation. It feeds their resolved
-targets and eye-closed flags into the pure playback object. These behaviors are
-not represented as independent domain services.
+- `mira/domain/micro_motion.py` — `MicroMotions` composes the micro-motions
+  into one `MicroMotionState` per step. The expression's selection policy stays
+  outside the generators: the profile says which motions are on
+  (`MotionSettings`), and `gaze_weight_for` says how strongly an expression lets
+  attention move the eyes.
+- `mira/domain/gaze.py` — `GazeAttention` smooths toward an `AttentionTarget`,
+  holds briefly after release, eases back to centre, and adds a small
+  scrutiny orbit once settled on a target.
+- `mira/domain/attention.py` — `AttentionTarget` is a normalized point in
+  [-1, 1] on both axes: (0, 0) is straight ahead, +x is the viewer's right and
+  +y is down, the same axes as frame offsets. It carries no pixels, widget or
+  device information.
+
+Micro-motions advance in fixed steps: one step per rendered frame, at the
+playback reference rate of 30 ms. `EmbodimentPlayback` alone interpolates by
+explicit elapsed time. Randomness comes from an injected `RandomSource`; the
+default is the process-wide `random` module, and tests pass a seeded
+`random.Random`.
+
+The Qt side is a thin presentation shell. `FaceWidget` converts a cursor
+position over the face canvas into an `AttentionTarget`
+(`cursor_attention_target`) and releases attention when the cursor leaves.
+`FaceController` owns the editable expression library, selects the profile for
+the current intent, configures `MicroMotions`, and feeds the resulting target
+to playback. It generates no motion itself and does not know that attention
+came from a mouse.
 
 `EmbodiedBehavior` (in `core`) shapes timing around responses: brief affect
 reactions to `greeting`/`unknown` intents and a delayed decay from the response
@@ -233,7 +262,9 @@ expression back to idle or listening.
 ## 10. Runtime resources and lifecycle
 
 `QApplication` owns the process event loop; the main window owns its widget
-tree, and `FaceWidget` owns its parented frame timer. `Application` owns the
+tree, and `FaceWidget` owns its parented frame timer, the only clock that steps
+the face. Each `FaceController` owns one `MicroMotions` instance (injectable for
+tests); it holds no timer and has nothing to shut down. `Application` owns the
 shared scheduler boundary. `QApplication.aboutToQuit` calls
 `Application.shutdown()`, which shuts down the scheduler.
 
@@ -283,8 +314,21 @@ validation baseline is in [development.md](development.md#validation).
 
 The following are extension directions, not existing APIs:
 
-- Camera/perception may produce observations or attention targets that feed the
-  existing semantic activity/embodiment path; no camera subsystem exists.
+- Camera/perception may produce `AttentionTarget` values that reach the same
+  gaze path the cursor uses today:
+
+  ```text
+  external perception (camera, person detector, robot sensors)
+        ↓
+  AttentionTarget
+        ↓
+  MicroMotions / GazeAttention
+        ↓
+  EmbodimentFrame → renderer
+  ```
+
+  `AttentionTarget` and the gaze behavior exist; no perception source,
+  camera subsystem, or wiring from one into the face exists yet.
 - Voice input may enter the existing input/cognition pipeline, and voice output
   may consume responses; no audio subsystem exists.
 - Persistent memory may replace or complement `SessionMemory` behind an explicit

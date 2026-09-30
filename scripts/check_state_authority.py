@@ -43,7 +43,7 @@ Rule C (restricted authority)
 
 Deliberately keyed on the receiver being named `state_manager` rather than on
 its type: this is an AST check with no type inference, and `FaceController` also
-has a `set_state` (`mira/ui/face/face_controller.py:86`) which is a rendering
+has a `set_state` (`mira/ui/face/face_controller.py`) which is a rendering
 call and no business of this checker. Naming the receiver is what separates them.
 
 Known limits, stated rather than papered over. An alias defeats Rule A, and

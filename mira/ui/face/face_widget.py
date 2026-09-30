@@ -4,6 +4,7 @@ from PySide6.QtGui import QColor, QPainter, QBrush
 
 from mira.ui.face.eye import Eye
 from mira.ui.face.face_controller import FaceController
+from mira.domain.attention import AttentionTarget
 from mira.domain.embodiment_frame import (
     EyeFrame,
     FACE_HEIGHT_UNITS,
@@ -13,12 +14,27 @@ from mira.domain.embodiment_playback import REFERENCE_DT_SECONDS
 from mira.domain.state import FaceState
 
 
+def cursor_attention_target(position: QPointF, canvas: QRectF) -> AttentionTarget | None:
+    """Convert a cursor position into attention within the face canvas.
+
+    The canvas maps onto the normalized [-1, 1] view space; positions beyond
+    it attend to the nearest edge. Returns None for an empty canvas.
+    """
+
+    if canvas.width() <= 0 or canvas.height() <= 0:
+        return None
+    return AttentionTarget.clamped(
+        (position.x() - canvas.x()) / canvas.width() * 2.0 - 1.0,
+        (position.y() - canvas.y()) / canvas.height() * 2.0 - 1.0,
+    )
+
+
 class FaceWidget(QWidget):
     DESIGN_WIDTH = 700.0
     DESIGN_HEIGHT = 450.0
     FRAME_INTERVAL_MS = round(REFERENCE_DT_SECONDS * 1000)
 
-    def __init__(self):
+    def __init__(self, controller: FaceController | None = None):
         super().__init__()
 
         self.setMinimumSize(420, 300)
@@ -29,7 +45,7 @@ class FaceWidget(QWidget):
         self.background_color = QColor(10, 10, 10)
         self.eye_color = QColor(245, 245, 245)
 
-        self.controller = FaceController()
+        self.controller = FaceController() if controller is None else controller
 
         self.left_eye = Eye(
             x_ratio=0.27,
@@ -100,18 +116,13 @@ class FaceWidget(QWidget):
         super().enterEvent(event)
 
     def leaveEvent(self, event):
-        self.controller.clear_look_target()
+        self.controller.clear_attention_target()
         super().leaveEvent(event)
 
     def mouseMoveEvent(self, event):
-        canvas = self.get_face_canvas_rect()
-        if canvas.width() <= 0 or canvas.height() <= 0:
-            return super().mouseMoveEvent(event)
-
-        x_ratio = (event.position().x() - canvas.x()) / canvas.width()
-        y_ratio = (event.position().y() - canvas.y()) / canvas.height()
-
-        self.controller.set_look_target(x_ratio, y_ratio)
+        target = cursor_attention_target(event.position(), self.get_face_canvas_rect())
+        if target is not None:
+            self.controller.set_attention_target(target)
         super().mouseMoveEvent(event)
 
     def paintEvent(self, event):

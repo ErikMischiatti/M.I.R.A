@@ -32,6 +32,10 @@ Main modules:
     `EmbodimentIntent` (`mira/domain/embodiment.py`)
   - renderer-independent pose: `EmbodimentFrame`, `EyeFrame`, pure expression
     definitions and resolution (`mira/domain/embodiment_frame.py`)
+  - micro-motions: `MicroMotions` (blink, idle wander, thinking drift,
+    speaking pulse, gaze deformation) (`mira/domain/micro_motion.py`),
+    `GazeAttention` and per-expression gaze weights (`mira/domain/gaze.py`),
+    and the normalized `AttentionTarget` input (`mira/domain/attention.py`)
   - legacy presentation compatibility: `FaceState` (`mira/domain/state.py`)
   - `UserInput`, `IntentResult`, `BrainResponse` (`mira/domain/models.py`)
   - depends on nothing else in `mira`; must never import PySide6
@@ -84,8 +88,9 @@ Main modules:
   - main window
   - compact chat panel
   - debug drawer
-  - expressive face widget
-  - face controller
+  - expressive face widget (renders frames; converts the cursor into an
+    `AttentionTarget`)
+  - face controller (profile selection and coordination; generates no motion)
   - expression profiles and rendering support
 
 - `mira/config`
