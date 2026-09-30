@@ -333,8 +333,10 @@ CameraFrame
 ## 11. Runtime resources and lifecycle
 
 `QApplication` owns the process event loop; the main window owns its widget
-tree, and `FaceWidget` owns its parented frame timer, the only clock that steps
-the face. Each `FaceController` owns one `MicroMotions` instance (injectable for
+tree, and a `FaceAnimator` owns the frame timer, the only clock that steps the
+face: each tick advances its controller once and then notifies the views, which
+only repaint. A standalone `FaceWidget` creates and parents its own animator;
+views sharing one embodiment share one animator. Each `FaceController` owns one `MicroMotions` instance (injectable for
 tests); it holds no timer and has nothing to shut down. `Application` owns the
 shared scheduler boundary and the camera capture. `QApplication.aboutToQuit`
 calls `Application.shutdown()`, which first shuts down the camera (stopping

@@ -4,9 +4,9 @@ from PySide6.QtGui import QColor, QPainter
 
 from mira.ui.face.eye import Eye
 from mira.ui.face.eye_painter import EyePainter
+from mira.ui.face.face_animator import FaceAnimator
 from mira.ui.face.face_controller import FaceController
 from mira.domain.attention import AttentionTarget
-from mira.domain.embodiment_playback import REFERENCE_DT_SECONDS
 from mira.domain.state import FaceState
 
 
@@ -26,11 +26,23 @@ def cursor_attention_target(position: QPointF, canvas: QRectF) -> AttentionTarge
 
 
 class FaceWidget(QWidget):
+    """Render one embodiment's frames and turn the cursor into attention.
+
+    Standalone, the widget creates and starts its own `FaceAnimator`, parented
+    to itself. Given a shared `animator`, it shows that animator's controller,
+    repaints on its ticks and leaves starting and stopping it to the owner.
+    Either way the widget never steps the controller itself.
+    """
+
     DESIGN_WIDTH = 700.0
     DESIGN_HEIGHT = 450.0
-    FRAME_INTERVAL_MS = round(REFERENCE_DT_SECONDS * 1000)
 
-    def __init__(self, controller: FaceController | None = None):
+    def __init__(
+        self,
+        controller: FaceController | None = None,
+        *,
+        animator: FaceAnimator | None = None,
+    ):
         super().__init__()
 
         self.setMinimumSize(420, 300)
@@ -38,7 +50,16 @@ class FaceWidget(QWidget):
         self.setFocusPolicy(Qt.StrongFocus)
         self.setMouseTracking(True)
 
-        self.controller = FaceController() if controller is None else controller
+        if animator is None:
+            self.controller = FaceController() if controller is None else controller
+            self.animator = FaceAnimator(self.controller, parent=self)
+            self.animator.start()
+        else:
+            if controller is not None and controller is not animator.controller:
+                raise ValueError("controller must be the one the animator steps")
+            self.controller = animator.controller
+            self.animator = animator
+        self.animator.frame_advanced.connect(self.update)
 
         self.eye_painter = EyePainter(
             left=Eye(
@@ -59,16 +80,13 @@ class FaceWidget(QWidget):
             lid_color=QColor(10, 10, 10),
         )
 
-        self.frame_timer = QTimer(self)
-        self.frame_timer.timeout.connect(self.on_frame)
-        self.frame_timer.start(self.FRAME_INTERVAL_MS)
-
     def sizeHint(self) -> QSize:
         return QSize(620, 360)
 
-    def on_frame(self):
-        self.controller.update(REFERENCE_DT_SECONDS)
-        self.update()
+    @property
+    def frame_timer(self) -> QTimer:
+        """The animator's timer; shared with every view on that animator."""
+        return self.animator.timer
 
     def get_face_canvas_rect(self) -> QRectF:
         if self.width() <= 0 or self.height() <= 0:
