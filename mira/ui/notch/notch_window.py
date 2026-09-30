@@ -1,4 +1,4 @@
-from PySide6.QtCore import QEasingCurve, QRect, QRectF, Qt, QVariantAnimation
+from PySide6.QtCore import QEasingCurve, QRect, QRectF, Qt, QTimer, QVariantAnimation
 from PySide6.QtGui import (
     QColor,
     QGuiApplication,
@@ -25,10 +25,7 @@ from mira.ui.notch.presence import (
     window_bounds,
     window_shape_for_size,
 )
-
-
-def rect_from_qrect(rect: QRect) -> Rect:
-    return Rect(x=rect.x(), y=rect.y(), width=rect.width(), height=rect.height())
+from mira.ui.notch.screens import ScreenSelector, central_screen, rect_from_qrect
 
 
 def notch_path(shape: NotchShape) -> QPainterPath:
@@ -139,6 +136,12 @@ class NotchWindow(QWidget):
     and never starts or stops the animator; that clock belongs to its owner.
     Without an animator the notch is a plain overlay.
 
+    Which screen the notch appears on is `screen_selector`'s choice — by
+    default the geometrically central screen (`central_screen`). The window
+    re-runs it whenever screens are added or removed, change geometry, or the
+    primary screen changes, and follows whatever it picks; it knows nothing of
+    how the choice is made.
+
     The window never takes keyboard focus and shows without activating.
     """
 
@@ -150,6 +153,7 @@ class NotchWindow(QWidget):
         *,
         color: QColor | None = None,
         animator: FaceAnimator | None = None,
+        screen_selector: ScreenSelector | None = None,
     ):
         super().__init__(None)
 
@@ -186,8 +190,15 @@ class NotchWindow(QWidget):
         self._transition.valueChanged.connect(self._on_transition_value)
         self._transition.finished.connect(self._on_transition_finished)
 
-        QGuiApplication.instance().primaryScreenChanged.connect(self.track_screen)
-        self.track_screen(QGuiApplication.primaryScreen())
+        self._select_screen = central_screen if screen_selector is None else screen_selector
+        self._watched_screens: list[QScreen] = []
+        application = QGuiApplication.instance()
+        application.screenAdded.connect(self._on_screen_added)
+        application.screenRemoved.connect(self._on_screen_removed)
+        application.primaryScreenChanged.connect(self._on_primary_screen_changed)
+        for screen in QGuiApplication.screens():
+            self._watch_screen(screen)
+        self.retarget_screen()
 
         if animator is not None:
             animator.frame_advanced.connect(self.update)
@@ -307,22 +318,70 @@ class NotchWindow(QWidget):
     def tracked_screen(self) -> QScreen | None:
         return self._screen
 
+    @property
+    def watched_screens(self) -> list[QScreen]:
+        """Screens whose geometry changes trigger a new screen selection."""
+        return list(self._watched_screens)
+
+    def retarget_screen(self):
+        """Re-run screen selection and follow the screen it picks."""
+        self.track_screen(self._select_screen())
+
+    def _watch_screen(self, screen: QScreen):
+        if any(watched is screen for watched in self._watched_screens):
+            return
+        screen.geometryChanged.connect(self._on_screen_geometry)
+        self._watched_screens.append(screen)
+
+    def _unwatch_screen(self, screen: QScreen):
+        if not any(watched is screen for watched in self._watched_screens):
+            return
+        self._watched_screens = [watched for watched in self._watched_screens if watched is not screen]
+        try:
+            screen.geometryChanged.disconnect(self._on_screen_geometry)
+        except (RuntimeError, TypeError):
+            pass  # The screen is already gone, and its connections with it.
+
+    def _on_screen_added(self, screen: QScreen):
+        self._watch_screen(screen)
+        self.retarget_screen()
+
+    def _on_screen_removed(self, screen: QScreen):
+        self._unwatch_screen(screen)
+        if screen is self._screen:
+            self._release_tracked_screen()
+        # The screen may still be listed while this signal is delivered, so
+        # choose again once the event loop has finished removing it.
+        QTimer.singleShot(0, self, self.retarget_screen)
+
+    def _on_primary_screen_changed(self, _screen: QScreen):
+        # The primary screen breaks exact ties, so the choice may change.
+        self.retarget_screen()
+
+    def _on_screen_geometry(self, _geometry: QRect):
+        # Any screen moving or resizing can change which one is central.
+        self.retarget_screen()
+
+    def _release_tracked_screen(self):
+        try:
+            self._screen.availableGeometryChanged.disconnect(self._on_available_geometry)
+        except (RuntimeError, TypeError):
+            pass  # The screen is already gone, and its connections with it.
+        self._screen = None
+
     def track_screen(self, screen: QScreen | None):
         """Follow ``screen``'s available geometry, dropping the previous screen.
 
-        Connected to the application's primary-screen changes. The previous
-        screen's connection is removed first, so repeated or alternating
-        changes never accumulate connections.
+        Normally called by `retarget_screen` with the selector's choice. The
+        previous screen's connection is removed first, so repeated or
+        alternating changes never accumulate connections.
         """
 
         if screen is self._screen:
             self.reposition()
             return
         if self._screen is not None:
-            try:
-                self._screen.availableGeometryChanged.disconnect(self._on_available_geometry)
-            except (RuntimeError, TypeError):
-                pass  # The screen is already gone, and its connections with it.
+            self._release_tracked_screen()
         self._screen = screen
         if screen is not None:
             screen.availableGeometryChanged.connect(self._on_available_geometry)

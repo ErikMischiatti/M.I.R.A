@@ -141,11 +141,12 @@ def test_no_platform_specific_or_click_through_hints_are_set(window):
 # --- Geometry ----------------------------------------------------------------
 
 
-def test_the_window_tracks_the_primary_screen(window):
+def test_the_window_tracks_the_selected_screen(window):
+    # Offscreen has one screen, which the central-screen policy selects.
     assert window.tracked_screen is QGuiApplication.primaryScreen()
 
 
-def test_the_window_is_the_expanded_notch_top_centre_on_the_primary_screen(window):
+def test_the_window_is_the_expanded_notch_top_centre_on_its_screen(window):
     available = QGuiApplication.primaryScreen().availableGeometry()
 
     assert geometry_of(window) == expected_bounds(available)
@@ -247,13 +248,19 @@ def test_a_destroyed_tracked_screen_does_not_break_tracking_the_next(window):
     assert geometry_of(window) == expected_bounds(QRect(0, 0, 1280, 800))
 
 
-def test_the_primary_screen_signal_retracks(window):
-    screen = FakeScreen(QRect(100, 0, 1920, 1080))
+def test_a_primary_screen_change_reruns_the_screen_selection():
+    chosen = FakeScreen(QRect(100, 0, 1920, 1080))
+    picks = [QGuiApplication.primaryScreen()]
+    notch = NotchWindow(GEOMETRY, screen_selector=lambda: picks[-1])
+    assert notch.tracked_screen is QGuiApplication.primaryScreen()
 
-    QGuiApplication.instance().primaryScreenChanged.emit(screen)
+    picks.append(chosen)
+    QGuiApplication.instance().primaryScreenChanged.emit(QGuiApplication.primaryScreen())
 
-    assert window.tracked_screen is screen
-    assert geometry_of(window) == expected_bounds(QRect(100, 0, 1920, 1080))
+    assert notch.tracked_screen is chosen
+    assert geometry_of(notch) == expected_bounds(QRect(100, 0, 1920, 1080))
+    notch.deleteLater()
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
 
 
 # --- Presence ----------------------------------------------------------------

@@ -25,6 +25,8 @@ from mira.ui.face.face_animator import FaceAnimator
 from mira.ui.face.face_controller import FaceController
 from mira.ui.notch.notch_window import NotchWindow
 from mira.ui.notch.presence import NotchPresence
+from mira.ui.notch.screen_selection import desktop_bounds, distance_squared_to_desktop_centre
+from mira.ui.notch.screens import rect_from_qrect
 
 
 # (request, milliseconds until the next one). The short gaps interrupt the
@@ -79,6 +81,27 @@ def pointer_attention(window: NotchWindow) -> AttentionTarget | None:
     )
 
 
+def print_screens(app: QApplication, window: NotchWindow):
+    """Each screen's selection data, and which one the notch is on."""
+
+    screens = app.screens()
+    desktop = desktop_bounds([rect_from_qrect(screen.geometry()) for screen in screens])
+    print(f"[notch] desktop bounds: {desktop}")
+    for screen in screens:
+        area = rect_from_qrect(screen.geometry())
+        marks = []
+        if screen is window.tracked_screen:
+            marks.append("notch")
+        if screen is app.primaryScreen():
+            marks.append("primary")
+        print(
+            f"[notch]   {screen.name()!r} geometry={screen.geometry().getRect()} "
+            f"available={screen.availableGeometry().getRect()} "
+            f"centre=({area.center_x}, {area.y + area.height / 2.0}) "
+            f"d2={distance_squared_to_desktop_centre(area, desktop):.0f} {' '.join(marks)}"
+        )
+
+
 def main():
     app = QApplication(sys.argv)
     # Let Ctrl+C in the terminal end the demo; the Qt loop otherwise hides it.
@@ -94,12 +117,12 @@ def main():
             controller.set_attention_target(target)
 
     animator.frame_advanced.connect(follow_pointer)
+    app.screenAdded.connect(lambda _screen: print_screens(app, window))
+    app.screenRemoved.connect(lambda _screen: QTimer.singleShot(0, lambda: print_screens(app, window)))
     animator.start()
 
-    screen = window.tracked_screen
     print(f"[notch] platform: {app.platformName()}")
-    if screen is not None:
-        print(f"[notch] screen {screen.name()!r} available: {screen.availableGeometry()}")
+    print_screens(app, window)
     print(f"[notch] window bounds: {window.geometry()}")
     print(f"[notch] eye layout: {window.eye_layout}")
 
