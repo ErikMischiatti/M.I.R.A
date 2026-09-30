@@ -26,9 +26,13 @@ class FaceController:
     drift, pulse and attention gaze on top, and `EmbodimentPlayback`
     interpolates toward the result. Attention arrives as `AttentionTarget`
     values; the controller does not know which input produced them.
+
+    Each controller owns its `MicroMotions`; pass one seeded with a
+    `random.Random` for reproducible motion. An instance must not be shared
+    between controllers, since each steps it once per frame.
     """
 
-    def __init__(self):
+    def __init__(self, motions: MicroMotions | None = None):
         self.expression_library = load_expression_library()
 
         self.state = FaceState.IDLE
@@ -36,7 +40,7 @@ class FaceController:
         self.expression_key = ExpressionKey.IDLE
         self.profile = self.expression_library[self.state]
 
-        self._motions = MicroMotions()
+        self._motions = MicroMotions() if motions is None else motions
 
         self._playback = EmbodimentPlayback()
         self._base_pose = PlaybackPose()

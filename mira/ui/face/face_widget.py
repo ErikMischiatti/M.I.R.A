@@ -34,7 +34,7 @@ class FaceWidget(QWidget):
     DESIGN_HEIGHT = 450.0
     FRAME_INTERVAL_MS = round(REFERENCE_DT_SECONDS * 1000)
 
-    def __init__(self):
+    def __init__(self, controller: FaceController | None = None):
         super().__init__()
 
         self.setMinimumSize(420, 300)
@@ -45,7 +45,7 @@ class FaceWidget(QWidget):
         self.background_color = QColor(10, 10, 10)
         self.eye_color = QColor(245, 245, 245)
 
-        self.controller = FaceController()
+        self.controller = FaceController() if controller is None else controller
 
         self.left_eye = Eye(
             x_ratio=0.27,
