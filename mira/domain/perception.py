@@ -222,6 +222,20 @@ class PresenceStabilizer:
         return self._presence
 
 
+@dataclass(frozen=True, slots=True)
+class PerceptionDiagnostics:
+    """A read-only snapshot for developers: state, presence and throughput.
+
+    ``analysed_per_second`` and ``inference_ms`` summarise recent results and
+    are None until there are enough of them.
+    """
+
+    status: PerceptionStatus
+    presence: HumanPresence = HumanPresence()
+    analysed_per_second: float | None = None
+    inference_ms: float | None = None
+
+
 class PersonDetector(Protocol):
     """Find the people visible in a camera frame.
 

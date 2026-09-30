@@ -25,12 +25,14 @@ from __future__ import annotations
 
 import threading
 import time
+from collections import deque
 from collections.abc import Callable
 
 from mira.core.camera_capture import CameraCapture
 from mira.domain.camera import CameraFrame
 from mira.domain.perception import (
     HumanPresence,
+    PerceptionDiagnostics,
     PersonDetections,
     PerceptionError,
     PerceptionState,
@@ -55,6 +57,8 @@ class HumanPerception:
 
     MAX_CONSECUTIVE_DETECTION_FAILURES = 5
     THREAD_NAME = "mira-perception"
+    # Throughput diagnostics summarise this many recent results.
+    METRICS_WINDOW = 30
     FRAME_WAIT_S = 0.25
     # How long to back off when the camera has nothing to offer at all, so a
     # stopped camera is polled gently instead of spun on.
@@ -85,6 +89,8 @@ class HumanPerception:
         self._stabilizer_factory = stabilizer_factory
         self._clock = clock
         self._stabilizer = stabilizer_factory()
+        self._published_at: deque[float] = deque(maxlen=self.METRICS_WINDOW)
+        self._inference_s: deque[float] = deque(maxlen=self.METRICS_WINDOW)
 
     @property
     def enabled(self) -> bool:
@@ -106,6 +112,20 @@ class HumanPerception:
 
         with self._results:
             return self._stabilizer.presence
+
+    def diagnostics(self) -> PerceptionDiagnostics:
+        """Status, presence and recent throughput in one consistent snapshot."""
+
+        status = self.status
+        with self._results:
+            published = list(self._published_at)
+            durations = list(self._inference_s)
+            presence = self._stabilizer.presence
+        rate = None
+        if len(published) >= 2 and published[-1] > published[0]:
+            rate = (len(published) - 1) / (published[-1] - published[0])
+        latency = 1000.0 * sum(durations) / len(durations) if durations else None
+        return PerceptionDiagnostics(status, presence, rate, latency)
 
     def latest_detections(self) -> PersonDetections | None:
         """The newest result of the current run, or None; never blocks."""
@@ -211,6 +231,7 @@ class HumanPerception:
                 continue
             last_frame = frame
 
+            started = self._clock()
             try:
                 persons = _checked(detector.detect(frame))
             except Exception as error:  # noqa: BLE001 - counted, then reported
@@ -227,13 +248,14 @@ class HumanPerception:
                 continue
             failures = 0
             self._report(stop_requested, PerceptionStatus(PerceptionState.ACTIVE))
-            self._publish(frame, persons, stop_requested)
+            self._publish(frame, persons, stop_requested, started)
 
     def _publish(
         self,
         frame: CameraFrame,
         persons: tuple[PersonObservation, ...],
         stop_requested: threading.Event,
+        started: float,
     ) -> None:
         with self._results:
             # A result finishing after stop was requested is not published:
@@ -248,12 +270,17 @@ class HumanPerception:
                 persons=persons,
             )
             self._stabilizer.observe(self._latest)
+            finished = self._clock()
+            self._inference_s.append(max(0.0, finished - started))
+            self._published_at.append(finished)
             self._results.notify_all()
 
     def _clear_results(self) -> None:
         with self._results:
             self._latest = None
             self._stabilizer = self._stabilizer_factory()
+            self._published_at.clear()
+            self._inference_s.clear()
             self._results.notify_all()
 
     def _report(self, stop_requested: threading.Event, status: PerceptionStatus) -> None:

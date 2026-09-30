@@ -39,10 +39,13 @@ class MainWindow(QMainWindow):
         # it, rather than trusting the unpacking below.
         self.event_bus = application.event_bus
         self.brain = application.brain
-        # The drawer gets a way to *read* camera status and nothing else: it
-        # cannot start, stop or read frames from the capture.
+        # The drawer gets a way to *read* camera and perception status and
+        # nothing else: it cannot start or stop either, or read frames or
+        # detections.
         camera = application.camera
+        perception = application.perception
         self.camera_status = lambda: camera.status
+        self.perception_diagnostics = lambda: perception.diagnostics()
 
         # --- UI root ---
         central_widget = QWidget()
@@ -86,7 +89,9 @@ class MainWindow(QMainWindow):
         self.content_splitter.addWidget(main_panel)
 
         # --- Hidden developer drawer ---
-        self.debug_panel = DebugPanel(self.face_widget, self.camera_status)
+        self.debug_panel = DebugPanel(
+            self.face_widget, self.camera_status, self.perception_diagnostics
+        )
         self.debug_panel.setMinimumWidth(320)
         self.debug_panel.setMaximumWidth(self.debug_drawer_width)
         self.debug_panel.setVisible(False)

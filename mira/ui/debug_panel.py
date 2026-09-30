@@ -17,6 +17,7 @@ from PySide6.QtWidgets import (
 )
 
 from mira.domain.camera import CameraState, CameraStatus
+from mira.domain.perception import PerceptionDiagnostics, PerceptionState
 from mira.domain.state import FaceState
 
 
@@ -33,6 +34,29 @@ def describe_camera_status(status: CameraStatus) -> str:
     return f"{label}: {status.detail}" if status.detail else label
 
 
+def describe_perception(diagnostics: PerceptionDiagnostics) -> str:
+    """One diagnostic line for human perception; never shows image data."""
+
+    status = diagnostics.status
+    if status.state is PerceptionState.DISABLED:
+        return "Disabled (set MIRA_PERSON_DETECTION=1 to enable)"
+    label = status.state.value.capitalize()
+    if status.state is not PerceptionState.ACTIVE:
+        return f"{label}: {status.detail}" if status.detail else label
+
+    presence = diagnostics.presence
+    if presence.present:
+        count = len(presence.persons)
+        parts = [label, f"{count} {'person' if count == 1 else 'people'} present"]
+    else:
+        parts = [label, "nobody present"]
+    if diagnostics.analysed_per_second is not None:
+        parts.append(f"{diagnostics.analysed_per_second:.1f} fps")
+    if diagnostics.inference_ms is not None:
+        parts.append(f"{diagnostics.inference_ms:.0f} ms")
+    return " · ".join(parts)
+
+
 class DebugPanel(QWidget):
     CAMERA_STATUS_INTERVAL_MS = 500
 
@@ -40,12 +64,14 @@ class DebugPanel(QWidget):
         self,
         face_widget,
         camera_status: Callable[[], CameraStatus] | None = None,
+        perception_diagnostics: Callable[[], PerceptionDiagnostics] | None = None,
     ):
         super().__init__()
 
         self.face_widget = face_widget
         self.controller = face_widget.controller
         self.camera_status = camera_status
+        self.perception_diagnostics = perception_diagnostics
 
         self.setMinimumWidth(320)
 
@@ -79,19 +105,25 @@ class DebugPanel(QWidget):
         self.load_profile_into_controls()
 
     def build_camera_status(self):
-        """Read-only camera diagnostics, polled only while the drawer is shown."""
+        """Read-only camera and perception diagnostics, polled only while shown."""
 
         self.camera_status_label = None
+        self.perception_label = None
         self.camera_status_timer = None
-        if self.camera_status is None:
+        if self.camera_status is None and self.perception_diagnostics is None:
             return
 
         group = QGroupBox("Camera")
-        layout = QVBoxLayout()
+        layout = QFormLayout()
         layout.setContentsMargins(8, 8, 8, 8)
-        self.camera_status_label = QLabel()
-        self.camera_status_label.setWordWrap(True)
-        layout.addWidget(self.camera_status_label)
+        if self.camera_status is not None:
+            self.camera_status_label = QLabel()
+            self.camera_status_label.setWordWrap(True)
+            layout.addRow("Capture", self.camera_status_label)
+        if self.perception_diagnostics is not None:
+            self.perception_label = QLabel()
+            self.perception_label.setWordWrap(True)
+            layout.addRow("Human perception", self.perception_label)
         group.setLayout(layout)
         self.main_layout.addWidget(group)
 
@@ -103,6 +135,8 @@ class DebugPanel(QWidget):
     def refresh_camera_status(self):
         if self.camera_status_label is not None:
             self.camera_status_label.setText(describe_camera_status(self.camera_status()))
+        if self.perception_label is not None:
+            self.perception_label.setText(describe_perception(self.perception_diagnostics()))
 
     def showEvent(self, event):
         super().showEvent(event)
