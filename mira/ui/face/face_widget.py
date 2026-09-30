@@ -1,15 +1,11 @@
 from PySide6.QtCore import Qt, QRectF, QTimer, QPointF, QSize
 from PySide6.QtWidgets import QWidget, QSizePolicy
-from PySide6.QtGui import QColor, QPainter, QBrush
+from PySide6.QtGui import QColor, QPainter
 
 from mira.ui.face.eye import Eye
+from mira.ui.face.eye_painter import EyePainter
 from mira.ui.face.face_controller import FaceController
 from mira.domain.attention import AttentionTarget
-from mira.domain.embodiment_frame import (
-    EyeFrame,
-    FACE_HEIGHT_UNITS,
-    FACE_WIDTH_UNITS,
-)
 from mira.domain.embodiment_playback import REFERENCE_DT_SECONDS
 from mira.domain.state import FaceState
 
@@ -42,25 +38,25 @@ class FaceWidget(QWidget):
         self.setFocusPolicy(Qt.StrongFocus)
         self.setMouseTracking(True)
 
-        self.background_color = QColor(10, 10, 10)
-        self.eye_color = QColor(245, 245, 245)
-
         self.controller = FaceController() if controller is None else controller
 
-        self.left_eye = Eye(
-            x_ratio=0.27,
-            y_ratio=0.38,
-            width_ratio=0.18,
-            height_ratio=0.22,
-            corner_radius=28.0,
-        )
-
-        self.right_eye = Eye(
-            x_ratio=0.55,
-            y_ratio=0.38,
-            width_ratio=0.18,
-            height_ratio=0.22,
-            corner_radius=28.0,
+        self.eye_painter = EyePainter(
+            left=Eye(
+                x_ratio=0.27,
+                y_ratio=0.38,
+                width_ratio=0.18,
+                height_ratio=0.22,
+                corner_radius=28.0,
+            ),
+            right=Eye(
+                x_ratio=0.55,
+                y_ratio=0.38,
+                width_ratio=0.18,
+                height_ratio=0.22,
+                corner_radius=28.0,
+            ),
+            eye_color=QColor(245, 245, 245),
+            lid_color=QColor(10, 10, 10),
         )
 
         self.frame_timer = QTimer(self)
@@ -90,27 +86,38 @@ class FaceWidget(QWidget):
         return QRectF(canvas_x, canvas_y, canvas_width, canvas_height)
 
     def get_canvas_scale(self) -> float:
-        canvas = self.get_face_canvas_rect()
-        if canvas.isNull():
-            return 1.0
-        return canvas.width() / self.DESIGN_WIDTH
+        return self.eye_painter.canvas_scale(self.get_face_canvas_rect())
+
+    # The eyelids cut into the eyes in the colour painted beneath them, so the
+    # widget background and the painter's lid colour are one setting.
+    @property
+    def background_color(self) -> QColor:
+        return self.eye_painter.lid_color
+
+    @background_color.setter
+    def background_color(self, color: QColor):
+        self.eye_painter.lid_color = color
+
+    @property
+    def eye_color(self) -> QColor:
+        return self.eye_painter.eye_color
+
+    @eye_color.setter
+    def eye_color(self, color: QColor):
+        self.eye_painter.eye_color = color
+
+    @property
+    def left_eye(self) -> Eye:
+        return self.eye_painter.left
+
+    @property
+    def right_eye(self) -> Eye:
+        return self.eye_painter.right
 
     def get_eye_rect(self, eye: Eye, side: str) -> QRectF:
         frame = self.controller.get_frame()
         eye_frame = frame.left_eye if side == "left" else frame.right_eye
-        canvas = self.get_face_canvas_rect()
-        scale = self.get_canvas_scale()
-
-        x = canvas.x() + (
-            self.DESIGN_WIDTH * eye.x_ratio + eye_frame.offset_x * FACE_WIDTH_UNITS
-        ) * scale
-        y = canvas.y() + (
-            self.DESIGN_HEIGHT * eye.y_ratio + eye_frame.offset_y * FACE_HEIGHT_UNITS
-        ) * scale
-        w = self.DESIGN_WIDTH * eye.width_ratio * eye_frame.width_scale * scale
-        h = self.DESIGN_HEIGHT * eye.height_ratio * eye_frame.height_scale * scale
-
-        return QRectF(x, y, w, h)
+        return self.eye_painter.eye_rect(self.get_face_canvas_rect(), eye, eye_frame)
 
     def enterEvent(self, event):
         super().enterEvent(event)
@@ -130,110 +137,8 @@ class FaceWidget(QWidget):
         painter.setRenderHint(QPainter.Antialiasing)
 
         painter.fillRect(self.rect(), self.background_color)
-        painter.setPen(Qt.NoPen)
-
-        left_rect = self.get_eye_rect(self.left_eye, "left")
-        right_rect = self.get_eye_rect(self.right_eye, "right")
-
-        painter.setBrush(QBrush(self.eye_color))
-        frame = self.controller.get_frame()
-        self.draw_eye(painter, left_rect, frame.left_eye)
-        self.draw_eye(painter, right_rect, frame.right_eye)
-
-        if not frame.left_eye.closed:
-            self.draw_tired_eyelid(painter, left_rect, "left", frame.left_eye)
-            self.draw_angry_eyelid(painter, left_rect, "left", frame.left_eye)
-            self.draw_happy_eyelid(painter, left_rect, frame.left_eye)
-
-        if not frame.right_eye.closed:
-            self.draw_tired_eyelid(painter, right_rect, "right", frame.right_eye)
-            self.draw_angry_eyelid(painter, right_rect, "right", frame.right_eye)
-            self.draw_happy_eyelid(painter, right_rect, frame.right_eye)
-
-    def draw_eye(self, painter: QPainter, rect: QRectF, eye_frame: EyeFrame):
-        scale = self.get_canvas_scale()
-        radius = eye_frame.corner_radius * FACE_WIDTH_UNITS * scale
-        painter.setBrush(QBrush(self.eye_color))
-
-        if eye_frame.closed:
-            closed_height = max(6 * scale, rect.height() * 0.08)
-            closed_y = rect.y() + (rect.height() - closed_height) / 2
-            painter.drawRoundedRect(
-                rect.x(),
-                closed_y,
-                rect.width(),
-                closed_height,
-                radius,
-                radius,
-            )
-        else:
-            painter.drawRoundedRect(rect, radius, radius)
-
-    def draw_tired_eyelid(
-        self, painter: QPainter, rect: QRectF, side: str, eye_frame: EyeFrame
-    ):
-        amount = eye_frame.tired_lid
-        if amount <= 0.01:
-            return
-
-        painter.setBrush(QBrush(self.background_color))
-        top_cut = rect.height() * amount
-
-        if side == "left":
-            points = [
-                QPointF(rect.left(), rect.top() - 1),
-                QPointF(rect.right(), rect.top() - 1),
-                QPointF(rect.left(), rect.top() + top_cut),
-            ]
-        else:
-            points = [
-                QPointF(rect.left(), rect.top() - 1),
-                QPointF(rect.right(), rect.top() - 1),
-                QPointF(rect.right(), rect.top() + top_cut),
-            ]
-
-        painter.drawPolygon(points)
-
-    def draw_angry_eyelid(
-        self, painter: QPainter, rect: QRectF, side: str, eye_frame: EyeFrame
-    ):
-        amount = eye_frame.angry_lid
-        if amount <= 0.01:
-            return
-
-        painter.setBrush(QBrush(self.background_color))
-        top_cut = rect.height() * amount
-
-        if side == "left":
-            points = [
-                QPointF(rect.left(), rect.top() - 1),
-                QPointF(rect.right(), rect.top() - 1),
-                QPointF(rect.right(), rect.top() + top_cut),
-            ]
-        else:
-            points = [
-                QPointF(rect.left(), rect.top() - 1),
-                QPointF(rect.right(), rect.top() - 1),
-                QPointF(rect.left(), rect.top() + top_cut),
-            ]
-
-        painter.drawPolygon(points)
-
-    def draw_happy_eyelid(self, painter: QPainter, rect: QRectF, eye_frame: EyeFrame):
-        amount = eye_frame.happy_lid
-        if amount <= 0.01:
-            return
-
-        painter.setBrush(QBrush(self.background_color))
-
-        bottom_cover = rect.height() * amount
-        painter.drawRoundedRect(
-            rect.left() - 1,
-            rect.bottom() - bottom_cover + 1,
-            rect.width() + 2,
-            rect.height(),
-            eye_frame.corner_radius * FACE_WIDTH_UNITS * self.get_canvas_scale(),
-            eye_frame.corner_radius * FACE_WIDTH_UNITS * self.get_canvas_scale(),
+        self.eye_painter.paint(
+            painter, self.get_face_canvas_rect(), self.controller.get_frame()
         )
 
     def keyPressEvent(self, event):
