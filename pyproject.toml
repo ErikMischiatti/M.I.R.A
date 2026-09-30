@@ -42,11 +42,13 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=9,<10"]
-# Webcam capture through `mira.adapters.opencv_camera`. Optional: without it
-# the camera reports itself unavailable and everything else runs unchanged.
+# Webcam capture (`mira.adapters.opencv_camera`) and person detection
+# (`mira.adapters.opencv_person_detector`, which also uses numpy directly and
+# OpenCV's bundled cascade models). Optional: without it the camera and person
+# detection report themselves unavailable and everything else runs unchanged.
 # The headless build matters: the regular `opencv-python` wheel bundles its own
 # Qt plugins, which conflict with PySide6 in the same process.
-camera = ["opencv-python-headless>=4.10,<5"]
+camera = ["opencv-python-headless>=4.10,<5", "numpy>=1.26,<3"]
 
 [tool.setuptools.packages.find]
 # `mira.actions` and `mira.cognition` carry no `__init__.py`, so they are
