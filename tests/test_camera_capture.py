@@ -313,3 +313,114 @@ def test_camera_configuration_is_read_from_the_environment(monkeypatch):
 
     assert configuration.enabled
     assert configuration.settings == CameraSettings(width=640)
+
+
+# --- frame delivery -------------------------------------------------------------
+
+
+def test_consumers_see_the_newest_frame_and_its_metadata():
+    source = FakeCameraSource()
+    capture = CameraCapture(source)
+    assert capture.latest_frame() is None
+
+    capture.start()
+    first = capture.wait_for_frame(timeout_s=1.0)
+    later = capture.wait_for_frame(newer_than=first.sequence + 5, timeout_s=1.0)
+    capture.stop()
+
+    assert first is not None and later is not None
+    assert later.sequence > first.sequence + 5
+    assert later.timestamp_s >= first.timestamp_s
+    assert (later.width, later.height) == (source.info.width, source.info.height)
+
+
+def test_waiting_for_a_newer_frame_times_out_when_none_arrives():
+    source = FakeCameraSource([make_frame(0)], then="block")
+    capture = CameraCapture(source)
+    capture.start()
+    frame = capture.wait_for_frame(timeout_s=1.0)
+    assert source.blocked.wait(1.0)
+
+    assert frame.sequence == 0
+    assert capture.wait_for_frame(newer_than=0, timeout_s=0.05) is None
+    assert capture.latest_frame() is frame
+
+    source.unblock.set()
+    capture.stop()
+
+
+def test_a_waiting_consumer_is_woken_with_none_when_capture_stops():
+    source = FakeCameraSource([make_frame(0)], then="block")
+    capture = CameraCapture(source, join_timeout_s=0.05)
+    capture.start()
+    assert capture.wait_for_frame(timeout_s=1.0).sequence == 0
+    assert source.blocked.wait(1.0)
+    results = []
+    waiter = threading.Thread(
+        target=lambda: results.append(capture.wait_for_frame(newer_than=0, timeout_s=5.0))
+    )
+    waiter.start()
+
+    capture.stop()  # the device is still stalled; the consumer must not be
+    waiter.join(1.0)
+
+    assert results == [None]
+    source.unblock.set()
+    assert source.closed.wait(1.0)
+
+
+def test_no_frame_is_delivered_after_stop():
+    source = FakeCameraSource()
+    capture = CameraCapture(source)
+    capture.start()
+    assert capture.wait_for_frame(timeout_s=1.0) is not None
+
+    capture.stop()
+
+    assert capture.latest_frame() is None
+    assert capture.wait_for_frame(timeout_s=0.01) is None
+
+
+def test_a_read_finishing_after_stop_is_not_published():
+    source = FakeCameraSource([make_frame(0)], then="block")
+    capture = CameraCapture(source, join_timeout_s=0.02)
+    capture.start()
+    assert capture.wait_for_frame(timeout_s=1.0) is not None
+    assert source.blocked.wait(1.0)
+
+    assert capture.stop() is False
+    source.unblock.set()  # the stalled read now returns a frame
+    assert source.closed.wait(1.0)
+
+    assert capture.latest_frame() is None
+
+
+def test_reading_the_latest_frame_never_waits_for_the_device():
+    source = FakeCameraSource()
+    source.hold = threading.Event()
+    capture = CameraCapture(source)
+    capture.start()
+    assert source.read_started.wait(1.0)
+
+    started = time.monotonic()
+    for _ in range(1000):
+        capture.latest_frame()
+    elapsed = time.monotonic() - started
+
+    source.hold.set()
+    capture.stop()
+    assert elapsed < 0.5
+
+
+def test_a_frame_a_consumer_holds_stays_intact_as_capture_moves_on():
+    source = FakeCameraSource()
+    capture = CameraCapture(source)
+    capture.start()
+    held = capture.wait_for_frame(timeout_s=1.0)
+    contents = bytes(held.pixels)
+
+    newer = capture.wait_for_frame(newer_than=held.sequence + 3, timeout_s=1.0)
+    capture.stop()
+
+    assert newer is not held
+    assert bytes(held.pixels) == contents

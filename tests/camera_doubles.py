@@ -31,7 +31,8 @@ class FakeCameraSource:
     ``reads`` is consumed in order: a `CameraFrame` is delivered, None is a
     failed read, and an exception instance is raised. After the script, the
     source behaves like a live device (``then="frames"``: a new frame every
-    millisecond) or a dead one (``then="fail"``: every read fails).
+    millisecond), a dead one (``then="fail"``: every read fails), or a stalled
+    one (``then="block"``: the read waits for ``unblock``, then delivers a frame).
 
     Setting ``hold`` to an unset `threading.Event` makes each read wait for it,
     which keeps a read in flight for as long as a test needs.
@@ -53,6 +54,8 @@ class FakeCameraSource:
         self.calls: list[str] = []
         self.threads: set[str] = set()
         self.read_started = threading.Event()
+        self.blocked = threading.Event()
+        self.unblock = threading.Event()
         self.closed = threading.Event()
         self.is_open = False
         self._next_sequence = 0
@@ -76,10 +79,14 @@ class FakeCameraSource:
             if item is not None:
                 self._next_sequence = item.sequence + 1
             return item
-        if self.then == "fail":
+        if self.then == "block":
+            self.blocked.set()
+            self.unblock.wait(5.0)
+        elif self.then == "fail":
             time.sleep(0.001)
             return None
-        time.sleep(0.001)
+        else:
+            time.sleep(0.001)
         frame = make_frame(self._next_sequence, timestamp_s=time.monotonic())
         self._next_sequence += 1
         return frame
