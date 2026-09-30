@@ -25,13 +25,23 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 #   MIRA_OLLAMA_BASE_URL            mira/cognition/llm_client.py:39
 #   MIRA_OLLAMA_TIMEOUT_S           mira/cognition/llm_client.py:104
 #   MIRA_LLM_ACTION_MIN_CONFIDENCE  mira/cognition/llm_intent_engine.py:258
-# `test_each_variable_is_read_at_the_line_it_is_attributed_to` checks all five.
+#   MIRA_CAMERA                     mira/application/camera_config.py:33
+#   MIRA_CAMERA_DEVICE              mira/application/camera_config.py:34
+#   MIRA_CAMERA_WIDTH               mira/application/camera_config.py:35
+#   MIRA_CAMERA_HEIGHT              mira/application/camera_config.py:36
+#   MIRA_CAMERA_FPS                 mira/application/camera_config.py:37
+# `test_each_variable_is_read_at_the_line_it_is_attributed_to` checks every one.
 MIRA_ENV_VARS = (
     "MIRA_INTENT_ENGINE",
     "MIRA_OLLAMA_MODEL",
     "MIRA_OLLAMA_BASE_URL",
     "MIRA_OLLAMA_TIMEOUT_S",
     "MIRA_LLM_ACTION_MIN_CONFIDENCE",
+    "MIRA_CAMERA",
+    "MIRA_CAMERA_DEVICE",
+    "MIRA_CAMERA_WIDTH",
+    "MIRA_CAMERA_HEIGHT",
+    "MIRA_CAMERA_FPS",
 )
 
 
@@ -39,12 +49,12 @@ MIRA_ENV_VARS = (
 def isolate_mira_env(monkeypatch: pytest.MonkeyPatch) -> None:
     """Remove every MIRA_* variable so no test inherits the developer's shell.
 
-    Narrow by construction: it deletes exactly the five names in `MIRA_ENV_VARS`
+    Narrow by construction: it deletes exactly the names in `MIRA_ENV_VARS`
     and sets nothing.
 
     It cannot invent behaviour. Deleting a variable selects the branch the code
     already takes when it is absent, and `test_absent_variables_select_the
-    _production_defaults` asserts that for all five. It also cannot override a
+    _production_defaults` asserts that for every one. It also cannot override a
     deliberate setting: `monkeypatch` in a test runs after this fixture, which
     `test_a_test_can_still_choose_its_own_value` asserts.
 

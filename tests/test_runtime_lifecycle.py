@@ -47,6 +47,10 @@ def test_main_connects_application_shutdown_before_running(monkeypatch):
     class FakeApplicationRuntime:
         def __init__(self):
             self.shutdown_calls = 0
+            self.started_after_shutdown_connected = None
+
+        def start(self):
+            self.started_after_shutdown_connected = "shutdown_callback" in observed
 
         def shutdown(self):
             self.shutdown_calls += 1
@@ -80,6 +84,7 @@ def test_main_connects_application_shutdown_before_running(monkeypatch):
     assert observed["window_application"] is runtime
     assert observed["shown"] is True
     assert runtime.shutdown_calls == 1
+    assert runtime.started_after_shutdown_connected is True
 
 
 @pytest.mark.skipif(

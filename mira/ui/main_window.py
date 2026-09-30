@@ -28,7 +28,7 @@ class MainWindow(QMainWindow):
         self.debug_drawer_width = 340
         self.resize(self.compact_size)
 
-        # The only two parts of the graph the UI touches, unpacked here rather
+        # The only parts of the graph the UI touches, unpacked here rather
         # than kept as the whole `Application`. Holding the record itself would
         # leave `activity`, `scheduler`, `interaction_manager` and
         # `embodied_behavior` one attribute hop away, and reaching them that way
@@ -39,6 +39,10 @@ class MainWindow(QMainWindow):
         # it, rather than trusting the unpacking below.
         self.event_bus = application.event_bus
         self.brain = application.brain
+        # The drawer gets a way to *read* camera status and nothing else: it
+        # cannot start, stop or read frames from the capture.
+        camera = application.camera
+        self.camera_status = lambda: camera.status
 
         # --- UI root ---
         central_widget = QWidget()
@@ -82,7 +86,7 @@ class MainWindow(QMainWindow):
         self.content_splitter.addWidget(main_panel)
 
         # --- Hidden developer drawer ---
-        self.debug_panel = DebugPanel(self.face_widget)
+        self.debug_panel = DebugPanel(self.face_widget, self.camera_status)
         self.debug_panel.setMinimumWidth(320)
         self.debug_panel.setMaximumWidth(self.debug_drawer_width)
         self.debug_panel.setVisible(False)

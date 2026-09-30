@@ -33,11 +33,16 @@ expresses what it is doing.
   are blocked because no confirmation flow exists yet.
 - **Debug drawer**: hidden by default. It offers live tuning of expression
   geometry, animation, and blink parameters, with save/reload of the profile
-  file.
+  file, and shows the camera status.
+- **Optional camera input**: with `MIRA_CAMERA=1` and the `camera` extra
+  installed, frames are captured from a webcam through OpenCV on a background
+  thread. This is only the capture foundation: nothing analyzes the frames
+  yet, and they do not affect the face.
 
 Current scope: the rule engine and built-in replies are in **Italian**, and
 desktop actions target **Linux** (`xdg-open`, `notify-send`). There is no voice,
-camera, persistent memory, or hardware integration.
+visual perception (face, person or object recognition), persistent memory, or
+hardware integration.
 
 ## Architecture
 
@@ -49,7 +54,8 @@ micro-motions (blink, idle wander, gaze, thinking drift, speaking pulse) are
 computed in the Qt-free domain and resolved into immutable, renderer-independent
 frames. The widget only draws those frames and converts the cursor into a
 normalized attention target. A future perception source could produce the same
-target.
+target. Camera frames, when enabled, flow on their own pull-based data plane,
+separate from the semantic event bus.
 
 ```mermaid
 flowchart LR
@@ -83,6 +89,13 @@ MIRA_INTENT_ENGINE=llm venv/bin/python -m mira.main   # local Ollama engine
 Try messages such as `ciao`, `che ore sono`, `cosa sai fare`, or
 `apri cartella download`.
 
+To try the camera foundation, install the optional extra and opt in:
+
+```bash
+venv/bin/python -m pip install --constraint constraints.txt --editable ".[dev,camera]"
+MIRA_CAMERA=1 venv/bin/python -m mira.main   # status appears in the debug drawer
+```
+
 LLM mode uses `llama3.2:3b` at `http://localhost:11434` by default. See
 [docs/configuration.md](docs/configuration.md) for all settings. To launch from
 any directory, link `bin/mira` onto your `PATH` as described in
@@ -114,13 +127,15 @@ are in [docs/development.md](docs/development.md).
 M.I.R.A. is an active software prototype, and the Foundation v1 architecture
 baseline is complete. Next steps focus on the embodied experience and
 cognition: richer face motion, better integration between cognitive output and
-expression, lower LLM latency, and an action confirmation flow.
+expression, lower LLM latency, an action confirmation flow, and human-presence
+perception on top of the camera foundation.
 
 The longer-term direction includes voice interaction, richer context memory,
 visual presence awareness, and eventually physical embodiment on a robotic
-platform. None of these exist yet; camera-based presence would enter through
-the existing `AttentionTarget` gaze input. The architecture's planned extension points
-are listed in [docs/architecture.md](docs/architecture.md#13-intended-future-boundaries-not-implemented).
+platform. None of these exist yet. Camera capture now exists as a foundation;
+camera-based presence would consume its frames and enter the face through the
+existing `AttentionTarget` gaze input. The architecture's planned extension points
+are listed in [docs/architecture.md](docs/architecture.md#14-intended-future-boundaries-not-implemented).
 
 ## Author
 

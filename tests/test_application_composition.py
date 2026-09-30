@@ -76,6 +76,7 @@ print(json.dumps({
         "brain": type(graph.brain).__name__,
         "interaction_manager": type(graph.interaction_manager).__name__,
         "embodied_behavior": type(graph.embodied_behavior).__name__,
+        "camera": type(graph.camera).__name__,
     },
     "shared_instances": {
         "brain.event_bus": graph.brain.event_bus is graph.event_bus,
@@ -154,6 +155,7 @@ def test_the_graph_is_built_from_the_production_implementations(graph):
         "brain": "Brain",
         "interaction_manager": "InteractionManager",
         "embodied_behavior": "EmbodiedBehavior",
+        "camera": "CameraCapture",
     }
 
 

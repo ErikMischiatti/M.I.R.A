@@ -13,6 +13,7 @@ def main():
     # and this is the thread that runs the event loop below.
     application = build_application()
     app.aboutToQuit.connect(application.shutdown)
+    application.start()
 
     window = MainWindow(application)
     window.show()

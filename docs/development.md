@@ -33,6 +33,14 @@ Editable mode keeps source edits live. Reinstall after dependency or packaging
 metadata changes, or after moving the repository; a source-only `git pull`
 needs no reinstall.
 
+Camera capture is optional and not part of that install or of CI. To develop
+or try it, add the `camera` extra; `constraints.txt` records the tested OpenCV
+and numpy versions:
+
+```bash
+venv/bin/python -m pip install --constraint constraints.txt --editable ".[dev,camera]"
+```
+
 For a runtime-only editable install within the supported ranges, without the
 tested lock or pytest:
 
@@ -69,13 +77,13 @@ actions use for the `current` alias and relative paths (see
 
 ```text
 mira/
-├── domain/       # technology-independent vocabulary, scheduler port, micro-motions, playback
+├── domain/       # technology-independent vocabulary, scheduler and camera ports, micro-motions, playback
 ├── memory/       # session retention
 ├── messaging/    # synchronous event bus
 ├── actions/      # contracts, execution policy, registry, executor, handlers
 ├── cognition/    # rule and optional local-LLM inference, response building
-├── core/         # turn, activity, interaction, and behavior orchestration
-├── adapters/     # Qt scheduler implementation
+├── core/         # turn, activity, interaction, and behavior orchestration; camera capture
+├── adapters/     # Qt scheduler and OpenCV camera implementations
 ├── application/  # construction and wiring
 ├── ui/           # Qt window, chat panel, debug drawer, face/ rendering
 ├── config/       # packaged expression profiles
@@ -129,13 +137,23 @@ Tests are grouped by boundary rather than by file:
 | Cognition | `test_rule_intent_engine.py`, `test_llm_intent_engine.py`, `test_session_context_builder.py`, `test_response_builder.py` |
 | Actions | `test_action_executor.py`, `test_action_execution_policy.py`, `test_action_contract_consistency.py`, `test_desktop_actions.py` |
 | Embodiment | `test_embodiment_*.py`, `test_micro_motion*.py`, `test_face_*.py`, `test_expression_store.py` |
+| Camera | `test_camera_*.py`, `test_opencv_camera.py` |
 | Memory and messaging | `test_memory_contracts.py`, `test_messaging_contracts.py` |
 
 Shared test doubles live in `tests/doubles.py` (covered by
 `test_shared_fixtures.py`); `tests/layering_harness.py` supports the checker
 tests. `ManualScheduler` from `mira.domain.scheduler` drives full turns
 deterministically without a Qt event loop. No test contacts a real Ollama
-server.
+server, and no test opens a webcam or needs OpenCV: `tests/camera_doubles.py`
+provides a scripted `CameraSource`, and the adapter tests replace
+`cv2.VideoCapture` with a fake. The camera lifecycle tests use real threads,
+synchronized on events rather than sleeps.
+
+A physical camera needs a manual check after camera changes: the app starts
+with `MIRA_CAMERA=1`, the debug drawer reports `active` with a sane size,
+quitting releases the device (another application can open it afterwards), and
+an invalid `MIRA_CAMERA_DEVICE` or a camera held by another application reports
+`unavailable` while the rest of the app keeps working.
 
 ## Dependencies
 

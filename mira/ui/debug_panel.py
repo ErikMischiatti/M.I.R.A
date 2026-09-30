@@ -1,4 +1,6 @@
-from PySide6.QtCore import Qt
+from collections.abc import Callable
+
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import (
     QWidget,
     QVBoxLayout,
@@ -14,15 +16,36 @@ from PySide6.QtWidgets import (
     QScrollArea,
 )
 
+from mira.domain.camera import CameraState, CameraStatus
 from mira.domain.state import FaceState
 
 
+def describe_camera_status(status: CameraStatus) -> str:
+    """One diagnostic line for the drawer; never shows image data."""
+
+    if status.state is CameraState.DISABLED:
+        return "Disabled (set MIRA_CAMERA=1 to enable)"
+    label = status.state.value.capitalize()
+    info = status.info
+    if info is not None:
+        rate = f" @ {info.fps:g} fps" if info.fps is not None else ""
+        return f"{label}: {info.device} {info.width}x{info.height}{rate}"
+    return f"{label}: {status.detail}" if status.detail else label
+
+
 class DebugPanel(QWidget):
-    def __init__(self, face_widget):
+    CAMERA_STATUS_INTERVAL_MS = 500
+
+    def __init__(
+        self,
+        face_widget,
+        camera_status: Callable[[], CameraStatus] | None = None,
+    ):
         super().__init__()
 
         self.face_widget = face_widget
         self.controller = face_widget.controller
+        self.camera_status = camera_status
 
         self.setMinimumWidth(320)
 
@@ -49,10 +72,48 @@ class DebugPanel(QWidget):
         self.build_animation_controls()
         self.build_asymmetry_controls()
         self.build_action_buttons()
+        self.build_camera_status()
 
         self.main_layout.addStretch()
 
         self.load_profile_into_controls()
+
+    def build_camera_status(self):
+        """Read-only camera diagnostics, polled only while the drawer is shown."""
+
+        self.camera_status_label = None
+        self.camera_status_timer = None
+        if self.camera_status is None:
+            return
+
+        group = QGroupBox("Camera")
+        layout = QVBoxLayout()
+        layout.setContentsMargins(8, 8, 8, 8)
+        self.camera_status_label = QLabel()
+        self.camera_status_label.setWordWrap(True)
+        layout.addWidget(self.camera_status_label)
+        group.setLayout(layout)
+        self.main_layout.addWidget(group)
+
+        self.camera_status_timer = QTimer(self)
+        self.camera_status_timer.setInterval(self.CAMERA_STATUS_INTERVAL_MS)
+        self.camera_status_timer.timeout.connect(self.refresh_camera_status)
+        self.refresh_camera_status()
+
+    def refresh_camera_status(self):
+        if self.camera_status_label is not None:
+            self.camera_status_label.setText(describe_camera_status(self.camera_status()))
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        if self.camera_status_timer is not None:
+            self.refresh_camera_status()
+            self.camera_status_timer.start()
+
+    def hideEvent(self, event):
+        if self.camera_status_timer is not None:
+            self.camera_status_timer.stop()
+        super().hideEvent(event)
 
     def build_state_selector(self):
         group = QGroupBox("State")
