@@ -40,7 +40,7 @@ def test_bounding_box_exposes_its_size_area_and_centre():
 
     assert (box.width, box.height) == pytest.approx((0.4, 0.8))
     assert box.area == pytest.approx(0.32)
-    assert box.center == ImagePoint(pytest.approx(0.4), pytest.approx(0.5))
+    assert (box.center.x, box.center.y) == pytest.approx((0.4, 0.5))
 
 
 def test_the_whole_frame_is_a_valid_box():
