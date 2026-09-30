@@ -13,7 +13,8 @@ any desktop panel along the top edge.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+import math
+from dataclasses import dataclass, replace
 from enum import StrEnum
 
 
@@ -151,3 +152,43 @@ class NotchGeometry:
         self, area: Rect, start: NotchPresence, end: NotchPresence, progress: float
     ) -> NotchShape:
         return self.place(area, self.size_between(start, end, progress))
+
+
+# A window system positions whole pixels while the notch geometry is
+# fractional. The policy, applied only at this boundary:
+#   - the window size is the expanded bounds rounded *up*, so the window always
+#     contains the expanded notch;
+#   - the window origin is rounded *down* (towards -inf, also for monitors with
+#     negative coordinates), so an odd leftover puts the window half a pixel
+#     left of or above the exact centre, never right or below;
+#   - inside the window the notch is re-centred on the window itself, so the
+#     drawn notch stays symmetric within it.
+
+
+def window_bounds(area: Rect, geometry: NotchGeometry) -> Rect:
+    """Whole-pixel top-level window bounds that contain every presence.
+
+    ``area`` is where the notch may appear, normally a screen's available
+    geometry; the window hangs top-centre from it, ``top_margin`` below its top.
+    """
+
+    expanded = geometry.shape_for(area, NotchPresence.EXPANDED).bounds
+    width = math.ceil(expanded.width)
+    height = math.ceil(expanded.height)
+    return Rect(
+        x=math.floor(area.x + (area.width - width) / 2.0),
+        y=math.floor(expanded.y),
+        width=width,
+        height=height,
+    )
+
+
+def window_shape(window: Rect, geometry: NotchGeometry, presence: NotchPresence) -> NotchShape:
+    """The notch at ``presence`` in window-local coordinates of ``window``.
+
+    The window's own origin already carries the top margin, so the notch hangs
+    from the window's top edge.
+    """
+
+    local = Rect(x=0.0, y=0.0, width=window.width, height=window.height)
+    return replace(geometry, top_margin=0.0).shape_for(local, presence)

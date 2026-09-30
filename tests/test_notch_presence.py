@@ -15,6 +15,8 @@ from mira.ui.notch.presence import (
     NotchShape,
     NotchSize,
     Rect,
+    window_bounds,
+    window_shape,
 )
 
 
@@ -232,6 +234,91 @@ def test_every_interpolated_size_keeps_a_fitting_radius():
         assert size.corner_radius <= min(size.width, size.height) / 2.0
 
 
+# --- Window placement --------------------------------------------------------
+
+
+def test_the_window_is_the_expanded_notch_hung_top_centre_from_the_area():
+    assert window_bounds(AVAILABLE, GEOMETRY) == Rect(780, 32, 360, 96)
+
+
+def test_the_window_follows_an_area_with_a_negative_origin():
+    left_monitor = Rect(x=-1280.0, y=-200.0, width=1280.0, height=1024.0)
+
+    assert window_bounds(left_monitor, GEOMETRY) == Rect(-820, -200, 360, 96)
+
+
+def test_the_window_size_rounds_up_so_the_expanded_notch_always_fits():
+    fractional = NotchGeometry(
+        compact=NotchSize(200.0, 32.0, 14.0), expanded=NotchSize(360.4, 96.2, 24.0)
+    )
+
+    bounds = window_bounds(AVAILABLE, fractional)
+
+    assert (bounds.width, bounds.height) == (361, 97)
+
+
+@pytest.mark.parametrize(
+    "area_x,area_width,expected_x",
+    [
+        # An odd leftover floors: half a pixel left of centre, never right.
+        (0.0, 1001.0, 320),
+        # Towards -inf on a negative origin too, not towards zero.
+        (-1281.0, 1001.0, -961),
+    ],
+)
+def test_the_window_origin_rounds_down(area_x, area_width, expected_x):
+    area = Rect(x=area_x, y=0.0, width=area_width, height=800.0)
+
+    assert window_bounds(area, GEOMETRY).x == expected_x
+
+
+def test_a_fractional_top_margin_rounds_the_window_up_the_screen():
+    geometry = NotchGeometry(top_margin=6.5)
+
+    assert window_bounds(AVAILABLE, geometry).y == 38
+
+
+def test_window_bounds_are_whole_pixels():
+    geometry = NotchGeometry(
+        compact=NotchSize(200.3, 32.0, 14.0), expanded=NotchSize(360.7, 96.5, 24.0), top_margin=1.25
+    )
+    bounds = window_bounds(Rect(-3.0, 7.0, 1917.0, 1000.0), geometry)
+
+    assert all(float(value).is_integer() for value in (bounds.x, bounds.y, bounds.width, bounds.height))
+
+
+def test_the_window_shape_hangs_centred_from_the_window_top():
+    window = window_bounds(AVAILABLE, GEOMETRY)
+
+    compact = window_shape(window, GEOMETRY, NotchPresence.COMPACT)
+    expanded = window_shape(window, GEOMETRY, NotchPresence.EXPANDED)
+    hidden = window_shape(window, GEOMETRY, NotchPresence.HIDDEN)
+
+    assert compact == NotchShape(bounds=Rect(80.0, 0.0, 200.0, 32.0), corner_radius=14.0)
+    assert expanded == NotchShape(bounds=Rect(0.0, 0.0, 360.0, 96.0), corner_radius=24.0)
+    assert hidden.bounds.height == 0.0
+
+
+def test_the_window_shape_ignores_the_margin_the_window_origin_already_carries():
+    geometry = NotchGeometry(top_margin=10.0)
+    window = window_bounds(AVAILABLE, geometry)
+
+    assert window_shape(window, geometry, NotchPresence.EXPANDED).bounds.y == 0.0
+
+
+def test_a_rounded_up_window_contains_the_fractional_expanded_notch():
+    fractional = NotchGeometry(
+        compact=NotchSize(200.0, 32.0, 14.0), expanded=NotchSize(360.4, 96.2, 24.0)
+    )
+    window = window_bounds(AVAILABLE, fractional)
+
+    bounds = window_shape(window, fractional, NotchPresence.EXPANDED).bounds
+
+    assert bounds.x >= 0 and bounds.right <= window.width
+    assert bounds.y >= 0 and bounds.bottom <= window.height
+    assert bounds.center_x == window.width / 2.0
+
+
 # --- Boundary ----------------------------------------------------------------
 
 
@@ -248,7 +335,7 @@ def test_the_presence_model_imports_only_the_standard_library():
         for alias in node.names
     }
 
-    assert imported <= {"__future__", "dataclasses", "enum"}
+    assert imported <= {"__future__", "dataclasses", "enum", "math"}
 
 
 def test_the_presence_model_loads_with_qt_unavailable():
