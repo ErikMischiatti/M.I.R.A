@@ -30,6 +30,9 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 #   MIRA_CAMERA_WIDTH               mira/application/camera_config.py:35
 #   MIRA_CAMERA_HEIGHT              mira/application/camera_config.py:36
 #   MIRA_CAMERA_FPS                 mira/application/camera_config.py:37
+#   MIRA_PERSON_DETECTION             mira/application/perception_config.py:34
+#   MIRA_PERSON_DETECTION_MODEL       mira/application/perception_config.py:35
+#   MIRA_PERSON_DETECTION_CONFIDENCE  mira/application/perception_config.py:36
 # `test_each_variable_is_read_at_the_line_it_is_attributed_to` checks every one.
 MIRA_ENV_VARS = (
     "MIRA_INTENT_ENGINE",
@@ -42,6 +45,9 @@ MIRA_ENV_VARS = (
     "MIRA_CAMERA_WIDTH",
     "MIRA_CAMERA_HEIGHT",
     "MIRA_CAMERA_FPS",
+    "MIRA_PERSON_DETECTION",
+    "MIRA_PERSON_DETECTION_MODEL",
+    "MIRA_PERSON_DETECTION_CONFIDENCE",
 )
 
 

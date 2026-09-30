@@ -142,6 +142,14 @@ def test_absent_variables_select_the_production_defaults():
 
     assert camera_configuration_from_environment() == CameraConfiguration()
 
+    # Person detection defaults to disabled, the bundled model and its threshold.
+    from mira.application.perception_config import (
+        PersonDetectionConfiguration,
+        person_detection_configuration_from_environment,
+    )
+
+    assert person_detection_configuration_from_environment() == PersonDetectionConfiguration()
+
 
 # --- the references the shared infrastructure documents itself with -----
 

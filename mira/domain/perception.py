@@ -15,9 +15,29 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
+from enum import StrEnum
 from typing import Protocol
 
 from mira.domain.camera import CameraFrame
+
+
+class PerceptionState(StrEnum):
+    """Where person perception is in its life, for status reporting."""
+
+    DISABLED = "disabled"        # no detector configured
+    STOPPED = "stopped"          # configured, not running
+    STARTING = "starting"        # loading the model or waiting for frames
+    ACTIVE = "active"            # analysing frames
+    UNAVAILABLE = "unavailable"  # cannot run: no camera, no model, no library
+    FAILED = "failed"            # the detector kept failing
+
+
+@dataclass(frozen=True, slots=True)
+class PerceptionStatus:
+    """Perception's state and why it is in it."""
+
+    state: PerceptionState
+    detail: str = ""
 
 
 class PerceptionError(Exception):

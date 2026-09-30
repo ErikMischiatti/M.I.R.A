@@ -21,10 +21,11 @@ rather than incidentally, because two parts of it are observable:
     component constructing successfully while events reached nobody and timers
     sat on a scheduler nothing drives.
 
-`scheduler` and `camera_source` are the only injection seams, and each exists
-for the same two reasons rather than for symmetry: it is an adapter choice, and
-it is what lets the graph be built without the technology behind it — no Qt
-event loop for the scheduler, no webcam or OpenCV for the camera. Passing `ManualScheduler` from
+`scheduler`, `camera_source` and `person_detector` are the only injection
+seams, and each exists for the same two reasons rather than for symmetry: it is
+an adapter choice, and it is what lets the graph be built without the
+technology behind it — no Qt event loop for the scheduler, no webcam, OpenCV or
+model for the camera and the detector. Passing `ManualScheduler` from
 `mira.domain.scheduler` yields the real graph, fully wired, driven by an
 explicit clock — which is how `tests/test_application_composition.py` exercises
 a whole turn without a `QApplication`.
@@ -40,15 +41,21 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from mira.adapters.opencv_camera import OpenCVCameraSource
+from mira.adapters.opencv_person_detector import OpenCVCascadePersonDetector
 from mira.adapters.qt_scheduler import QtScheduler
 from mira.application.camera_config import camera_configuration_from_environment
+from mira.application.perception_config import (
+    person_detection_configuration_from_environment,
+)
 from mira.core.activity_authority import ActivityAuthority
 from mira.core.brain import Brain
 from mira.core.camera_capture import CameraCapture
 from mira.core.embodied_behavior import EmbodiedBehavior
+from mira.core.human_perception import HumanPerception
 from mira.core.interaction_manager import InteractionManager
 from mira.core.state_manager import StateManager
 from mira.domain.camera import CameraSource
+from mira.domain.perception import PersonDetector
 from mira.domain.scheduler import Scheduler
 from mira.messaging.events import EventBus
 
@@ -80,18 +87,21 @@ class Application:
     interaction_manager: InteractionManager
     embodied_behavior: EmbodiedBehavior
     camera: CameraCapture
+    perception: HumanPerception
 
     def start(self) -> None:
-        """Start the long-running resources: currently only camera capture."""
+        """Start the long-running resources: camera capture, then perception."""
         self.camera.start()
+        self.perception.start()
 
     def shutdown(self) -> None:
         """Stop the resources owned by this application graph.
 
-        The camera goes first and releases its device before the scheduler
-        stops; the two are independent, so the order only makes the device
-        free as early as possible.
+        Perception goes first, because it consumes the camera's frames; the
+        camera then releases its device, and the scheduler, which neither
+        uses, stops last.
         """
+        self.perception.shutdown()
         self.camera.shutdown()
         self.scheduler.shutdown()
 
@@ -100,6 +110,7 @@ def build_application(
     *,
     scheduler: Scheduler | None = None,
     camera_source: CameraSource | None = None,
+    person_detector: PersonDetector | None = None,
 ) -> Application:
     """Construct and wire the application graph.
 
@@ -112,7 +123,9 @@ def build_application(
     `camera_source` is the second adapter choice. When omitted, the
     `MIRA_CAMERA*` environment decides: an `OpenCVCameraSource` when the camera
     is enabled, otherwise no source and a disabled capture. Tests pass a fake
-    source, so no test needs a webcam.
+    source, so no test needs a webcam. `person_detector` works the same way
+    with the `MIRA_PERSON_DETECTION*` variables and `OpenCVCascadePersonDetector`;
+    detection runs only when the camera does.
 
     No side effects: nothing is started, no state transition is triggered, no
     timer is armed and no device is opened. The returned graph is idle until
@@ -142,6 +155,15 @@ def build_application(
             camera_source = OpenCVCameraSource(camera_configuration.settings)
     camera = CameraCapture(camera_source)
 
+    if person_detector is None:
+        detection = person_detection_configuration_from_environment()
+        if detection.enabled:
+            options = {}
+            if detection.min_confidence is not None:
+                options["min_confidence"] = detection.min_confidence
+            person_detector = OpenCVCascadePersonDetector(detection.model_path, **options)
+    perception = HumanPerception(camera, person_detector)
+
     return Application(
         event_bus=event_bus,
         activity=activity,
@@ -150,4 +172,5 @@ def build_application(
         interaction_manager=interaction_manager,
         embodied_behavior=embodied_behavior,
         camera=camera,
+        perception=perception,
     )
