@@ -25,8 +25,13 @@ environment.
 | `MIRA_CAMERA_HEIGHT` | device default | Requested frame height in pixels. Non-integer or non-positive values are ignored. |
 | `MIRA_CAMERA_FPS` | device default | Requested frame rate. Non-numeric, non-finite or non-positive values are ignored. |
 
-The four `MIRA_OLLAMA_*`/`MIRA_LLM_*` variables only matter in LLM mode, and
-the `MIRA_CAMERA_*` settings only when `MIRA_CAMERA` enables the camera.
+| `MIRA_PERSON_DETECTION` | unset (disabled) | `1`, `true`, `yes` or `on` (case-insensitive) enables human presence perception. Needs the camera; without it perception reports `unavailable`. |
+| `MIRA_PERSON_DETECTION_MODEL` | OpenCV's bundled `haarcascade_frontalface_default.xml` | Path to an OpenCV cascade XML to detect with instead. Blank selects the default. |
+| `MIRA_PERSON_DETECTION_CONFIDENCE` | `0.4` | Minimum detection score in `0.0..1.0`. Non-numeric or out-of-range values fall back to the default. |
+
+The four `MIRA_OLLAMA_*`/`MIRA_LLM_*` variables only matter in LLM mode, the
+`MIRA_CAMERA_*` settings only when `MIRA_CAMERA` enables the camera, and the
+`MIRA_PERSON_DETECTION_*` settings only when person detection is enabled.
 
 Example:
 
@@ -95,6 +100,50 @@ missing device never blocks the UI. The debug drawer's
 
 A camera that is unavailable or failed does not affect anything else. Frames
 are kept in memory only, and only the newest one; nothing is recorded to disk.
+
+## Human presence perception
+
+Optional, off by default, and dependent on the camera. It uses the same
+`camera` extra, which provides OpenCV and numpy:
+
+```bash
+MIRA_CAMERA=1 MIRA_PERSON_DETECTION=1 venv/bin/python -m mira.main
+```
+
+**Model.** The default is OpenCV's frontal-face Haar cascade, which ships inside
+the OpenCV wheel under OpenCV's BSD-3-Clause license. Nothing is downloaded,
+and no model file is stored in this repository. It finds people facing the
+camera; someone turned away, in profile or in poor light may not be detected.
+To try another cascade, for example the bundled upper-body model, point
+`MIRA_PERSON_DETECTION_MODEL` at its XML file:
+
+```bash
+MIRA_PERSON_DETECTION_MODEL="$(venv/bin/python -c 'import cv2; print(cv2.data.haarcascades)')haarcascade_upperbody.xml"
+```
+
+**Confidence.** Cascades report how many neighbouring windows agreed, not a
+probability. The score maps that onto `0.0..1.0` (twelve agreeing windows
+score 1.0). Raise `MIRA_PERSON_DETECTION_CONFIDENCE` to suppress false
+detections; lower it to catch weaker ones.
+
+**Presence.** Someone counts as present after 0.3 s of continuous detection
+and as gone after 1.5 s without one. These timings are fixed in code.
+
+**Status** (debug drawer, **Camera → Human perception**):
+
+| State | Meaning |
+|---|---|
+| `disabled` | `MIRA_PERSON_DETECTION` is not set. |
+| `stopped` | Configured but not running. |
+| `starting` | Loading the model, waiting for camera frames, or analysing the first frame (about 1.6 s of one-time OpenCV initialization). |
+| `active` | Analysing frames; shows presence, results per second and inference latency. |
+| `unavailable` | The camera is disabled, OpenCV is not installed, or the model file is missing or unreadable. |
+| `failed` | The detector failed to load, or failed five times in a row. |
+
+**Cost.** Every camera frame is analysed. On the development machine that was
+about 30 analyses per second at 25–50 ms each, using roughly 3–4 CPU cores
+through OpenCV's internal threading. No rate limit is implemented yet.
+Detections are held in memory only, and only the newest; nothing is recorded.
 
 ## Expression profiles
 

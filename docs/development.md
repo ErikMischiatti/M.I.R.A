@@ -33,9 +33,9 @@ Editable mode keeps source edits live. Reinstall after dependency or packaging
 metadata changes, or after moving the repository; a source-only `git pull`
 needs no reinstall.
 
-Camera capture is optional and not part of that install or of CI. To develop
-or try it, add the `camera` extra; `constraints.txt` records the tested OpenCV
-and numpy versions:
+Camera capture and person detection are optional and not part of that install
+or of CI. To develop or try them, add the `camera` extra (OpenCV and numpy);
+`constraints.txt` records the tested versions:
 
 ```bash
 venv/bin/python -m pip install --constraint constraints.txt --editable ".[dev,camera]"
@@ -77,13 +77,13 @@ actions use for the `current` alias and relative paths (see
 
 ```text
 mira/
-├── domain/       # technology-independent vocabulary, scheduler and camera ports, micro-motions, playback
+├── domain/       # technology-independent vocabulary, scheduler/camera/detector ports, presence, micro-motions, playback
 ├── memory/       # session retention
 ├── messaging/    # synchronous event bus
 ├── actions/      # contracts, execution policy, registry, executor, handlers
 ├── cognition/    # rule and optional local-LLM inference, response building
-├── core/         # turn, activity, interaction, and behavior orchestration; camera capture
-├── adapters/     # Qt scheduler and OpenCV camera implementations
+├── core/         # turn, activity, interaction, and behavior orchestration; camera capture, human perception
+├── adapters/     # Qt scheduler, OpenCV camera and OpenCV person-detector implementations
 ├── application/  # construction and wiring
 ├── ui/           # Qt window, chat panel, debug drawer, face/ rendering
 ├── config/       # packaged expression profiles
@@ -138,6 +138,7 @@ Tests are grouped by boundary rather than by file:
 | Actions | `test_action_executor.py`, `test_action_execution_policy.py`, `test_action_contract_consistency.py`, `test_desktop_actions.py` |
 | Embodiment | `test_embodiment_*.py`, `test_micro_motion*.py`, `test_face_*.py`, `test_expression_store.py` |
 | Camera | `test_camera_*.py`, `test_opencv_camera.py` |
+| Human perception | `test_perception_*.py`, `test_human_perception.py`, `test_presence_stabilizer.py`, `test_opencv_person_detector.py` |
 | Memory and messaging | `test_memory_contracts.py`, `test_messaging_contracts.py` |
 
 Shared test doubles live in `tests/doubles.py` (covered by
@@ -146,14 +147,37 @@ tests. `ManualScheduler` from `mira.domain.scheduler` drives full turns
 deterministically without a Qt event loop. No test contacts a real Ollama
 server, and no test opens a webcam or needs OpenCV: `tests/camera_doubles.py`
 provides a scripted `CameraSource`, and the adapter tests replace
-`cv2.VideoCapture` with a fake. The camera lifecycle tests use real threads,
-synchronized on events rather than sleeps.
+`cv2.VideoCapture` with a fake. Likewise `tests/perception_doubles.py` provides
+a scripted `PersonDetector`, the detector adapter tests replace OpenCV with a
+fake backend, and the few tests that exercise real OpenCV skip when it is
+absent. No test downloads a model. The camera and perception lifecycle tests
+use real threads, synchronized on events rather than sleeps, and should be
+run repeatedly after threading changes:
+
+```bash
+for i in $(seq 25); do QT_QPA_PLATFORM=offscreen venv/bin/python -m pytest -q -p no:cacheprovider \
+  tests/test_camera_capture.py tests/test_human_perception.py | tail -1; done | sort | uniq -c
+```
 
 A physical camera needs a manual check after camera changes: the app starts
 with `MIRA_CAMERA=1`, the debug drawer reports `active` with a sane size,
 quitting releases the device (another application can open it afterwards), and
 an invalid `MIRA_CAMERA_DEVICE` or a camera held by another application reports
 `unavailable` while the rest of the app keeps working.
+
+Person detection needs a person, so it is checked by hand after detector or
+perception changes. Run `MIRA_CAMERA=1 MIRA_PERSON_DETECTION=1` with the debug
+drawer open and check:
+
+- **Nobody in view:** "nobody present".
+- **Sitting down, facing the camera:** "1 person present" within about a
+  second.
+- **Moving left, centre and right:** the detection's centre follows. The
+  image is not mirrored: x grows toward the image's right, which is the
+  user's own left when they face the camera.
+- **Leaving:** presence clears within about 1.5 s.
+- **A missing `MIRA_PERSON_DETECTION_MODEL` file:** reports `unavailable`,
+  and chat keeps working.
 
 ## Dependencies
 

@@ -28,8 +28,8 @@ environment variables and runtime resources see
 - `ActivityAuthority` is the sole committer of shared semantic activity/affect
   state; events notify subscribers but do not own state.
 - Rendering consumes immutable, renderer-independent `EmbodimentFrame` values.
-- Camera frames travel on their own pull-based data plane, never on the
-  semantic EventBus, and are produced off the UI thread.
+- Camera frames and perception results travel on their own pull-based data
+  plane, never on the semantic EventBus, and are produced off the UI thread.
 - Every action reaches an explicit, source-independent execution policy before
   its handler can run.
 
@@ -42,14 +42,14 @@ Permissions are not transitive: `cognition` may import `actions`, but not
 
 | Layer | Responsibility | May import other M.I.R.A. layers |
 |---|---|---|
-| `domain` | Shared models, scheduler and camera ports, embodiment semantics, micro-motions and playback | none |
+| `domain` | Shared models, scheduler, camera and person-detector ports, presence stabilization, embodiment semantics, micro-motions and playback | none |
 | `config` | Packaged configuration resources | none |
 | `messaging` | Synchronous in-process event fan-out | none |
 | `memory` | In-session retention and context | `domain` |
 | `actions` | Contracts, registry, policy, executor, handlers | `domain`, `memory`, `messaging` |
 | `cognition` | Rule/LLM intent engines, schema checks, response building | `domain`, `memory`, `actions` |
-| `core` | Turn, interaction, activity, and behavior orchestration; camera capture | `domain`, `messaging`, `memory`, `actions`, `cognition` |
-| `adapters` | Concrete implementations of domain ports (Qt scheduler, OpenCV camera) | `domain` |
+| `core` | Turn, interaction, activity, and behavior orchestration; camera capture; human perception | `domain`, `messaging`, `memory`, `actions`, `cognition` |
+| `adapters` | Concrete implementations of domain ports (Qt scheduler, OpenCV camera, OpenCV person detector) | `domain` |
 | `application` | Object construction and wiring | `domain`, `messaging`, `core`, `adapters` |
 | `ui` | Qt presentation and face control | `domain`, `application` |
 | `main` | Process entry point | unrestricted composition entry point |
@@ -72,7 +72,8 @@ mira.main
       → InteractionManager
       → EmbodiedBehavior
       → CameraCapture(OpenCVCameraSource if MIRA_CAMERA is set, else none)
-  → application.start()   (starts camera capture, if enabled)
+      → HumanPerception(camera, OpenCVCascadePersonDetector if MIRA_PERSON_DETECTION is set, else none)
+  → application.start()   (starts camera capture, then perception, if enabled)
   → MainWindow(application)
   → Qt event loop
 ```
@@ -80,9 +81,10 @@ mira.main
 `Brain` currently constructs its own session memory, selected intent engine,
 response builder, action registry, executor, and concrete action handlers. The
 composition root shares one bus, one activity authority, and one scheduler
-across the graph. Tests may inject `ManualScheduler` and a fake `CameraSource`;
-no service container or runtime registry exists. Construction opens no device:
-capture begins only at `Application.start()`.
+across the graph. Tests may inject `ManualScheduler`, a fake `CameraSource` and
+a fake `PersonDetector`; no service container or runtime registry exists.
+Construction opens no device and loads no model: capture and perception begin
+only at `Application.start()`.
 
 Construction order is observable: `InteractionManager` and `EmbodiedBehavior`
 subscribe to the same events from their constructors, so the order they are
@@ -268,8 +270,9 @@ expression back to idle or listening.
 ## 10. Camera input
 
 An optional camera foundation exists: acquiring frames and reporting camera
-status. **No perception exists yet.** Nothing detects faces, people or objects,
-and camera frames do not influence the face or any semantic state.
+status. On top of it, optional human presence perception (below) detects
+whether someone is in view. Nothing recognizes who they are, and neither
+frames nor detections influence the face or any semantic state yet.
 
 ```text
 webcam (/dev/video*, index or path)
@@ -317,13 +320,88 @@ webcam (/dev/video*, index or path)
   every 500 ms while the drawer is visible. It receives a status reader, not
   the capture, and there is no image preview.
 
-Future perception is expected to consume frames and produce semantic
-observations. None of this is implemented:
+### Human presence perception
+
+The first semantic perception: whether someone is there, and where in the
+image. It is optional (`MIRA_PERSON_DETECTION=1`) and needs the camera.
 
 ```text
-CameraSource → CameraFrame
-  → future PersonDetector → future PersonObservation
-  → future AttentionTarget → MicroMotions (existing gaze input)
+CameraCapture ── newest CameraFrame ──► HumanPerception (core; "mira-perception" thread)
+                                          ├─ PersonDetector port ◄── OpenCVCascadePersonDetector (adapters)
+                                          ├─ PersonDetections      latest_detections() / wait_for_detections(after=...)
+                                          ├─ PresenceStabilizer ─► HumanPresence   (stable present / absent)
+                                          └─ diagnostics()        status, presence, results/s, inference ms
+```
+
+- **Vocabulary** (`mira/domain/perception.py`). `PersonObservation` is one
+  person in one frame: a confidence in [0, 1], a `BoundingBox` and its
+  centre in normalized *image space* ([0, 1], top-left origin, as the camera
+  sees the scene), and the frame's sequence and capture time. It carries no
+  identity, name or emotion. Image space is deliberately not the gaze space of
+  `AttentionTarget` ([-1, 1] around straight ahead). `PersonDetections` is
+  everyone found in one analysed frame, with a version that never restarts.
+- **Detector** (`mira/adapters/opencv_person_detector.py`).
+  `OpenCVCascadePersonDetector` implements `PersonDetector` with an OpenCV
+  cascade classifier. Its default model is the frontal-face Haar cascade
+  bundled inside the OpenCV wheel (BSD-3-Clause), so nothing is downloaded
+  or stored in this repository. A desk companion's user usually faces it,
+  and `bounds` is then the face region. `MIRA_PERSON_DETECTION_MODEL` accepts
+  any cascade XML, such as the bundled upper-body one. Cascades report
+  neighbour agreement, not probability, so `confidence` orders and gates
+  detections but is not calibrated. They miss people who turn away or are
+  seen in profile or poor light.
+- **Why this detector.** It adds no dependency beyond the camera extra
+  (OpenCV and numpy) and no model download. A DNN detector such as the OpenCV
+  Zoo MediaPipe-derived person detector is more accurate but needs a
+  separately downloaded model. MediaPipe Tasks would add a large dependency
+  set, including a non-headless OpenCV wheel that clashes with PySide6's Qt.
+  Either can be added later as another `PersonDetector` adapter without
+  changing domain or core code.
+- **Runtime** (`mira/core/human_perception.py`). `HumanPerception` owns a
+  third thread, separate from the UI and capture threads. It loads the
+  detector, then repeatedly takes the newest frame with
+  `wait_for_frame(after=last)` and analyses it. Frames that arrive during an
+  inference are never seen, so a detector slower than the camera analyses
+  fewer frames and nothing queues. The capture thread never waits for the
+  detector, and the perception thread never reads the device, touches Qt,
+  emits events or calls the UI.
+- **Results.** The same pull-based data plane as frames, kept off the
+  EventBus. Only the newest `PersonDetections` is kept, results are cleared
+  on stop, and none is published after a stop is requested. Turning changes
+  such as "someone arrived" into semantic events is left to a later layer.
+- **Presence.** Raw detections flicker, so `PresenceStabilizer` (pure
+  domain, driven by capture timestamps) reports someone present after 0.3 s
+  of continuous detection and absent after 1.5 s without one. It keeps the
+  latest sighting during the grace period, and lets presence lapse when no
+  frames arrive at all. It does not track or tell people apart, and selects
+  no "primary" person.
+- **Failure.** Missing OpenCV, an unreadable model, or a disabled camera is
+  `unavailable`; a detector that fails to load or fails five consecutive
+  times is `failed`; isolated errors are tolerated. Nothing propagates to the
+  UI.
+- **Diagnostics.** The debug drawer shows a read-only line such as
+  `Active · 1 person present · 30.1 fps · 26 ms`.
+- **Cost, measured on the development machine** (16 CPUs, 640×480 at
+  30 fps). Capture alone uses about 36% of one core. The detector analyses
+  every frame at about 30 per second with 25–50 ms latency, using about 3–4
+  cores through OpenCV's internal threading. The first inference takes
+  about 1.6 s of lazy initialization. One OpenCV thread with half-size
+  frames cost about 35 ms per analysis on one core, so a rate cap is the
+  obvious lever if the load matters. No such limit is implemented yet.
+
+**Not implemented:** identity or face recognition, emotion, gesture or pose
+recognition, object detection, scene relations, RelateAnything, VLM reasoning,
+and camera-driven gaze. Perception results do not affect the face or any
+semantic state yet.
+
+The next branch (`feat/perception-attention-integration`) is expected to map
+presence into the existing gaze input through an application/core boundary:
+
+```text
+HumanPresence / PersonObservation (exists)
+  → future attention mapping (image space → gaze space, person selection, mirroring)
+  → AttentionTarget (exists)
+  → MicroMotions (exists; set on the UI thread, never from the perception thread)
 
 CameraFrame
   → future ObjectDetector → DetectedEntity[]
@@ -336,11 +414,13 @@ CameraFrame
 tree, and `FaceWidget` owns its parented frame timer, the only clock that steps
 the face. Each `FaceController` owns one `MicroMotions` instance (injectable for
 tests); it holds no timer and has nothing to shut down. `Application` owns the
-shared scheduler boundary and the camera capture. `QApplication.aboutToQuit`
-calls `Application.shutdown()`, which first shuts down the camera (stopping
-capture, joining the capture thread for up to two seconds, and releasing the
-device) and then the scheduler. Both are idempotent, and a shut-down camera
-refuses to start again. A read that outlasts the join still releases the
+shared scheduler boundary, the camera capture and human perception.
+`QApplication.aboutToQuit` calls `Application.shutdown()`, which shuts down
+perception first (it consumes the camera's frames; its thread is joined for up
+to two seconds), then the camera (stopping capture, joining the capture thread
+for up to two seconds, and releasing the device), then the scheduler. All are
+idempotent, and a shut-down camera or perception refuses to start again. An
+inference that outlasts the join finishes on its own and publishes nothing. A read that outlasts the join still releases the
 device when it returns, and no second reader starts meanwhile; the capture
 thread is a daemon, so it cannot keep the process alive.
 
@@ -390,14 +470,13 @@ validation baseline is in [development.md](development.md#validation).
 
 The following are extension directions, not existing APIs:
 
-- Perception may consume camera frames and produce semantic observations,
-  and attention derived from them may reach the gaze path the cursor uses
+- Attention derived from perception may reach the gaze path the cursor uses
   today:
 
   ```text
-  CameraFrame (exists)
+  PersonObservation / HumanPresence (exists)
         ↓
-  PersonDetector → PersonObservation
+  attention mapping
         ↓
   AttentionTarget (exists)
         ↓
@@ -406,10 +485,10 @@ The following are extension directions, not existing APIs:
   EmbodimentFrame → renderer
   ```
 
-  Camera capture (section 10), `AttentionTarget` and the gaze behavior
-  (section 9) exist.
-  No detector, observation model, or wiring from the camera into the face
-  exists yet. Relation perception (object detection feeding a RelateAnything
+  Camera capture, person detection and presence (section 10), and
+  `AttentionTarget` and the gaze behavior (section 9), exist. The mapping
+  between them does not, and neither does any identity, gesture or object
+  perception. Relation perception (object detection feeding a RelateAnything
   adapter) is a further direction with no code.
 - Voice input may enter the existing input/cognition pipeline, and voice output
   may consume responses; no audio subsystem exists.
