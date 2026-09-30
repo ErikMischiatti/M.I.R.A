@@ -16,8 +16,9 @@ expresses what it is doing.
 ## Current capabilities
 
 - **Expressive face**: procedurally animated eyes with blinking, idle motion,
-  cursor-aware gaze, thinking drift, speaking pulse, and smooth transitions
-  between idle, listening, thinking, speaking, happy, and confused expressions.
+  gaze that follows the cursor, thinking drift, speaking pulse, and smooth
+  transitions between idle, listening, thinking, speaking, happy, and confused
+  expressions.
 - **Text interaction**: a compact chat panel. The face reacts to focus,
   typing, processing, and responses.
 - **Modular cognition**: a deterministic rule-based intent engine by default,
@@ -43,8 +44,12 @@ camera, persistent memory, or hardware integration.
 The package is split into layers with an enforced dependency direction: a
 technology-independent domain, session memory, messaging, actions, cognition,
 core orchestration, adapters, an explicit composition root, and a Qt UI. One
-component, `ActivityAuthority`, commits embodiment state. The face renders
-immutable, renderer-independent frames.
+component, `ActivityAuthority`, commits embodiment state. The face's
+micro-motions (blink, idle wander, gaze, thinking drift, speaking pulse) are
+computed in the Qt-free domain and resolved into immutable, renderer-independent
+frames. The widget only draws those frames and converts the cursor into a
+normalized attention target. A future perception source could produce the same
+target.
 
 ```mermaid
 flowchart LR
@@ -113,7 +118,8 @@ expression, lower LLM latency, and an action confirmation flow.
 
 The longer-term direction includes voice interaction, richer context memory,
 visual presence awareness, and eventually physical embodiment on a robotic
-platform. None of these exist yet. The architecture's planned extension points
+platform. None of these exist yet; camera-based presence would enter through
+the existing `AttentionTarget` gaze input. The architecture's planned extension points
 are listed in [docs/architecture.md](docs/architecture.md#13-intended-future-boundaries-not-implemented).
 
 ## Author

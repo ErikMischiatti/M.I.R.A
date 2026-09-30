@@ -69,7 +69,7 @@ actions use for the `current` alias and relative paths (see
 
 ```text
 mira/
-├── domain/       # technology-independent vocabulary, scheduler port, embodiment playback
+├── domain/       # technology-independent vocabulary, scheduler port, micro-motions, playback
 ├── memory/       # session retention
 ├── messaging/    # synchronous event bus
 ├── actions/      # contracts, execution policy, registry, executor, handlers
@@ -128,7 +128,7 @@ Tests are grouped by boundary rather than by file:
 | Scheduling | `test_scheduler.py`, `test_scheduler_contracts.py`, `test_qt_scheduler_adapter.py`, `test_brain_async_contract.py` |
 | Cognition | `test_rule_intent_engine.py`, `test_llm_intent_engine.py`, `test_session_context_builder.py`, `test_response_builder.py` |
 | Actions | `test_action_executor.py`, `test_action_execution_policy.py`, `test_action_contract_consistency.py`, `test_desktop_actions.py` |
-| Embodiment | `test_embodiment_*.py`, `test_expression_store.py` |
+| Embodiment | `test_embodiment_*.py`, `test_micro_motion*.py`, `test_face_*.py`, `test_expression_store.py` |
 | Memory and messaging | `test_memory_contracts.py`, `test_messaging_contracts.py` |
 
 Shared test doubles live in `tests/doubles.py` (covered by
