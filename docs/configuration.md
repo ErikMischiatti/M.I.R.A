@@ -19,7 +19,14 @@ environment.
 | `MIRA_OLLAMA_TIMEOUT_S` | `10` | Per-request socket timeout in seconds. Non-numeric or non-positive values fall back to the default. |
 | `MIRA_LLM_ACTION_MIN_CONFIDENCE` | `0.65` | Minimum LLM confidence for a proposed action to be kept. Non-numeric or NaN values fall back to the default; numbers are clamped to `0.0..1.0`. |
 
-The four `MIRA_OLLAMA_*`/`MIRA_LLM_*` variables only matter in LLM mode.
+| `MIRA_CAMERA` | unset (disabled) | `1`, `true`, `yes` or `on` (case-insensitive) enables camera capture; anything else leaves it disabled. |
+| `MIRA_CAMERA_DEVICE` | `0` | Camera to open: a device index such as `0`, or a device path such as `/dev/video2`. Blank selects the default. |
+| `MIRA_CAMERA_WIDTH` | device default | Requested frame width in pixels. Non-integer or non-positive values are ignored. |
+| `MIRA_CAMERA_HEIGHT` | device default | Requested frame height in pixels. Non-integer or non-positive values are ignored. |
+| `MIRA_CAMERA_FPS` | device default | Requested frame rate. Non-numeric, non-finite or non-positive values are ignored. |
+
+The four `MIRA_OLLAMA_*`/`MIRA_LLM_*` variables only matter in LLM mode, and
+the `MIRA_CAMERA_*` settings only when `MIRA_CAMERA` enables the camera.
 
 Example:
 
@@ -57,6 +64,37 @@ Any deviation sets `llm_fallback_used = True` and one `llm_fallback_reason`:
 | `invalid_schema` | Any other validation failure | LLM intent kept, no action |
 
 These diagnostics stay in intent metadata; they are not shown in the chat UI.
+
+## Camera
+
+The camera is optional and off by default. It needs the `camera` extra, which
+installs `opencv-python-headless`:
+
+```bash
+venv/bin/python -m pip install --constraint constraints.txt --editable ".[dev,camera]"
+MIRA_CAMERA=1 MIRA_CAMERA_DEVICE=0 venv/bin/python -m mira.main
+```
+
+Use the headless wheel. The regular `opencv-python` wheel bundles its own Qt
+plugins, which conflict with PySide6 in the same process.
+
+Requested width, height and rate are best effort; the device may choose
+something else, and the status reports what it actually delivers. Capture
+starts with the application, on a background thread, so opening a slow or
+missing device never blocks the UI. The debug drawer's
+**Camera** section shows the state:
+
+| State | Meaning |
+|---|---|
+| `disabled` | `MIRA_CAMERA` is not set. |
+| `stopped` | Configured but not capturing, including after a normal stop. |
+| `opening` | Acquiring the device. |
+| `active` | Delivering frames; shows device, size and reported rate. |
+| `unavailable` | Could not be opened: missing, busy (another application holds it), not permitted, or OpenCV is not installed. The reason is shown. |
+| `failed` | Opened, but reads kept failing (five in a row) or the driver raised. |
+
+A camera that is unavailable or failed does not affect anything else. Frames
+are kept in memory only, and only the newest one; nothing is recorded to disk.
 
 ## Expression profiles
 

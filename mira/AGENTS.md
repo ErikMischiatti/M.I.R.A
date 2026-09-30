@@ -37,6 +37,9 @@ Main modules:
     `GazeAttention` and per-expression gaze weights (`mira/domain/gaze.py`),
     and the normalized `AttentionTarget` input (`mira/domain/attention.py`)
   - legacy presentation compatibility: `FaceState` (`mira/domain/state.py`)
+  - camera boundary: `CameraSource`, `CameraFrame`, `CameraInfo`,
+    `CameraSettings`, `CameraStatus` (`mira/domain/camera.py`); no OpenCV or
+    numpy types
   - `UserInput`, `IntentResult`, `BrainResponse` (`mira/domain/models.py`)
   - depends on nothing else in `mira`; must never import PySide6
 
@@ -44,6 +47,8 @@ Main modules:
   - implementations of domain ports against concrete technologies
   - `QtScheduler` (`mira/adapters/qt_scheduler.py`): the production timing
     adapter; the only place that knows the turn lifecycle runs on a Qt event loop
+  - `OpenCVCameraSource` (`mira/adapters/opencv_camera.py`): the only module
+    that imports `cv2`, lazily; OpenCV is the optional `camera` extra
   - may import `mira.domain`; never imported by the domain
 
 - `mira/application`
@@ -67,6 +72,8 @@ Main modules:
   - brain orchestration
   - interaction manager
   - embodied behavior
+  - camera capture (`CameraCapture`): owns the capture thread, the newest
+    frame and the camera status
 
 - `mira/cognition`
   - intent engine abstraction
@@ -114,6 +121,11 @@ Main modules:
   core is constructible and testable with no GUI toolkit installed.
 - Keep Qt geometry, timers, disk I/O, EventBus access and cognitive concepts out
   of `EmbodimentFrame`; it is an outward pose value, not animation state.
+- Keep camera frames off the EventBus: consumers pull from `CameraCapture`
+  (`latest_frame`, `wait_for_frame`). The capture thread must not touch Qt,
+  the EventBus or application state, and no test may require a webcam or
+  OpenCV. Camera support must stay optional: a missing device or library is a
+  status, never an exception.
 - Session memory lives in `mira/memory` and the event bus in `mira/messaging`,
   not in `mira/core`. The layering checker declares zero exceptions; keep it
   that way rather than adding one.

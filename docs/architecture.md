@@ -12,9 +12,10 @@ environment variables and runtime resources see
 [Layers](#2-layer-map) · [Composition](#3-composition) ·
 [Interaction flow](#4-interaction-flow) · [Messaging](#5-messaging) ·
 [Cognition](#6-cognition) · [Memory](#7-memory) · [Actions](#8-actions) ·
-[Embodiment](#9-embodiment) · [Lifecycle](#10-runtime-resources-and-lifecycle) ·
-[Paths](#11-paths) · [Enforcement](#12-enforcement) ·
-[Future boundaries](#13-intended-future-boundaries-not-implemented)
+[Embodiment](#9-embodiment) · [Camera](#10-camera-input) ·
+[Lifecycle](#11-runtime-resources-and-lifecycle) · [Paths](#12-paths) ·
+[Enforcement](#13-enforcement) ·
+[Future boundaries](#14-intended-future-boundaries-not-implemented)
 
 ## 1. Architectural principles
 
@@ -27,6 +28,8 @@ environment variables and runtime resources see
 - `ActivityAuthority` is the sole committer of shared semantic activity/affect
   state; events notify subscribers but do not own state.
 - Rendering consumes immutable, renderer-independent `EmbodimentFrame` values.
+- Camera frames travel on their own pull-based data plane, never on the
+  semantic EventBus, and are produced off the UI thread.
 - Every action reaches an explicit, source-independent execution policy before
   its handler can run.
 
@@ -39,14 +42,14 @@ Permissions are not transitive: `cognition` may import `actions`, but not
 
 | Layer | Responsibility | May import other M.I.R.A. layers |
 |---|---|---|
-| `domain` | Shared models, scheduler port, embodiment semantics, micro-motions and playback | none |
+| `domain` | Shared models, scheduler and camera ports, embodiment semantics, micro-motions and playback | none |
 | `config` | Packaged configuration resources | none |
 | `messaging` | Synchronous in-process event fan-out | none |
 | `memory` | In-session retention and context | `domain` |
 | `actions` | Contracts, registry, policy, executor, handlers | `domain`, `memory`, `messaging` |
 | `cognition` | Rule/LLM intent engines, schema checks, response building | `domain`, `memory`, `actions` |
-| `core` | Turn, interaction, activity, and behavior orchestration | `domain`, `messaging`, `memory`, `actions`, `cognition` |
-| `adapters` | Concrete implementations of domain ports | `domain` |
+| `core` | Turn, interaction, activity, and behavior orchestration; camera capture | `domain`, `messaging`, `memory`, `actions`, `cognition` |
+| `adapters` | Concrete implementations of domain ports (Qt scheduler, OpenCV camera) | `domain` |
 | `application` | Object construction and wiring | `domain`, `messaging`, `core`, `adapters` |
 | `ui` | Qt presentation and face control | `domain`, `application` |
 | `main` | Process entry point | unrestricted composition entry point |
@@ -68,6 +71,8 @@ mira.main
       → Brain
       → InteractionManager
       → EmbodiedBehavior
+      → CameraCapture(OpenCVCameraSource if MIRA_CAMERA is set, else none)
+  → application.start()   (starts camera capture, if enabled)
   → MainWindow(application)
   → Qt event loop
 ```
@@ -75,8 +80,9 @@ mira.main
 `Brain` currently constructs its own session memory, selected intent engine,
 response builder, action registry, executor, and concrete action handlers. The
 composition root shares one bus, one activity authority, and one scheduler
-across the graph. Tests may inject `ManualScheduler`; no service container or
-runtime registry exists.
+across the graph. Tests may inject `ManualScheduler` and a fake `CameraSource`;
+no service container or runtime registry exists. Construction opens no device:
+capture begins only at `Application.start()`.
 
 Construction order is observable: `InteractionManager` and `EmbodiedBehavior`
 subscribe to the same events from their constructors, so the order they are
@@ -259,14 +265,84 @@ came from a mouse.
 reactions to `greeting`/`unknown` intents and a delayed decay from the response
 expression back to idle or listening.
 
-## 10. Runtime resources and lifecycle
+## 10. Camera input
+
+An optional camera foundation exists: acquiring frames and reporting camera
+status. **No perception exists yet.** Nothing detects faces, people or objects,
+and camera frames do not influence the face or any semantic state.
+
+```text
+webcam (/dev/video*, index or path)
+  → OpenCVCameraSource        adapters; the only module that imports cv2
+  → CameraSource port         domain: open() → CameraInfo, read() → CameraFrame | None, close()
+  → CameraCapture             core; one dedicated capture thread
+      ├── latest_frame() / wait_for_frame()   frame data plane (pull)
+      └── status: CameraStatus               disabled · stopped · opening · active · unavailable · failed
+```
+
+- **Boundary** (`mira/domain/camera.py`). `CameraFrame` is an immutable
+  capture: sequence, monotonic timestamp, width, height, `PixelFormat.BGR8`,
+  and `pixels`, a read-only flat byte view that owns its buffer. It carries no
+  OpenCV or numpy type, and a consumer can wrap it without copying. Devices
+  are opaque strings. `CameraError` is the single open-failure type.
+- **Adapter** (`mira/adapters/opencv_camera.py`). `OpenCVCameraSource`
+  imports OpenCV lazily on `open()`. OpenCV is the optional `camera` extra
+  (`opencv-python-headless`; the regular wheel bundles Qt plugins that clash
+  with PySide6). Without it, the camera reports itself unavailable. Requested
+  size and rate are best effort, and `CameraInfo` reports what the device
+  negotiated. Each read allocates a new image, which the frame wraps
+  without a copy.
+- **Runtime** (`mira/core/camera_capture.py`). `CameraCapture` owns one daemon
+  thread, `mira-camera`, which is the only thread that touches the source: it
+  opens, reads, and always releases the device on exit. The `Scheduler` port is
+  not used. It carries short turn work whose results return to the serialized
+  context, while a camera is a continuous producer whose frames must never be
+  marshalled onto the UI thread. The capture thread never touches Qt, the
+  EventBus or application state.
+- **Frame transport.** Frames do not travel on the EventBus. The bus is a
+  synchronous fan-out for small semantic events on the serialized context;
+  30 images a second through it would either run every subscriber on the
+  capture thread or queue images on the UI thread. The capture keeps only the
+  newest frame and consumers pull it: `latest_frame()` never blocks, and
+  `wait_for_frame(newer_than=...)` lets a consumer thread sleep until something
+  newer arrives. A slow consumer sees fewer frames, never a backlog, and no
+  consumer code runs on the capture thread. Nothing is published after a stop.
+- **Failure.** A missing, busy or not-permitted device, or missing OpenCV, is
+  `unavailable`, with the reason. OpenCV cannot tell those cases apart, so the
+  reason says so. An unexpected open error, or five consecutive failed reads,
+  is `failed`. Failures stay inside the capture thread and become status,
+  which is readable from any thread, never raises, and keeps a failure reason
+  visible after a stop. The rest of MIRA runs identically without a camera.
+- **Diagnostics.** The debug drawer shows one read-only status line, polled
+  every 500 ms while the drawer is visible. It receives a status reader, not
+  the capture, and there is no image preview.
+
+Future perception is expected to consume frames and produce semantic
+observations. None of this is implemented:
+
+```text
+CameraSource → CameraFrame
+  → future PersonDetector → future PersonObservation
+  → future AttentionTarget → MicroMotions (existing gaze input)
+
+CameraFrame
+  → future ObjectDetector → DetectedEntity[]
+  → future RelateAnything adapter → SceneRelation[]
+```
+
+## 11. Runtime resources and lifecycle
 
 `QApplication` owns the process event loop; the main window owns its widget
 tree, and `FaceWidget` owns its parented frame timer, the only clock that steps
 the face. Each `FaceController` owns one `MicroMotions` instance (injectable for
 tests); it holds no timer and has nothing to shut down. `Application` owns the
-shared scheduler boundary. `QApplication.aboutToQuit` calls
-`Application.shutdown()`, which shuts down the scheduler.
+shared scheduler boundary and the camera capture. `QApplication.aboutToQuit`
+calls `Application.shutdown()`, which first shuts down the camera (stopping
+capture, joining the capture thread for up to two seconds, and releasing the
+device) and then the scheduler. Both are idempotent, and a shut-down camera
+refuses to start again. A read that outlasts the join still releases the
+device when it returns, and no second reader starts meanwhile; the capture
+thread is a daemon, so it cannot keep the process alive.
 
 `QtScheduler` owns delayed timers and completion receivers on its construction
 thread. Shutdown is idempotent: it cancels pending timers, detaches completion
@@ -281,7 +357,7 @@ runtime creates one graph/window and exits when it closes. Desktop applications,
 URLs, directories, and notifications are fire-and-forget external effects;
 processes launched by M.I.R.A. are not retained or terminated at shutdown.
 
-## 11. Paths
+## 12. Paths
 
 - Package resources resolve from the installed `mira` package, not the process
   working directory. The expression profile JSON is currently both the packaged
@@ -297,7 +373,7 @@ processes launched by M.I.R.A. are not retained or terminated at shutdown.
   `bin/mira`). Installed distributions do not infer a checkout from the working
   directory or `site-packages`.
 
-## 12. Enforcement
+## 13. Enforcement
 
 Two standard-library checkers turn the boundaries above into CI failures:
 
@@ -310,25 +386,31 @@ Both declare zero exceptions, and both are exercised by the test suite
 (`tests/test_layering.py`, `tests/test_activity_state_authority.py`). The full
 validation baseline is in [development.md](development.md#validation).
 
-## 13. Intended future boundaries (not implemented)
+## 14. Intended future boundaries (not implemented)
 
 The following are extension directions, not existing APIs:
 
-- Camera/perception may produce `AttentionTarget` values that reach the same
-  gaze path the cursor uses today:
+- Perception may consume camera frames and produce semantic observations,
+  and attention derived from them may reach the gaze path the cursor uses
+  today:
 
   ```text
-  external perception (camera, person detector, robot sensors)
+  CameraFrame (exists)
         ↓
-  AttentionTarget
+  PersonDetector → PersonObservation
         ↓
-  MicroMotions / GazeAttention
+  AttentionTarget (exists)
+        ↓
+  MicroMotions / GazeAttention (exists)
         ↓
   EmbodimentFrame → renderer
   ```
 
-  `AttentionTarget` and the gaze behavior exist; no perception source,
-  camera subsystem, or wiring from one into the face exists yet.
+  Camera capture (section 10), `AttentionTarget` and the gaze behavior
+  (section 9) exist.
+  No detector, observation model, or wiring from the camera into the face
+  exists yet. Relation perception (object detection feeding a RelateAnything
+  adapter) is a further direction with no code.
 - Voice input may enter the existing input/cognition pipeline, and voice output
   may consume responses; no audio subsystem exists.
 - Persistent memory may replace or complement `SessionMemory` behind an explicit
