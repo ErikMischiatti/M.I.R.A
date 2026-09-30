@@ -18,6 +18,7 @@ from mira.domain.embodiment_playback import (
     EyeAsymmetry,
     PlaybackPose,
 )
+from mira.domain.micro_motion import BlinkMotion
 from mira.domain.state import FaceState
 
 
@@ -30,8 +31,7 @@ class FaceController:
         self.expression_key = ExpressionKey.IDLE
         self.profile = self.expression_library[self.state]
 
-        self.left_eye_closed = False
-        self.right_eye_closed = False
+        self._blink = BlinkMotion()
 
         self._playback = EmbodimentPlayback()
         self._target_pose = PlaybackPose()
@@ -46,11 +46,6 @@ class FaceController:
         self.look_deadzone = 0.035
 
         self.speaking_phase = 0.0
-
-        self.blink_interval_frames = 100
-        self.blink_frame_counter = 0
-        self.blink_duration_frames = 5
-        self.blink_active_frames = 0
 
         self.idle_change_interval_frames = 60
         self.idle_frame_counter = 0
@@ -70,17 +65,6 @@ class FaceController:
         self.scrutiny_activation = 0.0
 
         self.apply_profile()
-
-    def random_blink_interval(self) -> int:
-        min_frames = min(
-            self.profile.blink_min_interval_frames,
-            self.profile.blink_max_interval_frames,
-        )
-        max_frames = max(
-            self.profile.blink_min_interval_frames,
-            self.profile.blink_max_interval_frames,
-        )
-        return random.randint(min_frames, max_frames)
 
     def set_state(self, new_state: FaceState):
         """Legacy presentation entry point for debug and compatibility callers."""
@@ -108,8 +92,7 @@ class FaceController:
         self._target_pose = PlaybackPose.from_definition(definition)
         self._asymmetry = EyeAsymmetry.from_definition(definition)
 
-        self.blink_duration_frames = self.profile.blink_duration_frames
-        self.blink_interval_frames = self.random_blink_interval()
+        self._blink.configure(self.profile.to_blink_settings())
 
     def set_look_target(self, x_ratio: float, y_ratio: float):
         x_ratio = max(0.0, min(1.0, x_ratio))
@@ -148,28 +131,6 @@ class FaceController:
 
     def lerp(self, current: float, target: float, alpha: float) -> float:
         return current + (target - current) * alpha
-
-    def update_blink(self):
-        if not self.profile.blink_enabled:
-            self.left_eye_closed = False
-            self.right_eye_closed = False
-            return
-
-        if self.blink_active_frames > 0:
-            self.blink_active_frames -= 1
-            self.left_eye_closed = True
-            self.right_eye_closed = True
-
-            if self.blink_active_frames == 0:
-                self.left_eye_closed = False
-                self.right_eye_closed = False
-                self.blink_frame_counter = 0
-                self.blink_interval_frames = self.random_blink_interval()
-            return
-
-        self.blink_frame_counter += 1
-        if self.blink_frame_counter >= self.blink_interval_frames:
-            self.blink_active_frames = self.blink_duration_frames
 
     def update_idle_behavior(self):
         if not self.profile.idle_enabled:
@@ -250,7 +211,7 @@ class FaceController:
         self.speaking_phase += 0.05
 
     def update(self, dt_seconds: float):
-        self.update_blink()
+        self._blink.step()
         self.update_idle_behavior()
         self.update_attention_target()
         self.update_scrutiny_motion()
@@ -259,8 +220,8 @@ class FaceController:
             self._target_pose,
             dt_seconds,
             asymmetry=self._asymmetry,
-            left_eye_closed=self.left_eye_closed,
-            right_eye_closed=self.right_eye_closed,
+            left_eye_closed=self.eyes_closed,
+            right_eye_closed=self.eyes_closed,
         )
 
     def get_profile(self):
@@ -274,13 +235,17 @@ class FaceController:
     def current_pose(self) -> PlaybackPose:
         return self._playback.current_pose
 
+    @property
+    def eyes_closed(self) -> bool:
+        return self._blink.closed
+
     def get_frame(self) -> EmbodimentFrame:
         """Snapshot the fully resolved instantaneous pose for any renderer."""
 
         return self._playback.get_frame(
             asymmetry=self._asymmetry,
-            left_eye_closed=self.left_eye_closed,
-            right_eye_closed=self.right_eye_closed,
+            left_eye_closed=self.eyes_closed,
+            right_eye_closed=self.eyes_closed,
         )
 
     def refresh_profile_targets(self):

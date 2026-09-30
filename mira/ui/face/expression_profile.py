@@ -1,6 +1,7 @@
 from dataclasses import asdict, dataclass
 
 from mira.domain.embodiment_frame import ExpressionDefinition
+from mira.domain.micro_motion import BlinkSettings
 
 
 @dataclass
@@ -48,6 +49,14 @@ class ExpressionProfile:
             eyelid_tired=self.eyelid_tired,
             eyelid_angry=self.eyelid_angry,
             eyelid_happy=self.eyelid_happy,
+        )
+
+    def to_blink_settings(self) -> BlinkSettings:
+        return BlinkSettings(
+            enabled=self.blink_enabled,
+            min_interval_steps=self.blink_min_interval_frames,
+            max_interval_steps=self.blink_max_interval_frames,
+            duration_steps=self.blink_duration_frames,
         )
 
     @classmethod
