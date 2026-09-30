@@ -6,10 +6,7 @@ from mira.domain.embodiment import (
     ExpressionKey,
     resolve_expression_key,
 )
-from mira.domain.embodiment_frame import (
-    EmbodimentFrame,
-    resolve_embodiment_frame,
-)
+from mira.domain.embodiment_frame import EmbodimentFrame, frame_from_definition
 from mira.domain.embodiment_playback import (
     EmbodimentPlayback,
     EyeAsymmetry,
@@ -21,6 +18,16 @@ from mira.domain.state import FaceState
 
 
 class FaceController:
+    """Present one expression at a time and hand renderers its current frame.
+
+    Owns the editable expression library and the choice of profile for the
+    current intent, then coordinates the renderer-independent parts: the
+    profile's pose is the playback base, `MicroMotions` layers blink, idle,
+    drift, pulse and attention gaze on top, and `EmbodimentPlayback`
+    interpolates toward the result. Attention arrives as `AttentionTarget`
+    values; the controller does not know which input produced them.
+    """
+
     def __init__(self):
         self.expression_library = load_expression_library()
 
@@ -33,7 +40,6 @@ class FaceController:
 
         self._playback = EmbodimentPlayback()
         self._base_pose = PlaybackPose()
-        self._target_pose = PlaybackPose()
         self._asymmetry = EyeAsymmetry()
 
         self.apply_profile()
@@ -55,12 +61,8 @@ class FaceController:
         self.apply_profile()
 
     def apply_profile(self):
-        definitions = {
-            ExpressionKey[state.name]: profile.to_definition()
-            for state, profile in self.expression_library.items()
-        }
-        self.base_frame = resolve_embodiment_frame(self.intent, definitions)
-        definition = definitions[self.expression_key]
+        definition = self.profile.to_definition()
+        self.base_frame = frame_from_definition(definition)
         self._base_pose = PlaybackPose.from_definition(definition)
         self._asymmetry = EyeAsymmetry.from_definition(definition)
 
@@ -69,7 +71,6 @@ class FaceController:
                 gaze_weight=gaze_weight_for(self.expression_key)
             )
         )
-        self._target_pose = self._motions.state.apply_to(self._base_pose)
 
     @property
     def attention_target(self) -> AttentionTarget | None:
@@ -83,9 +84,8 @@ class FaceController:
 
     def update(self, dt_seconds: float):
         motion = self._motions.step()
-        self._target_pose = motion.apply_to(self._base_pose)
         self._playback.advance(
-            self._target_pose,
+            motion.apply_to(self._base_pose),
             dt_seconds,
             asymmetry=self._asymmetry,
             left_eye_closed=motion.eyes_closed,
@@ -97,7 +97,7 @@ class FaceController:
 
     @property
     def target_pose(self) -> PlaybackPose:
-        return self._target_pose
+        return self._motions.state.apply_to(self._base_pose)
 
     @property
     def current_pose(self) -> PlaybackPose:
