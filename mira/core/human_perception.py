@@ -15,21 +15,29 @@ Results use the same pull-based data plane as frames, not the event bus: the
 newest `PersonDetections` is kept, `latest_detections` never blocks, and
 `wait_for_detections(after=...)` sleeps until a newer result exists. Turning
 changes such as "someone arrived" into semantic events is a later layer's job.
+
+Raw results flicker, so `presence` offers a stabilized view: a
+`PresenceStabilizer` fed every result, and told the time when no frames
+arrive, so a stopped camera lets presence lapse too.
 """
 
 from __future__ import annotations
 
 import threading
+import time
+from collections.abc import Callable
 
 from mira.core.camera_capture import CameraCapture
 from mira.domain.camera import CameraFrame
 from mira.domain.perception import (
+    HumanPresence,
     PersonDetections,
     PerceptionError,
     PerceptionState,
     PerceptionStatus,
     PersonDetector,
     PersonObservation,
+    PresenceStabilizer,
 )
 
 # States a stop turns into STOPPED. A failure reason is kept instead.
@@ -58,6 +66,8 @@ class HumanPerception:
         detector: PersonDetector | None,
         *,
         join_timeout_s: float = 2.0,
+        stabilizer_factory: Callable[[], PresenceStabilizer] = PresenceStabilizer,
+        clock: Callable[[], float] = time.monotonic,
     ):
         self._camera = camera
         self._detector = detector
@@ -72,6 +82,9 @@ class HumanPerception:
         self._results = threading.Condition()
         self._latest: PersonDetections | None = None
         self._version = 0
+        self._stabilizer_factory = stabilizer_factory
+        self._clock = clock
+        self._stabilizer = stabilizer_factory()
 
     @property
     def enabled(self) -> bool:
@@ -86,6 +99,13 @@ class HumanPerception:
     def status(self) -> PerceptionStatus:
         with self._lock:
             return self._status
+
+    @property
+    def presence(self) -> HumanPresence:
+        """Stabilized presence; nobody is present while perception is stopped."""
+
+        with self._results:
+            return self._stabilizer.presence
 
     def latest_detections(self) -> PersonDetections | None:
         """The newest result of the current run, or None; never blocks."""
@@ -184,6 +204,9 @@ class HumanPerception:
         while not stop_requested.is_set():
             frame = self._camera.wait_for_frame(after=last_frame, timeout_s=self.FRAME_WAIT_S)
             if frame is None:
+                with self._results:
+                    if not stop_requested.is_set():
+                        self._stabilizer.expire(self._clock())
                 stop_requested.wait(self.IDLE_BACKOFF_S)
                 continue
             last_frame = frame
@@ -224,11 +247,13 @@ class HumanPerception:
                 observed_at=frame.timestamp_s,
                 persons=persons,
             )
+            self._stabilizer.observe(self._latest)
             self._results.notify_all()
 
     def _clear_results(self) -> None:
         with self._results:
             self._latest = None
+            self._stabilizer = self._stabilizer_factory()
             self._results.notify_all()
 
     def _report(self, stop_requested: threading.Event, status: PerceptionStatus) -> None:

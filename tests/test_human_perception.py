@@ -16,10 +16,16 @@ from mira.application.perception_config import (
 from mira.core.camera_capture import CameraCapture
 from mira.core.human_perception import HumanPerception
 from mira.domain.camera import CameraError
-from mira.domain.perception import PerceptionError, PerceptionState, PerceptionStatus
+from mira.domain.perception import (
+    HumanPresence,
+    PerceptionError,
+    PerceptionState,
+    PerceptionStatus,
+    PresenceStabilizer,
+)
 from mira.domain.scheduler import ManualScheduler
 
-from camera_doubles import FakeCameraSource
+from camera_doubles import FakeCameraSource, make_frame
 from perception_doubles import FakePersonDetector
 
 
@@ -463,4 +469,72 @@ def test_a_waiting_consumer_is_released_when_perception_stops():
 
     assert results == [None]
     detector.hold.set()
+    stop_pair(camera, perception)
+
+
+# --- stabilized presence ----------------------------------------------------------------
+
+
+def quick_presence():
+    return PresenceStabilizer(confirm_after_s=0.0, release_after_s=0.05)
+
+
+def test_nobody_is_present_until_someone_is_detected():
+    camera, perception, _ = running_pair(FakePersonDetector(default=[]), stabilizer_factory=quick_presence)
+
+    assert perception.wait_for_detections(timeout_s=1.0) is not None
+    assert perception.presence == HumanPresence()
+    stop_pair(camera, perception)
+
+
+def test_a_detected_person_becomes_present_and_leaving_clears_presence():
+    detector = FakePersonDetector(default=[(0.4, 0.3, 0.6, 0.7)])
+    camera, perception, _ = running_pair(detector, stabilizer_factory=quick_presence)
+
+    assert wait_until(lambda: perception.presence.present)
+    assert perception.presence.persons[0].center.x == pytest.approx(0.5)
+
+    detector.default = []
+    assert wait_until(lambda: not perception.presence.present)
+    stop_pair(camera, perception)
+
+
+def test_presence_lapses_when_the_camera_stops_delivering_frames():
+    detector = FakePersonDetector(default=[(0.4, 0.3, 0.6, 0.7)])
+    camera, perception, _ = running_pair(detector, stabilizer_factory=quick_presence)
+    assert wait_until(lambda: perception.presence.present)
+
+    camera.stop()
+
+    assert wait_until(lambda: not perception.presence.present)
+    assert perception.running
+    stop_pair(camera, perception)
+
+
+def test_stopping_perception_forgets_presence():
+    detector = FakePersonDetector(default=[(0.4, 0.3, 0.6, 0.7)])
+    camera, perception, _ = running_pair(detector, stabilizer_factory=quick_presence)
+    assert wait_until(lambda: perception.presence.present)
+
+    perception.stop()
+
+    assert perception.presence == HumanPresence()
+    stop_pair(camera, perception)
+
+
+def test_presence_uses_the_injected_clock_when_no_frames_arrive():
+    now = [1000.0]
+    detector = FakePersonDetector(default=[(0.4, 0.3, 0.6, 0.7)])
+    source = FakeCameraSource([make_frame(0, timestamp_s=1000.0)], then="block")
+    camera, perception, _ = running_pair(
+        detector, source=source, stabilizer_factory=quick_presence, clock=lambda: now[0]
+    )
+    assert wait_until(lambda: perception.presence.present)
+
+    time.sleep(0.3)
+    assert perception.presence.present  # the injected clock has not moved
+
+    now[0] = 1001.0
+    assert wait_until(lambda: not perception.presence.present)
+    source.unblock.set()
     stop_pair(camera, perception)

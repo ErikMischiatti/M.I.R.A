@@ -153,6 +153,75 @@ class PersonDetections:
         return len(self.persons)
 
 
+@dataclass(frozen=True, slots=True)
+class HumanPresence:
+    """Whether someone is reliably there, with the latest sighting while they are.
+
+    ``persons`` is the most recent non-empty detection while present, possibly
+    a little stale during the disappearance grace period (``last_seen_at``
+    says when it was made), and empty while nobody is present.
+    ``changed_at`` is when ``present`` last changed, None before the first
+    change.
+    """
+
+    present: bool = False
+    persons: tuple[PersonObservation, ...] = ()
+    last_seen_at: float | None = None
+    changed_at: float | None = None
+
+
+class PresenceStabilizer:
+    """Turn flickering per-frame detections into stable presence.
+
+    Someone becomes present once detected continuously for ``confirm_after_s``
+    and absent once no one has been detected for ``release_after_s``. Time is
+    explicit: each detection carries its frame's capture time, and `expire`
+    lets presence lapse when no frames arrive at all. This is not tracking;
+    it does not follow individuals or tell them apart.
+    """
+
+    def __init__(self, *, confirm_after_s: float = 0.3, release_after_s: float = 1.5):
+        for name, value in (("confirm_after_s", confirm_after_s), ("release_after_s", release_after_s)):
+            if not (math.isfinite(value) and value >= 0.0):
+                raise ValueError(f"{name} must be finite and non-negative")
+        self._confirm_after_s = confirm_after_s
+        self._release_after_s = release_after_s
+        self._presence = HumanPresence()
+        self._candidate_since: float | None = None
+
+    @property
+    def presence(self) -> HumanPresence:
+        return self._presence
+
+    def observe(self, detections: PersonDetections) -> HumanPresence:
+        """Account for one analysed frame."""
+
+        now = detections.observed_at
+        if detections.persons:
+            if self._presence.present:
+                self._presence = HumanPresence(
+                    True, detections.persons, now, self._presence.changed_at
+                )
+            else:
+                if self._candidate_since is None:
+                    self._candidate_since = now
+                if now - self._candidate_since >= self._confirm_after_s:
+                    self._candidate_since = None
+                    self._presence = HumanPresence(True, detections.persons, now, now)
+            return self._presence
+
+        self._candidate_since = None
+        return self.expire(now)
+
+    def expire(self, now: float) -> HumanPresence:
+        """Let presence lapse once nobody has been seen for the grace period."""
+
+        presence = self._presence
+        if presence.present and now - presence.last_seen_at >= self._release_after_s:
+            self._presence = HumanPresence(False, (), presence.last_seen_at, now)
+        return self._presence
+
+
 class PersonDetector(Protocol):
     """Find the people visible in a camera frame.
 
