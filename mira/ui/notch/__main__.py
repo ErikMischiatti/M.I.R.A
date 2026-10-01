@@ -1,50 +1,90 @@
-"""Notch tuning environment: ``python -m mira.ui.notch``.
+"""Standalone notch: ``python -m mira.ui.notch [--tune | --notch-only]``.
 
 Developer tooling only; M.I.R.A.'s normal startup never shows the notch. This
 opens the real `NotchWindow`, showing its own running embodiment (one
 `FaceController` stepped by one `FaceAnimator`, so blink and micro-motions
-play), next to a `NotchDebugWindow` that tunes it live. The notch starts
-compact with the idle expression and changes only when a control is used.
-The screen is chosen by the production central-screen policy. Closing the
-tuning window, or Ctrl+C, quits; nothing is saved.
+play), with the saved notch configuration (see `config_store`), or the
+production defaults when there is none or it is invalid. The notch starts
+compact with the idle expression.
+
+- ``--notch-only`` (``bin/mira-notch``): the notch alone; Ctrl+C or SIGTERM
+  quits.
+- ``--tune`` (the default; ``bin/mira-tune``): the notch next to a
+  `NotchDebugWindow` that tunes it live and can save, reload and reset the
+  configuration. Closing the tuning window, or Ctrl+C, quits.
+
+``--config PATH`` reads and writes another file than the default
+``$MIRA_NOTCH_CONFIG`` or ``$XDG_CONFIG_HOME/mira/notch.json``.
 """
 
+from __future__ import annotations
+
+import argparse
 import signal
 import sys
 from dataclasses import dataclass
+from pathlib import Path
 
 from PySide6.QtWidgets import QApplication
 
 from mira.domain.embodiment import ActivityState, EmbodimentIntent
 from mira.ui.face.face_animator import FaceAnimator
 from mira.ui.face.face_controller import FaceController
+from mira.ui.notch.config_store import ConfigSession, NotchSettings
 from mira.ui.notch.debug_window import NotchDebugWindow
 from mira.ui.notch.notch_window import NotchWindow
 from mira.ui.notch.screen_selection import desktop_bounds, distance_squared_to_desktop_centre
-from mira.ui.notch.screens import rect_from_qrect
+from mira.ui.notch.screens import monitor_identity, rect_from_qrect
+from mira.ui.notch.visual_config import InvalidVisualConfig
 
 
 @dataclass
-class TuningEnvironment:
+class NotchEnvironment:
     controller: FaceController
     animator: FaceAnimator
     notch: NotchWindow
-    debug: NotchDebugWindow
+    session: ConfigSession | None
+    debug: NotchDebugWindow | None = None
 
 
-def build_tuning_environment() -> TuningEnvironment:
-    """The notch, opening to compact with the idle expression, and its tuner.
+# The tuning environment is the notch environment with its tuning window.
+TuningEnvironment = NotchEnvironment
 
-    The animator is not started and the tuning window not shown.
+
+def build_notch_environment(session: ConfigSession | None = None, *, tuning: bool = True) -> NotchEnvironment:
+    """The notch, opening to compact with the idle expression.
+
+    The notch starts with ``session``'s startup settings, or the production
+    defaults without a session. Settings the notch's own embodiment rejects
+    are reported and replaced by the defaults; startup never fails on
+    configuration. With ``tuning`` a tuning window is built too. The animator
+    is not started and no tuning window is shown.
     """
 
     controller = FaceController()
     controller.set_intent(EmbodimentIntent(ActivityState.IDLE))
     animator = FaceAnimator(controller)
-    notch = NotchWindow(animator=animator)
+    settings = NotchSettings() if session is None else session.startup_settings
+    notch = NotchWindow(animator=animator, monitor_preference=settings.monitor)
+    try:
+        notch.apply_visual_config(settings.visual)
+    except InvalidVisualConfig as error:
+        # Saved settings were checked against the packaged profiles; the
+        # embodiment shown here may differ. Fall back rather than clip.
+        print(f"[notch] saved visual configuration not applied: {error}", file=sys.stderr)
+        notch.apply_visual_config(NotchSettings().visual)
     notch.show_notch()
-    debug = NotchDebugWindow(notch, controller)
-    return TuningEnvironment(controller, animator, notch, debug)
+
+    environment = NotchEnvironment(controller, animator, notch, session)
+    if tuning:
+        environment.debug = NotchDebugWindow(notch, controller, session)
+    return environment
+
+
+def build_tuning_environment(session: ConfigSession | None = None) -> NotchEnvironment:
+    """The notch and its tuner; without ``session`` nothing is persisted."""
+
+    return build_notch_environment(session, tuning=True)
 
 
 def print_screens(app: QApplication, notch: NotchWindow):
@@ -61,27 +101,53 @@ def print_screens(app: QApplication, notch: NotchWindow):
         if screen is app.primaryScreen():
             marks.append("primary")
         print(
-            f"[notch]   {screen.name()!r} geometry={screen.geometry().getRect()} "
+            f"[notch]   {monitor_identity(screen).label!r} geometry={screen.geometry().getRect()} "
             f"available={screen.availableGeometry().getRect()} "
             f"centre=({area.center_x}, {area.y + area.height / 2.0}) "
             f"d2={distance_squared_to_desktop_centre(area, desktop):.0f} {' '.join(marks)}"
         )
+    selection = notch.selection
+    if selection is not None:
+        print(f"[notch] monitor selection: {selection.mode.value}")
 
 
-def main():
-    app = QApplication(sys.argv)
+def parse_arguments(argv: list[str]) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        prog="python -m mira.ui.notch",
+        description="Show the M.I.R.A. notch on its own, optionally with its tuning window.",
+    )
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--tune", dest="tuning", action="store_true", default=True,
+                      help="show the tuning window next to the notch (default)")
+    mode.add_argument("--notch-only", dest="tuning", action="store_false",
+                      help="show the notch alone, with the saved configuration")
+    parser.add_argument("--config", type=Path, metavar="PATH",
+                        help="configuration file (default: $MIRA_NOTCH_CONFIG or "
+                             "$XDG_CONFIG_HOME/mira/notch.json)")
+    return parser.parse_args(argv)
+
+
+def main(argv: list[str] | None = None):
+    arguments = parse_arguments(sys.argv[1:] if argv is None else argv)
+    app = QApplication(sys.argv[:1])
     # Let Ctrl+C in the terminal end the tool; the Qt loop otherwise hides it.
     signal.signal(signal.SIGINT, signal.SIG_DFL)
 
-    environment = build_tuning_environment()
-    # The notch is a tool window, which Qt does not count as a last window.
-    environment.debug.closed.connect(app.quit)
+    session = ConfigSession(arguments.config)
+    print(f"[notch] mode: {'tune' if arguments.tuning else 'notch only'}")
+    print(f"[notch] configuration: {session.path} ({session.source.value})")
+    if session.diagnostic:
+        print(f"[notch] saved configuration ignored, using production defaults: {session.diagnostic}", file=sys.stderr)
 
+    environment = build_notch_environment(session, tuning=arguments.tuning)
     print(f"[notch] platform: {app.platformName()}")
     print_screens(app, environment.notch)
 
     environment.animator.start()
-    environment.debug.show()
+    if environment.debug is not None:
+        # The notch is a tool window, which Qt does not count as a last window.
+        environment.debug.closed.connect(app.quit)
+        environment.debug.show()
     sys.exit(app.exec())
 
 

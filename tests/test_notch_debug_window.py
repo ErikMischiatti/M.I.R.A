@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+
 import pytest
 
 pytest.importorskip("PySide6")
@@ -11,11 +13,13 @@ from PySide6.QtWidgets import QApplication
 from PySide6.QtGui import QGuiApplication
 
 from mira.domain.embodiment import ExpressionKey
-from mira.ui.notch.__main__ import build_tuning_environment
+from mira.ui.notch.__main__ import build_notch_environment, build_tuning_environment
+from mira.ui.notch.config_store import ConfigSession, ConfigSource, NotchSettings, save_settings, settings_to_dict
 from mira.ui.notch.debug_window import NotchDebugWindow
 from mira.ui.notch.eye_layout import BASE_EYE_HEIGHT_SHARE, NotchEyeStyle
 from mira.ui.notch.notch_window import NotchWindow
 from mira.ui.notch.presence import NotchGeometry, NotchPresence, NotchSize
+from mira.ui.notch.screen_selection import MonitorIdentity, MonitorPreference
 
 
 H, C, E = NotchPresence.HIDDEN, NotchPresence.COMPACT, NotchPresence.EXPANDED
@@ -27,8 +31,14 @@ def application():
 
 
 @pytest.fixture
-def env():
-    environment = build_tuning_environment()
+def config_path(tmp_path):
+    # Never the developer's own ~/.config: every environment gets its own file.
+    return tmp_path / "mira" / "notch.json"
+
+
+@pytest.fixture
+def env(config_path):
+    environment = build_tuning_environment(ConfigSession(config_path))
     # Settle the opening transition: these tests check values, not timing.
     finish(environment.notch)
     yield environment
@@ -63,6 +73,7 @@ def control_values(debug: NotchDebugWindow) -> dict:
             debug.eye_top_offset.value(),
             debug.eye_center_offset.value(),
             debug.eye_spacing.value(),
+            debug.eye_motion_gain.value(),
         ),
         "expression": debug.selected_expression,
     }
@@ -75,7 +86,7 @@ def production_values() -> dict:
         "expanded": (geometry.expanded.width, geometry.expanded.height, geometry.expanded.corner_radius),
         "placement": (geometry.offset_x, geometry.top_margin),
         "duration": NotchWindow.TRANSITION_DURATION_MS,
-        "eyes": (style.height_share, style.top_offset, style.center_offset, style.spacing),
+        "eyes": (style.height_share, style.top_offset, style.center_offset, style.spacing, style.motion_gain),
         "expression": ExpressionKey.IDLE,
     }
 
@@ -215,9 +226,9 @@ def test_the_eye_scale_control_changes_the_eye_scale(env):
 def test_the_eye_top_control_moves_the_eyes_vertically(env):
     top = env.notch.eye_layout.top
 
-    env.debug.eye_top_offset.setValue(5.0)
+    env.debug.eye_top_offset.setValue(0.5)
 
-    assert env.notch.eye_layout.top == top + 5.0
+    assert env.notch.eye_layout.top == pytest.approx(top + 0.5)
 
 
 def test_the_eye_centre_and_spacing_controls_move_the_eyes(env):
@@ -234,8 +245,9 @@ def test_the_eye_centre_and_spacing_controls_move_the_eyes(env):
 
 
 def test_the_derived_layout_is_shown(env):
-    env.debug.eye_height_share.setValue(0.5)
+    env.debug.eye_height_share.setValue(0.25)
 
+    assert env.notch.eye_style.height_share == 0.25
     assert f"{env.notch.eye_layout.scale:.4f}" in env.debug.eye_layout_label.text()
 
 
@@ -315,3 +327,218 @@ def test_closing_the_tuning_window_signals_it(env):
     env.debug.close()
 
     assert closed == [True]
+
+
+# --- Eye safety in the controls ------------------------------------------------------
+
+
+def test_a_clipping_eye_configuration_is_reported_invalid_and_not_applied(env):
+    before = env.notch.visual_config
+
+    env.debug.eye_top_offset.setValue(5.0)
+
+    assert env.notch.visual_config == before
+    assert env.debug.visual_label.text().startswith("Invalid")
+    assert "clipped" in env.debug.error_label.text() and "COMPACT" in env.debug.error_label.text()
+    assert not env.debug.save_button.isEnabled()
+
+    env.debug.eye_top_offset.setValue(0.0)
+    assert env.debug.visual_label.text() == "Valid"
+    assert env.debug.save_button.isEnabled()
+
+
+def test_the_motion_gain_control_is_live(env):
+    env.debug.eye_motion_gain.setValue(0.4)
+
+    assert env.notch.eye_style.motion_gain == 0.4
+    assert env.notch.eye_painter.offset_gain == 0.4
+
+
+# --- Layout -----------------------------------------------------------------------------
+
+
+def test_the_controls_scroll_and_the_window_fits_a_laptop_screen(env):
+    assert env.debug.scroll_area.widgetResizable()
+    assert env.debug.scroll_area.widget().isAncestorOf(env.debug.compact_width)
+    # The persistence bar stays outside the scrolling area, always in view.
+    assert not env.debug.scroll_area.widget().isAncestorOf(env.debug.save_button)
+    available = QGuiApplication.primaryScreen().availableGeometry()
+    assert env.debug.height() <= max(int(available.height() * 0.85), 1)
+
+
+def test_the_status_shows_the_technical_state(env):
+    debug = env.debug
+    assert debug.loaded_label.text() == "Defaults"
+    assert debug.monitor_mode_label.text() == "Automatic"
+    assert debug.selected_monitor_label.text() == QGuiApplication.screens()[0].name()
+    assert debug.monitor_count_label.text() == str(len(QGuiApplication.screens()))
+    assert debug.visual_label.text() == "Valid"
+    assert debug.unsaved_label.text() == "No"
+    assert debug.config_path_label.text() == str(env.session.path)
+
+
+# --- Persistence --------------------------------------------------------------------------
+
+
+def test_a_change_is_unsaved_until_saved(env, config_path):
+    env.debug.compact_width.setValue(240.0)
+    assert env.debug.unsaved_label.text() == "Yes"
+    assert not config_path.exists()
+
+    env.debug.save_button.click()
+
+    assert config_path.exists()
+    assert env.debug.unsaved_label.text() == "No"
+    assert env.debug.loaded_label.text() == "Saved"
+    assert ConfigSession(config_path).startup_settings == env.debug.runtime_settings
+
+
+def test_reset_restores_defaults_at_run_time_without_writing(env, config_path):
+    env.debug.compact_width.setValue(240.0)
+    env.debug.save_button.click()
+    saved = config_path.read_bytes()
+
+    env.debug.reset_button.click()
+
+    assert env.debug.runtime_settings == NotchSettings()
+    assert config_path.read_bytes() == saved
+    assert env.debug.unsaved_label.text() == "Yes"
+
+
+def test_reload_discards_runtime_changes_for_the_saved_file(env):
+    env.debug.compact_width.setValue(240.0)
+    env.debug.save_button.click()
+    env.debug.compact_width.setValue(260.0)
+
+    env.debug.reload_button.click()
+
+    assert env.notch.notch_geometry.compact.width == 240.0
+    assert env.debug.compact_width.value() == 240.0
+    assert env.debug.unsaved_label.text() == "No"
+
+
+def test_reload_without_a_file_returns_to_the_defaults(env):
+    env.debug.compact_width.setValue(240.0)
+
+    env.debug.reload_button.click()
+
+    assert env.debug.runtime_settings == NotchSettings()
+    assert env.debug.loaded_label.text() == "Defaults"
+
+
+def test_reload_of_an_invalid_file_keeps_the_runtime_settings(env, config_path):
+    env.debug.compact_width.setValue(240.0)
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    config_path.write_text("{broken", encoding="utf-8")
+
+    env.debug.reload_button.click()
+
+    assert env.notch.notch_geometry.compact.width == 240.0
+    assert env.debug.loaded_label.text() == "Invalid fallback"
+    assert "Not reloaded" in env.debug.message_label.text()
+    assert env.debug.unsaved_label.text() == "Yes"
+    assert config_path.read_text(encoding="utf-8") == "{broken"
+
+
+def test_a_saved_configuration_is_used_at_startup(config_path):
+    tuned = NotchSettings(
+        visual=NotchSettings().visual.__class__(
+            geometry=NotchGeometry(compact=NotchSize(240.0, 36.0, 14.0), expanded=NotchSize(380.0, 100.0, 24.0), top_margin=3.0),
+            eye_style=NotchEyeStyle(height_share=0.26),
+            transition_duration_ms=320,
+        ),
+    )
+    save_settings(tuned, config_path)
+
+    environment = build_notch_environment(ConfigSession(config_path), tuning=False)
+    try:
+        assert environment.debug is None
+        assert environment.notch.visual_config == tuned.visual
+        assert environment.notch.isVisible()
+    finally:
+        environment.notch.hide()
+        environment.notch.deleteLater()
+        QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+
+
+def test_an_invalid_saved_configuration_starts_with_the_defaults_and_says_why(config_path):
+    data = settings_to_dict(NotchSettings())
+    data["eyes"]["height_share"] = 0.5
+    config_path.parent.mkdir(parents=True)
+    config_path.write_text(json.dumps(data), encoding="utf-8")
+
+    environment = build_tuning_environment(ConfigSession(config_path))
+    try:
+        assert environment.notch.visual_config == NotchSettings().visual
+        assert environment.notch.isVisible()
+        assert environment.debug.loaded_label.text() == "Invalid fallback"
+        assert "ignored" in environment.debug.message_label.text()
+        assert json.loads(config_path.read_text(encoding="utf-8")) == data
+    finally:
+        environment.notch.hide()
+        for widget in (environment.debug, environment.notch):
+            widget.deleteLater()
+        QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+
+
+def test_without_a_session_nothing_can_be_saved():
+    environment = build_tuning_environment()
+    try:
+        assert environment.session is None
+        assert not environment.debug.save_button.isEnabled()
+        assert not environment.debug.reload_button.isEnabled()
+        assert environment.debug.reset_button.isEnabled()
+    finally:
+        environment.notch.hide()
+        for widget in (environment.debug, environment.notch):
+            widget.deleteLater()
+        QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+
+
+# --- Display ---------------------------------------------------------------------------------
+
+
+def monitor_entries(debug: NotchDebugWindow) -> list[str]:
+    return [debug.monitor.itemText(index) for index in range(debug.monitor.count())]
+
+
+def test_the_monitor_list_offers_automatic_and_every_connected_screen(env):
+    entries = monitor_entries(env.debug)
+
+    assert entries[0] == "Automatic"
+    assert entries[1:] == [screen.name() for screen in QGuiApplication.screens()]
+    assert "selected" in env.debug.monitors_label.text() and "primary" in env.debug.monitors_label.text()
+    assert env.debug.monitor.currentIndex() == 0
+
+
+def test_choosing_a_monitor_sets_the_preference_and_is_persisted(env, config_path):
+    env.debug.monitor.setCurrentIndex(1)
+
+    assert not env.notch.monitor_preference.is_automatic
+    assert env.debug.monitor_mode_label.text() == "Preferred"
+    env.debug.save_button.click()
+    assert json.loads(config_path.read_text())["display"]["monitor"]["name"] == QGuiApplication.screens()[0].name()
+
+    env.debug.monitor.setCurrentIndex(0)
+    assert env.notch.monitor_preference.is_automatic
+
+
+def test_an_absent_preferred_monitor_is_listed_and_falls_back(env):
+    absent = MonitorPreference(MonitorIdentity("DP-9", "Dell Inc.", "DELL P2425H", "1"))
+
+    env.notch.set_monitor_preference(absent)
+
+    assert monitor_entries(env.debug)[-1] == "DP-9 (DELL P2425H) — not connected"
+    assert env.debug.monitor.currentIndex() == env.debug.monitor.count() - 1
+    assert "not connected" in env.debug.monitor_mode_label.text()
+    assert env.notch.tracked_screen is QGuiApplication.screens()[0]
+
+
+def test_the_monitor_list_follows_topology_changes(env):
+    rebuilt = []
+    original = env.debug._rebuild_monitor_list
+    env.debug._rebuild_monitor_list = lambda: (rebuilt.append(True), original())[1]
+
+    QGuiApplication.instance().screenAdded.emit(QGuiApplication.primaryScreen())
+
+    assert rebuilt

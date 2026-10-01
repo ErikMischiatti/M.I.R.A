@@ -318,3 +318,66 @@ def _sync_directory(directory: Path) -> None:
         pass
     finally:
         os.close(descriptor)
+
+
+# --- Tuning session -----------------------------------------------------------------
+
+
+class ConfigSession:
+    """What a tuning tool needs to know about the file behind its settings.
+
+    The session tracks the last configuration known to be on disk — loaded
+    or saved — as the baseline that runtime changes are compared with. An
+    invalid file has no valid content, so it has no baseline and every
+    runtime state counts as unsaved until Save replaces the file.
+
+    - `reload` reads the file again. Saved or missing contents become the new
+      baseline; an invalid file is reported and changes nothing else, so the
+      caller can keep its runtime settings.
+    - `save` validates and writes; the written settings become the baseline.
+    - Resetting to defaults is a runtime change only: nothing is written.
+    """
+
+    def __init__(self, path: Path | None = None, envelope: PoseEnvelope | None = None):
+        self.path = default_config_path() if path is None else path
+        self.envelope = envelope
+        self.last_load = load_settings(self.path, envelope)
+        self._baseline: NotchSettings | None = None
+        self._adopt(self.last_load)
+
+    @property
+    def startup_settings(self) -> NotchSettings:
+        """The settings to start from: saved, or the defaults."""
+        return self.last_load.settings
+
+    @property
+    def source(self) -> ConfigSource:
+        """Where the last load or save found the file."""
+        return self.last_load.source
+
+    @property
+    def baseline(self) -> NotchSettings | None:
+        return self._baseline
+
+    @property
+    def diagnostic(self) -> str | None:
+        return self.last_load.diagnostic
+
+    def has_unsaved_changes(self, runtime: NotchSettings) -> bool:
+        return self._baseline is None or runtime != self._baseline
+
+    def reload(self) -> LoadedSettings:
+        loaded = load_settings(self.path, self.envelope)
+        self.last_load = loaded
+        if loaded.source is not ConfigSource.INVALID_FALLBACK:
+            self._adopt(loaded)
+        return loaded
+
+    def save(self, settings: NotchSettings) -> Path:
+        path = save_settings(settings, self.path, self.envelope)
+        self.last_load = LoadedSettings(settings, ConfigSource.SAVED, path)
+        self._adopt(self.last_load)
+        return path
+
+    def _adopt(self, loaded: LoadedSettings) -> None:
+        self._baseline = None if loaded.source is ConfigSource.INVALID_FALLBACK else loaded.settings

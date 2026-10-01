@@ -301,3 +301,47 @@ def test_the_store_imports_no_qt():
     tree = ast.parse(source.read_text())
     imported = {(node.module or "").split(".")[0] for node in ast.walk(tree) if isinstance(node, ast.ImportFrom)}
     assert "PySide6" not in imported
+
+
+# --- Tuning session -------------------------------------------------------------------
+
+
+def test_a_session_without_a_file_starts_from_the_saved_nothing(path):
+    session = config_store.ConfigSession(path)
+
+    assert session.source is ConfigSource.DEFAULTS
+    assert session.startup_settings == NotchSettings()
+    assert not session.has_unsaved_changes(NotchSettings())
+    assert session.has_unsaved_changes(TUNED)
+
+
+def test_saving_makes_the_runtime_the_baseline(path):
+    session = config_store.ConfigSession(path)
+
+    session.save(TUNED)
+
+    assert session.source is ConfigSource.SAVED
+    assert not session.has_unsaved_changes(TUNED)
+    assert session.has_unsaved_changes(NotchSettings())  # reset is a runtime change
+
+
+def test_reload_picks_up_a_file_written_elsewhere(path):
+    session = config_store.ConfigSession(path)
+    save_settings(TUNED, path)
+
+    loaded = session.reload()
+
+    assert loaded.settings == TUNED and session.baseline == TUNED
+
+
+def test_an_invalid_file_has_no_baseline_and_reload_keeps_the_last_good_one(path):
+    save_settings(TUNED, path)
+    session = config_store.ConfigSession(path)
+    write(path, "{broken")
+
+    loaded = session.reload()
+
+    assert loaded.source is ConfigSource.INVALID_FALLBACK and session.source is ConfigSource.INVALID_FALLBACK
+    assert session.baseline == TUNED  # the runtime is still what was loaded
+    assert config_store.ConfigSession(path).baseline is None
+    assert config_store.ConfigSession(path).has_unsaved_changes(NotchSettings())
