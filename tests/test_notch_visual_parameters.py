@@ -11,9 +11,11 @@ from mira.domain.embodiment_frame import EyeFrame
 from mira.ui.notch.eye_layout import (
     BASE_EYE_HEIGHT_SHARE,
     EYE_SPACING_UNITS,
+    MOTION_GAIN,
     NotchEyeLayout,
     NotchEyeStyle,
     notch_eye_layout,
+    production_envelope,
 )
 from mira.ui.notch.presence import (
     NotchGeometry,
@@ -72,28 +74,44 @@ def test_the_default_style_is_the_production_layout():
     style = NotchEyeStyle()
     layout = notch_eye_layout(GEOMETRY, WINDOW)
 
-    assert (style.height_share, style.top_offset, style.center_offset, style.spacing) == (
+    assert (style.height_share, style.top_offset, style.center_offset, style.spacing, style.motion_gain) == (
         BASE_EYE_HEIGHT_SHARE,
         0.0,
         0.0,
         EYE_SPACING_UNITS,
+        MOTION_GAIN,
     )
     assert notch_eye_layout(GEOMETRY, WINDOW, style) == layout
-    assert layout == NotchEyeLayout(scale=12.0 / 99.0, center_x=180.0, top=4.0)
+    scale = 32.0 * BASE_EYE_HEIGHT_SHARE / 99.0
+    assert layout.scale == pytest.approx(scale)
+    assert layout.offset_scale == pytest.approx(scale * MOTION_GAIN)
+    assert layout.center_x == 180.0
 
 
 def test_the_height_share_sets_the_face_scale():
-    layout = notch_eye_layout(GEOMETRY, WINDOW, NotchEyeStyle(height_share=0.5))
+    layout = notch_eye_layout(GEOMETRY, WINDOW, NotchEyeStyle(height_share=0.2))
 
-    assert layout.scale == pytest.approx(16.0 / 99.0)
-    # The tallest standard eye (32 px) stays centred in the compact notch.
-    assert layout.top == pytest.approx(0.0)
+    assert layout.scale == pytest.approx(6.4 / 99.0)
+    # The whole motion envelope stays centred in the compact notch.
+    reach = layout.motion_bounds("left", production_envelope())
+    assert reach.y == pytest.approx(32.0 - reach.bottom)
+
+
+def test_the_motion_gain_scales_offsets_but_not_sizes():
+    full = notch_eye_layout(GEOMETRY, WINDOW, NotchEyeStyle(height_share=0.2, motion_gain=1.0))
+    half = notch_eye_layout(GEOMETRY, WINDOW, NotchEyeStyle(height_share=0.2, motion_gain=0.5))
+
+    assert half.scale == full.scale
+    assert half.offset_scale == pytest.approx(full.offset_scale / 2.0)
+    envelope = production_envelope()
+    assert half.motion_bounds("left", envelope).height < full.motion_bounds("left", envelope).height
 
 
 def test_offsets_move_the_eyes_from_their_derived_position():
+    base = notch_eye_layout(GEOMETRY, WINDOW)
     layout = notch_eye_layout(GEOMETRY, WINDOW, NotchEyeStyle(top_offset=6.0, center_offset=-20.0))
 
-    assert layout.top == 10.0
+    assert layout.top == pytest.approx(base.top + 6.0)
     assert layout.center_x == 160.0
 
 
@@ -105,7 +123,16 @@ def test_the_spacing_reaches_the_layout():
     assert right.center_x - left.center_x == pytest.approx(420.0 * layout.scale)
 
 
-@pytest.mark.parametrize("kwargs", [{"height_share": 0.0}, {"height_share": -0.1}, {"spacing": -1.0}])
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"height_share": 0.0},
+        {"height_share": -0.1},
+        {"spacing": -1.0},
+        {"motion_gain": 0.0},
+        {"motion_gain": 1.5},
+    ],
+)
 def test_impossible_eye_styles_are_rejected(kwargs):
     with pytest.raises(ValueError):
         NotchEyeStyle(**kwargs)

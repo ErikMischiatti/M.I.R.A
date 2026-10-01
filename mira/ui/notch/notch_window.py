@@ -14,7 +14,14 @@ from mira.domain.embodiment_frame import FACE_HEIGHT_UNITS, FACE_WIDTH_UNITS
 from mira.ui.face.eye import Eye
 from mira.ui.face.eye_painter import EyePainter
 from mira.ui.face.face_animator import FaceAnimator
-from mira.ui.notch.eye_layout import NotchEyeLayout, NotchEyeStyle, notch_eye_layout
+from mira.domain.motion_envelope import PoseEnvelope
+from mira.ui.notch.eye_layout import (
+    NotchEyeLayout,
+    NotchEyeStyle,
+    library_envelope,
+    notch_eye_layout,
+    production_envelope,
+)
 from mira.ui.notch.presence import (
     NotchGeometry,
     NotchPresence,
@@ -26,6 +33,7 @@ from mira.ui.notch.presence import (
     window_shape_for_size,
 )
 from mira.ui.notch.screen_selection import MonitorPreference, ScreenSelection
+from mira.ui.notch.visual_config import NotchVisualConfig, validate_visual_config
 from mira.ui.notch.screens import (
     ScreenSelector,
     application_screens,
@@ -158,7 +166,10 @@ class NotchWindow(QWidget):
     The visual parameters — `notch_geometry`, `eye_style` and
     `transition_duration_ms` — can be replaced at run time through their
     setters; the window then re-derives bounds, shape, mask and eye layout
-    through the same pipeline as at construction.
+    through the same pipeline as at construction. `apply_visual_config`
+    replaces all three at once and only after `validate_visual_config` has
+    shown that the eyes' whole `motion_envelope` fits the notch; the envelope
+    is that of the animator's expression library (or the packaged profiles).
 
     The window never takes keyboard focus and shows without activating.
     """
@@ -195,10 +206,22 @@ class NotchWindow(QWidget):
         self._eye_style = NotchEyeStyle() if eye_style is None else eye_style
         self.transition_duration_ms = self.TRANSITION_DURATION_MS
         self.animator = animator
-        self._eye_layout = notch_eye_layout(self._geometry, Rect(0.0, 0.0, 0.0, 0.0), self._eye_style)
+        # A controller without an expression library (a test double, say)
+        # is bounded by the packaged profiles.
+        library = getattr(animator.controller, "expression_library", None) if animator else None
+        self._envelope = production_envelope() if library is None else library_envelope(library)
+        self._eye_layout = notch_eye_layout(
+            self._geometry, Rect(0.0, 0.0, 0.0, 0.0), self._eye_style, self._envelope
+        )
         left, right = layout_eyes(self._eye_layout)
         # The eyelids cut into the eyes in the notch colour; see `color`.
-        self.eye_painter = EyePainter(left, right, eye_color=EYE_COLOR, lid_color=QColor(0, 0, 0))
+        self.eye_painter = EyePainter(
+            left,
+            right,
+            eye_color=EYE_COLOR,
+            lid_color=QColor(0, 0, 0),
+            offset_gain=self._eye_style.motion_gain,
+        )
         self.color = QColor(0, 0, 0) if color is None else color
 
         self._presence = NotchPresence.HIDDEN
@@ -279,6 +302,27 @@ class NotchWindow(QWidget):
     @property
     def eye_layout(self) -> NotchEyeLayout:
         return self._eye_layout
+
+    @property
+    def motion_envelope(self) -> PoseEnvelope:
+        """Every pose the shown embodiment can reach; see `motion_envelope`."""
+        return self._envelope
+
+    @property
+    def visual_config(self) -> NotchVisualConfig:
+        return NotchVisualConfig(self._geometry, self._eye_style, self.transition_duration_ms)
+
+    def apply_visual_config(self, config: NotchVisualConfig):
+        """Validate ``config`` against the motion envelope, then apply it all.
+
+        Raises `InvalidVisualConfig` and changes nothing if the eyes could
+        leave the notch's safe region.
+        """
+
+        validate_visual_config(config, self._envelope)
+        self.transition_duration_ms = config.transition_duration_ms
+        self._eye_style = config.eye_style
+        self.set_notch_geometry(config.geometry)  # re-derives the eye layout too
 
     @property
     def eye_canvas(self) -> QRectF:
@@ -488,8 +532,11 @@ class NotchWindow(QWidget):
         self.reposition()
 
     def _update_eye_layout(self):
-        self._eye_layout = notch_eye_layout(self._geometry, self._window_bounds, self._eye_style)
+        self._eye_layout = notch_eye_layout(
+            self._geometry, self._window_bounds, self._eye_style, self._envelope
+        )
         self.eye_painter.left, self.eye_painter.right = layout_eyes(self._eye_layout)
+        self.eye_painter.offset_gain = self._eye_style.motion_gain
 
     # --- Shape ---------------------------------------------------------------
 

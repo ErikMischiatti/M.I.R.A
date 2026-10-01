@@ -13,7 +13,7 @@ from PySide6.QtGui import QGuiApplication
 from mira.domain.embodiment import ExpressionKey
 from mira.ui.notch.__main__ import build_tuning_environment
 from mira.ui.notch.debug_window import NotchDebugWindow
-from mira.ui.notch.eye_layout import NotchEyeStyle
+from mira.ui.notch.eye_layout import BASE_EYE_HEIGHT_SHARE, NotchEyeStyle
 from mira.ui.notch.notch_window import NotchWindow
 from mira.ui.notch.presence import NotchGeometry, NotchPresence, NotchSize
 
@@ -206,10 +206,10 @@ def test_a_geometry_change_mid_transition_keeps_one_running_transition(env):
 def test_the_eye_scale_control_changes_the_eye_scale(env):
     scale = env.notch.eye_layout.scale
 
-    env.debug.eye_height_share.setValue(0.5)
+    env.debug.eye_height_share.setValue(0.2)
 
-    assert env.notch.eye_style.height_share == 0.5
-    assert env.notch.eye_layout.scale == pytest.approx(scale * 0.5 / 0.375)
+    assert env.notch.eye_style.height_share == 0.2
+    assert env.notch.eye_layout.scale == pytest.approx(scale * 0.2 / BASE_EYE_HEIGHT_SHARE)
 
 
 def test_the_eye_top_control_moves_the_eyes_vertically(env):

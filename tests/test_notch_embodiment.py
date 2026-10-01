@@ -23,7 +23,7 @@ from mira.domain.state import FaceState
 from mira.ui.face.face_animator import FaceAnimator
 from mira.ui.face.face_controller import FaceController
 from mira.ui.face.face_widget import FaceWidget
-from mira.ui.notch.eye_layout import notch_eye_layout
+from mira.ui.notch.eye_layout import BASE_EYE_HEIGHT_SHARE, notch_eye_layout, production_envelope
 from mira.ui.notch.notch_window import EYE_COLOR, NotchWindow, notch_path
 from mira.ui.notch.presence import NotchGeometry, NotchPresence, NotchSize, Rect
 
@@ -243,21 +243,22 @@ def test_without_an_animator_transitions_behave_as_before():
 
 def test_the_layout_is_fixed_by_the_compact_notch():
     layout = notch_eye_layout(GEOMETRY, Rect(0, 0, 360, 96))
+    base_height = 32.0 * BASE_EYE_HEIGHT_SHARE
 
-    assert layout.scale == pytest.approx(12.0 / 99.0)
+    assert layout.scale == pytest.approx(base_height / 99.0)
     assert layout.center_x == 180.0
-    assert layout.top == 4.0
     left, right = layout.resting_eye("left"), layout.resting_eye("right")
-    assert (left.width, left.height) == pytest.approx((126 * 12 / 99, 12.0))
-    assert right.center_x - left.center_x == pytest.approx(300 * 12 / 99)
+    assert (left.width, left.height) == pytest.approx((126 * base_height / 99, base_height))
+    assert right.center_x - left.center_x == pytest.approx(300 * base_height / 99)
     assert (left.center_x + right.center_x) / 2 == 180.0
 
 
-def test_the_tallest_standard_eye_is_centred_in_the_compact_notch():
+def test_the_whole_motion_envelope_is_centred_in_the_compact_notch():
     layout = notch_eye_layout(GEOMETRY, Rect(0, 0, 360, 96))
-    tallest = layout.resting_eye("left").height * 2.0
+    reach = layout.motion_bounds("left", production_envelope())
 
-    assert layout.top == pytest.approx(GEOMETRY.compact.height - layout.top - tallest)
+    assert reach.y == pytest.approx(GEOMETRY.compact.height - reach.bottom)
+    assert reach.y > 0
 
 
 def test_the_painted_resting_eyes_match_the_layout():
@@ -333,9 +334,13 @@ def test_the_shape_clips_the_eyes_mid_transition():
     notch = notch_for(both(height_scale=2.0), presence=H)
     notch.show_notch()
     notch.transition.pause()
-    notch.transition.setCurrentTime(15)
+    eye = eye_rect(notch, "left", notch.animator.controller.get_frame())
+    # The first frame at which the growing notch has revealed part of the eye.
+    ms = next(ms for ms in range(notch.transition.duration()) if (
+        notch.transition.setCurrentTime(ms) or notch.shape.bounds.bottom > eye.top() + 3.0
+    ))
     bottom = notch.shape.bounds.bottom
-    assert eye_rect(notch, "left", notch.animator.controller.get_frame()).bottom() > bottom
+    assert eye.bottom() > bottom, f"the eye is no longer cut at {ms} ms"
 
     pixels = eye_pixels(render(notch))
 
@@ -378,7 +383,8 @@ def face_rect(frame: EmbodimentFrame, side: str):
 )
 def test_gaze_moves_the_notch_eyes_the_same_way_as_the_face(frame, dx_sign, dy_sign):
     notch = notch_for(frame, E)
-    scale_ratio = notch.eye_layout.scale / 1.0  # the face canvas is 1:1 at 700x450
+    # The face canvas is 1:1 at 700x450; the notch moves offsets at its offset scale.
+    scale_ratio = notch.eye_layout.offset_scale / 1.0
 
     for side in ("left", "right"):
         notch_dx = eye_rect(notch, side, frame).x() - eye_rect(notch, side, NEUTRAL).x()
@@ -421,7 +427,9 @@ def test_closed_eyes_are_a_thin_bar_through_the_eye_centre():
     rect = eye_rect(notch, "left", closed)
     image = render(notch)
 
-    assert image.pixelColor(round(rect.center().x()), int(rect.center().y())).red() > 128
+    centre_x, centre_y = round(rect.center().x()), int(rect.center().y())
+    # The bar is under two pixels tall; it lands on a row next to the centre.
+    assert max(image.pixelColor(centre_x, y).red() for y in range(centre_y - 1, centre_y + 2)) > 128
     assert pixel(image, QPointF(rect.center().x(), rect.top() + rect.height() * 0.2)) == NOTCH
     assert pixel(image, QPointF(rect.center().x(), rect.bottom() - rect.height() * 0.2)) == NOTCH
     dispose(notch)

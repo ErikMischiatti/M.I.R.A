@@ -21,13 +21,26 @@ class EyePainter:
 
     Eyelids are drawn by covering part of the eye in `lid_color`, so the view
     must paint that same colour under the eyes for the lids to read as cut-outs.
+
+    ``offset_gain`` scales how far frame offsets move the eyes relative to the
+    canvas: 1 (the face) moves them in proportion; a smaller view such as the
+    notch may move them less without changing their size.
     """
 
-    def __init__(self, left: Eye, right: Eye, *, eye_color: QColor, lid_color: QColor):
+    def __init__(
+        self,
+        left: Eye,
+        right: Eye,
+        *,
+        eye_color: QColor,
+        lid_color: QColor,
+        offset_gain: float = 1.0,
+    ):
         self.left = left
         self.right = right
         self.eye_color = eye_color
         self.lid_color = lid_color
+        self.offset_gain = offset_gain
 
     @staticmethod
     def canvas_scale(canvas: QRectF) -> float:
@@ -38,11 +51,12 @@ class EyePainter:
     def eye_rect(self, canvas: QRectF, eye: Eye, eye_frame: EyeFrame) -> QRectF:
         scale = self.canvas_scale(canvas)
 
+        gain = self.offset_gain
         x = canvas.x() + (
-            FACE_WIDTH_UNITS * eye.x_ratio + eye_frame.offset_x * FACE_WIDTH_UNITS
+            FACE_WIDTH_UNITS * eye.x_ratio + eye_frame.offset_x * FACE_WIDTH_UNITS * gain
         ) * scale
         y = canvas.y() + (
-            FACE_HEIGHT_UNITS * eye.y_ratio + eye_frame.offset_y * FACE_HEIGHT_UNITS
+            FACE_HEIGHT_UNITS * eye.y_ratio + eye_frame.offset_y * FACE_HEIGHT_UNITS * gain
         ) * scale
         w = FACE_WIDTH_UNITS * eye.width_ratio * eye_frame.width_scale * scale
         h = FACE_HEIGHT_UNITS * eye.height_ratio * eye_frame.height_scale * scale
