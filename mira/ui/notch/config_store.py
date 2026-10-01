@@ -19,19 +19,31 @@ Saving validates first and writes atomically: the settings go to a temporary
 file in the same directory, are flushed to disk, and replace the old file in
 one rename, so a crash leaves either the old file or the new one.
 
-Schema, version 1 (every key required, no others allowed)::
+Schema, version 2 (every key required, no others allowed)::
 
     {
-      "version": 1,
+      "version": 2,
       "compact":   {"width": 200.0, "height": 32.0, "radius": 14.0},
       "expanded":  {"width": 360.0, "height": 96.0, "radius": 24.0},
       "placement": {"offset_x": 0.0, "top_margin": 0.0},
       "eyes": {"height_share": 0.28, "top_offset": 0.0, "center_offset": 0.0,
                "spacing": 300.0, "motion_gain": 0.5},
       "animation": {"duration_ms": 200},
-      "display": {"monitor": null}
+      "display": {"monitor": null},
+      "behaviour": {"expand_on_hover": true,
+                    "automatic_expansion": {"alert": true, "device": true, "task": false},
+                    "notice_duration_ms": 4000}
     }
 
+``behaviour`` holds the interaction preferences (`NotchBehaviour`).
+``automatic_expansion`` has one switch per `NoticeCategory`: whether a notice
+of that category expands the notch by itself. Categories, not individual
+events, so a new kind of event normally needs no new key.
+
+Version 1 is the same without ``behaviour``. A version-1 file still loads:
+it is migrated in memory with the production behaviour defaults, reported as
+``migrated_from == 1``, and left untouched on disk until Save rewrites it as
+version 2.
 ``display.monitor`` is null for automatic selection, or the preferred
 monitor's identity: ``{"name": ..., "manufacturer": ..., "model": ...,
 "serial": ...}``.
@@ -50,13 +62,17 @@ from typing import Any
 
 from mira.domain.motion_envelope import PoseEnvelope
 from mira.ui.notch.eye_layout import NotchEyeStyle
+from mira.domain.notice import NoticeCategory
 from mira.ui.notch.presence import NotchGeometry, NotchSize
+from mira.ui.notch.presentation import NotchBehaviour
 from mira.ui.notch.screen_selection import MonitorIdentity, MonitorPreference
 from mira.ui.notch.visual_config import NotchVisualConfig, validate_visual_config, visual_config_problems
 
 
 CONFIG_PATH_ENV = "MIRA_NOTCH_CONFIG"
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
+# Older versions this store still reads, migrating them in memory.
+MIGRATABLE_VERSIONS = frozenset({1})
 
 
 @dataclass(frozen=True, slots=True)
@@ -65,6 +81,7 @@ class NotchSettings:
 
     visual: NotchVisualConfig = field(default_factory=NotchVisualConfig)
     monitor: MonitorPreference = field(default_factory=MonitorPreference)
+    behaviour: NotchBehaviour = field(default_factory=NotchBehaviour)
 
 
 class ConfigSource(StrEnum):
@@ -81,6 +98,9 @@ class LoadedSettings:
     source: ConfigSource
     path: Path
     diagnostic: str | None = None
+    # The schema version the file was written in, when older than the
+    # current one and migrated on load; None otherwise.
+    migrated_from: int | None = None
 
 
 class ConfigError(ValueError):
@@ -141,6 +161,13 @@ def settings_to_dict(settings: NotchSettings) -> dict[str, Any]:
                 "serial": monitor.serial,
             }
         },
+        "behaviour": {
+            "expand_on_hover": settings.behaviour.expand_on_hover,
+            "automatic_expansion": {
+                category.value: settings.behaviour.expands_for(category) for category in NoticeCategory
+            },
+            "notice_duration_ms": settings.behaviour.notice_duration_ms,
+        },
     }
 
 
@@ -148,20 +175,32 @@ def _size_to_dict(size: NotchSize) -> dict[str, float]:
     return {"width": size.width, "height": size.height, "radius": size.corner_radius}
 
 
+def schema_version(data: Any) -> int:
+    """The file's declared schema version; `ConfigError` if unsupported."""
+
+    if not isinstance(data, dict):
+        raise ConfigError("configuration must be an object")
+    version = data.get("version")
+    if isinstance(version, bool) or not isinstance(version, int) or (
+        version != SCHEMA_VERSION and version not in MIGRATABLE_VERSIONS
+    ):
+        raise ConfigError(f"unsupported version {version!r}; expected {SCHEMA_VERSION}")
+    return version
+
+
 def settings_from_dict(data: Any) -> NotchSettings:
-    """Parse schema version 1; raise `ConfigError` for anything else.
+    """Parse schema version 2, or migrate version 1; `ConfigError` otherwise.
 
     Value constraints (positive sizes, a radius that fits, the expanded notch
     containing the compact one, …) are reported as `ConfigError` too; the eye
     fit rule is checked separately, by `visual_config_problems`.
     """
 
-    root = _section(data, "configuration", {
-        "version", "compact", "expanded", "placement", "eyes", "animation", "display",
-    })
-    version = root["version"]
-    if isinstance(version, bool) or version != SCHEMA_VERSION:
-        raise ConfigError(f"unsupported version {version!r}; expected {SCHEMA_VERSION}")
+    version = schema_version(data)
+    keys = {"version", "compact", "expanded", "placement", "eyes", "animation", "display"}
+    if version >= 2:
+        keys.add("behaviour")
+    root = _section(data, "configuration", keys)
 
     compact = _section(root["compact"], "compact", {"width", "height", "radius"})
     expanded = _section(root["expanded"], "expanded", {"width", "height", "radius"})
@@ -191,7 +230,26 @@ def settings_from_dict(data: Any) -> NotchSettings:
         raise
     except ValueError as error:
         raise ConfigError(str(error)) from error
-    return NotchSettings(visual=visual, monitor=_monitor(display["monitor"]))
+    behaviour = NotchBehaviour() if version < 2 else _behaviour(root["behaviour"])
+    return NotchSettings(visual=visual, monitor=_monitor(display["monitor"]), behaviour=behaviour)
+
+
+def _behaviour(value: Any) -> NotchBehaviour:
+    section = _section(value, "behaviour", {"expand_on_hover", "automatic_expansion", "notice_duration_ms"})
+    switches = _section(
+        section["automatic_expansion"], "behaviour.automatic_expansion", {c.value for c in NoticeCategory}
+    )
+    for key, switch in [("expand_on_hover", section["expand_on_hover"]), *switches.items()]:
+        if not isinstance(switch, bool):
+            raise ConfigError(f"behaviour {key} must be true or false, got {switch!r}")
+    try:
+        return NotchBehaviour(
+            expand_on_hover=section["expand_on_hover"],
+            automatic_expansion=frozenset(NoticeCategory(key) for key, on in switches.items() if on),
+            notice_duration_ms=_integer(section, "notice_duration_ms", "behaviour"),
+        )
+    except ValueError as error:
+        raise ConfigError(str(error)) from error
 
 
 def _section(value: Any, name: str, keys: set[str]) -> dict[str, Any]:
@@ -273,7 +331,8 @@ def load_settings(path: Path | None = None, envelope: PoseEnvelope | None = None
     problems = visual_config_problems(settings.visual, envelope)
     if problems:
         return fallback(f"describes an invalid visual configuration ({'; '.join(problems)})")
-    return LoadedSettings(settings, ConfigSource.SAVED, path)
+    version = data["version"]
+    return LoadedSettings(settings, ConfigSource.SAVED, path, migrated_from=None if version == SCHEMA_VERSION else version)
 
 
 def save_settings(settings: NotchSettings, path: Path | None = None, envelope: PoseEnvelope | None = None) -> Path:

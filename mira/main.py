@@ -69,6 +69,8 @@ def main():
     # The session also lets the notch settings window save and reload it.
     notch = ConfigSession()
     print(f"[notch] configuration: {notch.path} ({notch.source.value})")
+    if notch.last_load.migrated_from is not None:
+        print(f"[notch] configuration is schema version {notch.last_load.migrated_from}; Save in the notch settings upgrades it")
     if notch.diagnostic:
         print(f"[notch] saved configuration ignored, using production defaults: {notch.diagnostic}", file=sys.stderr)
     desktop = DesktopShell(application, notch_settings=notch.startup_settings, notch_session=notch)

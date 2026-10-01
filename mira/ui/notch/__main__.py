@@ -88,7 +88,7 @@ def build_notch_environment(
     settings = NotchSettings() if session is None else session.startup_settings
     notch = build_notch(settings, animator=animator)
     scheduler = build_scheduler() if scheduler is None else scheduler
-    presenter = NotchPresenter(scheduler)
+    presenter = NotchPresenter(scheduler, settings.behaviour)
     bind_presenter(notch, presenter)
     presenter.show()
 
@@ -155,6 +155,8 @@ def main(argv: list[str] | None = None):
     session = ConfigSession(arguments.config)
     print(f"[notch] mode: {'tune' if arguments.tuning else 'notch only'}")
     print(f"[notch] configuration: {session.path} ({session.source.value})")
+    if session.last_load.migrated_from is not None:
+        print(f"[notch] configuration is schema version {session.last_load.migrated_from}; Save upgrades it")
     if session.diagnostic:
         print(f"[notch] saved configuration ignored, using production defaults: {session.diagnostic}", file=sys.stderr)
 

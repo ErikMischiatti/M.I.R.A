@@ -41,7 +41,7 @@ from mira.ui.notch.config_store import ConfigSession, ConfigSource, NotchSetting
 from mira.ui.notch.eye_layout import NotchEyeStyle
 from mira.ui.notch.notch_window import NotchWindow
 from mira.ui.notch.presence import NotchGeometry, NotchPresence, NotchSize
-from mira.ui.notch.presentation import NotchPresenter
+from mira.ui.notch.presentation import NotchBehaviour, NotchPresenter
 from mira.ui.notch.screen_selection import MonitorPreference, SelectionMode
 from mira.ui.notch.screens import monitor_identity
 from mira.ui.notch.visual_config import (
@@ -85,6 +85,9 @@ class NotchDebugWindow(QWidget):
         self.controller = controller
         self.session = session
         self.presenter = presenter
+        # Without a presenter nothing applies a behaviour; it is kept so Save
+        # never drops the one that was loaded.
+        self._behaviour = session.startup_settings.behaviour if session is not None else NotchBehaviour()
         self._visual_valid = True
         # The monitor preference behind each entry of `monitor`, by index.
         self._monitor_choices: list[MonitorPreference] = []
@@ -305,7 +308,16 @@ class NotchDebugWindow(QWidget):
     @property
     def runtime_settings(self) -> NotchSettings:
         """What the notch uses now: the settings Save would write."""
-        return NotchSettings(visual=self.notch.visual_config, monitor=self.notch.monitor_preference)
+        return NotchSettings(
+            visual=self.notch.visual_config,
+            monitor=self.notch.monitor_preference,
+            behaviour=self.runtime_behaviour,
+        )
+
+    @property
+    def runtime_behaviour(self) -> NotchBehaviour:
+        """The presenter's behaviour; without one, the behaviour last applied."""
+        return self._behaviour if self.presenter is None else self.presenter.behaviour
 
     def sync_from_notch(self):
         """Show the values the notch really uses, without applying anything."""
@@ -479,6 +491,9 @@ class NotchDebugWindow(QWidget):
 
         self.notch.apply_visual_config(settings.visual)
         self.notch.set_monitor_preference(settings.monitor)
+        self._behaviour = settings.behaviour
+        if self.presenter is not None:
+            self.presenter.set_behaviour(settings.behaviour)
         self.sync_from_notch()
 
     def save(self):

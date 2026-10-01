@@ -104,7 +104,7 @@ class DesktopShell:
         self.window = MainWindow(application, self.animator)
         settings = NotchSettings() if notch_settings is None else notch_settings
         self.notch = build_notch(settings, animator=self.animator)
-        self.presenter = NotchPresenter(application.scheduler, actions=NOTCH_ACTIONS)
+        self.presenter = NotchPresenter(application.scheduler, settings.behaviour, actions=NOTCH_ACTIONS)
         bind_presenter(self.notch, self.presenter)
         self.notch.action_requested.connect(self.on_notch_action)
         self.notch_session = notch_session

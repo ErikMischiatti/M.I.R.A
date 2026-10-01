@@ -12,6 +12,7 @@ import pytest
 import mira.ui.notch.config_store as config_store
 from mira.ui.notch.config_store import (
     SCHEMA_VERSION,
+    ConfigSession,
     ConfigSource,
     NotchSettings,
     config_path_from,
@@ -21,7 +22,9 @@ from mira.ui.notch.config_store import (
     settings_from_dict,
     settings_to_dict,
 )
+from mira.domain.notice import NoticeCategory
 from mira.ui.notch.eye_layout import NotchEyeStyle
+from mira.ui.notch.presentation import NotchBehaviour
 from mira.ui.notch.presence import NotchGeometry, NotchSize
 from mira.ui.notch.screen_selection import MonitorIdentity, MonitorPreference
 from mira.ui.notch.visual_config import InvalidVisualConfig, NotchVisualConfig
@@ -39,6 +42,11 @@ TUNED = NotchSettings(
         transition_duration_ms=260,
     ),
     monitor=MonitorPreference(MonitorIdentity("HDMI-1", "Philips Consumer Electronics Company", "Philips 298P4", "1844")),
+    behaviour=NotchBehaviour(
+        expand_on_hover=False,
+        automatic_expansion=frozenset({NoticeCategory.TASK}),
+        notice_duration_ms=6500,
+    ),
 )
 
 
@@ -83,6 +91,11 @@ def test_the_defaults_serialize_to_the_documented_schema():
         "eyes": {"height_share": 0.28, "top_offset": 0.0, "center_offset": 0.0, "spacing": 300.0, "motion_gain": 0.5},
         "animation": {"duration_ms": 200},
         "display": {"monitor": None},
+        "behaviour": {
+            "expand_on_hover": True,
+            "automatic_expansion": {"alert": True, "device": True, "task": False},
+            "notice_duration_ms": 4000,
+        },
     }
 
 
@@ -158,7 +171,17 @@ def structurally_broken():
 
     return {
         "not an object": [1, 2, 3],
-        "wrong version": changed(lambda d: d.update(version=2)),
+        "future version": changed(lambda d: d.update(version=3)),
+        "version zero": changed(lambda d: d.update(version=0)),
+        "behaviour in version 1": changed(lambda d: d.update(version=1)),
+        "missing behaviour": changed(lambda d: d.pop("behaviour")),
+        "unknown behaviour key": changed(lambda d: d["behaviour"].update(sticky=True)),
+        "unknown category": changed(lambda d: d["behaviour"]["automatic_expansion"].update(perception=True)),
+        "missing category": changed(lambda d: d["behaviour"]["automatic_expansion"].pop("task")),
+        "non-boolean switch": changed(lambda d: d["behaviour"].update(expand_on_hover=1)),
+        "non-boolean category": changed(lambda d: d["behaviour"]["automatic_expansion"].update(alert="yes")),
+        "notice too short": changed(lambda d: d["behaviour"].update(notice_duration_ms=10)),
+        "fractional notice": changed(lambda d: d["behaviour"].update(notice_duration_ms=4000.5)),
         "boolean version": changed(lambda d: d.update(version=True)),
         "missing section": changed(lambda d: d.pop("eyes")),
         "unknown section": changed(lambda d: d.update(extra={})),
@@ -345,3 +368,62 @@ def test_an_invalid_file_has_no_baseline_and_reload_keeps_the_last_good_one(path
     assert session.baseline == TUNED  # the runtime is still what was loaded
     assert config_store.ConfigSession(path).baseline is None
     assert config_store.ConfigSession(path).has_unsaved_changes(NotchSettings())
+
+
+# --- Version 1 compatibility ---------------------------------------------------------------
+
+
+def version_1(settings: NotchSettings) -> dict:
+    """``settings`` exactly as the version-1 store wrote them."""
+    data = settings_to_dict(settings)
+    data.pop("behaviour")
+    data["version"] = 1
+    return data
+
+
+def test_a_version_1_file_loads_with_the_production_behaviour(path):
+    write(path, version_1(TUNED))
+    before = path.read_bytes()
+
+    loaded = load_settings(path)
+
+    assert loaded.source is ConfigSource.SAVED
+    assert loaded.migrated_from == 1
+    assert loaded.diagnostic is None
+    assert loaded.settings.visual == TUNED.visual
+    assert loaded.settings.monitor == TUNED.monitor
+    assert loaded.settings.behaviour == NotchBehaviour()
+    # Loading never writes: the file stays version 1 until Save.
+    assert path.read_bytes() == before
+
+
+def test_a_version_1_file_is_upgraded_only_by_saving(path):
+    write(path, version_1(TUNED))
+    session = ConfigSession(path)
+
+    assert not session.has_unsaved_changes(session.startup_settings)
+    session.save(session.startup_settings)
+
+    data = json.loads(path.read_text(encoding="utf-8"))
+    assert data["version"] == SCHEMA_VERSION
+    assert data["behaviour"] == settings_to_dict(NotchSettings())["behaviour"]
+    reloaded = load_settings(path)
+    assert reloaded.migrated_from is None
+    assert reloaded.settings.visual == TUNED.visual
+
+
+def test_a_current_file_reports_no_migration(path):
+    save_settings(TUNED, path)
+
+    assert load_settings(path).migrated_from is None
+
+
+def test_an_invalid_version_1_file_still_falls_back(path):
+    data = version_1(NotchSettings())
+    data["eyes"]["height_share"] = 0.5
+    write(path, data)
+
+    loaded = load_settings(path)
+
+    assert loaded.source is ConfigSource.INVALID_FALLBACK
+    assert loaded.migrated_from is None
