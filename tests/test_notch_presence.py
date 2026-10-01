@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ast
+import math
 import pathlib
 import subprocess
 import sys
@@ -68,13 +69,13 @@ def test_the_defaults_form_a_valid_geometry():
 # --- Placement ---------------------------------------------------------------
 
 
-def test_compact_bounds_hang_centred_from_the_top_of_the_available_area():
+def test_compact_bounds_hang_centred_from_the_top_of_the_screen_area():
     shape = GEOMETRY.shape_for(AVAILABLE, NotchPresence.COMPACT)
 
     assert shape == NotchShape(bounds=Rect(860.0, 32.0, 200.0, 32.0), corner_radius=14.0)
 
 
-def test_expanded_bounds_hang_centred_from_the_top_of_the_available_area():
+def test_expanded_bounds_hang_centred_from_the_top_of_the_screen_area():
     shape = GEOMETRY.shape_for(AVAILABLE, NotchPresence.EXPANDED)
 
     assert shape == NotchShape(bounds=Rect(780.0, 32.0, 360.0, 96.0), corner_radius=24.0)
@@ -388,3 +389,26 @@ def test_the_presence_model_loads_with_qt_unavailable():
         " for name in sys.modules)\n"
     )
     subprocess.run([sys.executable, "-c", code], check=True, cwd=PRESENCE_SOURCE.parents[3])
+
+
+@pytest.mark.parametrize(
+    "screen",
+    [
+        Rect(0.0, 0.0, 1920.0, 1080.0),
+        Rect(1920.0, 313.0, 2560.0, 1080.0),
+        Rect(-2560.0, -1440.0, 2560.0, 1440.0),
+        Rect(4480.0, -7.0, 1080.0, 1920.0),
+    ],
+)
+@pytest.mark.parametrize("margin", [0.0, 6.0, 40.0])
+def test_the_window_top_is_the_screen_top_plus_the_margin_once(screen, margin):
+    geometry = NotchGeometry(top_margin=margin)
+
+    bounds = window_bounds(screen, geometry)
+
+    assert bounds.y == screen.y + margin
+    # In the window, the notch hangs from the window's own top edge, so the
+    # margin is not applied a second time.
+    assert window_shape(bounds, geometry, NotchPresence.COMPACT).bounds.y == 0.0
+    # Centred on this screen, whatever its origin.
+    assert bounds.x == math.floor(screen.center_x - bounds.width / 2.0)

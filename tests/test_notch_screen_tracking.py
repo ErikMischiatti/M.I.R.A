@@ -35,7 +35,8 @@ class FakeScreen(QObject):
         super().__init__()
         self._name = name
         self._geometry = geometry
-        self._available = geometry if available is None else available
+        # A work area below a 32 px top bar: placement must never use it.
+        self._available = geometry.adjusted(0, 32, 0, 0) if available is None else available
 
     def name(self) -> str:
         return self._name
@@ -47,14 +48,20 @@ class FakeScreen(QObject):
         return self._available
 
     def move_to(self, geometry: QRect) -> None:
-        self._geometry = self._available = geometry
+        self._geometry = geometry
+        self._available = geometry.adjusted(0, 32, 0, 0)
         self.geometryChanged.emit(geometry)
-        self.availableGeometryChanged.emit(geometry)
+        self.availableGeometryChanged.emit(self._available)
 
     def geometry_listeners(self) -> int:
+        """Connections to `geometryChanged`: one to watch, one more if tracked."""
         return self.receivers(SIGNAL("geometryChanged(QRect)"))
 
     def placement_listeners(self) -> int:
+        """Connections beyond the watch: 1 for the tracked screen, else 0."""
+        return self.geometry_listeners() - 1
+
+    def work_area_listeners(self) -> int:
         return self.receivers(SIGNAL("availableGeometryChanged(QRect)"))
 
 
@@ -88,7 +95,7 @@ def geometry_of(window: NotchWindow) -> tuple:
 
 
 def placed_on(screen: FakeScreen) -> tuple:
-    bounds = window_bounds(rect_from_qrect(screen.availableGeometry()), GEOMETRY)
+    bounds = window_bounds(rect_from_qrect(screen.geometry()), GEOMETRY)
     return (bounds.x, bounds.y, bounds.width, bounds.height)
 
 
@@ -149,6 +156,7 @@ def test_plugging_a_screen_reselects_and_repositions(made):
     assert notch.tracked_screen is laptop
     assert geometry_of(notch) == placed_on(laptop)
     assert portrait.geometry_listeners() == 1 and left_of_laptop.geometry_listeners() == 1
+    assert all(screen.work_area_listeners() == 0 for screen in desktop.screens)
 
 
 def test_unplugging_the_tracked_screen_moves_to_the_new_centre_and_drops_it(made):
@@ -162,7 +170,6 @@ def test_unplugging_the_tracked_screen_moves_to_the_new_centre_and_drops_it(made
     desktop.unplug(landscape)
 
     assert landscape.geometry_listeners() == 0
-    assert landscape.placement_listeners() == 0
     assert all(screen is not landscape for screen in notch.watched_screens)
     # Laptop and portrait remain; the laptop's centre is nearer the new desktop centre.
     assert notch.tracked_screen is laptop
@@ -202,9 +209,9 @@ def test_reconfiguring_never_accumulates_connections(made):
         desktop.unplug(c)
         b.move_to(LANDSCAPE)
 
-    assert [screen.geometry_listeners() for screen in (a, b, c)] == [1, 1, 0]
-    placement = [screen.placement_listeners() for screen in (a, b, c)]
-    assert sum(placement) == 1 and placement[desktop.screens.index(notch.tracked_screen)] == 1
+    assert c.geometry_listeners() == 0
+    placement = [screen.placement_listeners() for screen in (a, b)]
+    assert sorted(placement) == [0, 1] and placement[desktop.screens.index(notch.tracked_screen)] == 1
 
 
 def test_the_primary_breaks_a_tie_and_its_change_reselects(made):

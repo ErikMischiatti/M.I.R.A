@@ -6,9 +6,9 @@ the eyes inside the notch render. This module only turns a presence, or a
 point between two presences, into bounds on a screen area; it owns no
 lifecycle, timer or window and imports nothing from Qt or the rest of `mira`.
 
-Coordinates are logical pixels in the same space as the screen area passed in,
-normally a screen's available geometry, so the notch hangs from the bottom of
-any desktop panel along the top edge.
+Coordinates are logical pixels in the same space as the screen area passed in:
+a screen's full geometry, so with no top margin the notch's top edge is the
+screen's top edge. Screens may have non-zero or negative origins.
 """
 
 from __future__ import annotations
@@ -175,9 +175,9 @@ class NotchGeometry:
 def window_bounds(area: Rect, geometry: NotchGeometry) -> Rect:
     """Whole-pixel top-level window bounds that contain every presence.
 
-    ``area`` is where the notch may appear, normally a screen's available
-    geometry; the window hangs top-centre from it, ``top_margin`` below its top
-    and ``offset_x`` beside its centre.
+    ``area`` is the selected screen's full geometry; the window hangs
+    top-centre from it, exactly ``top_margin`` below its top and ``offset_x``
+    beside its centre.
     """
 
     expanded = geometry.shape_for(area, NotchPresence.EXPANDED).bounds

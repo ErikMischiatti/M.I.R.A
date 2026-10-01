@@ -42,22 +42,38 @@ NOTCH = QColor(0, 0, 0)
 
 
 class FakeScreen(QObject):
-    """Stands in for a `QScreen`: the one signal and query the window uses."""
+    """Stands in for a `QScreen`: its geometry and its desktop work area.
 
+    By default the work area lies 32 px below the screen top, as under a
+    GNOME top bar, so any use of it shows up as a gap above the notch.
+    """
+
+    geometryChanged = Signal(QRect)
     availableGeometryChanged = Signal(QRect)
 
-    def __init__(self, available: QRect):
+    def __init__(self, geometry: QRect, available: QRect | None = None):
         super().__init__()
-        self._available = available
+        self._geometry = geometry
+        self._available = geometry.adjusted(0, 32, 0, 0) if available is None else available
+
+    def geometry(self) -> QRect:
+        return self._geometry
 
     def availableGeometry(self) -> QRect:
         return self._available
+
+    def move_to(self, geometry: QRect) -> None:
+        self._geometry = geometry
+        self.geometryChanged.emit(geometry)
 
     def move_panel(self, available: QRect) -> None:
         self._available = available
         self.availableGeometryChanged.emit(available)
 
     def connections(self) -> int:
+        return self.receivers(SIGNAL("geometryChanged(QRect)"))
+
+    def work_area_connections(self) -> int:
         return self.receivers(SIGNAL("availableGeometryChanged(QRect)"))
 
 
@@ -78,8 +94,8 @@ def window():
     QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
 
 
-def expected_bounds(available: QRect) -> Rect:
-    return window_bounds(rect_from_qrect(available), GEOMETRY)
+def expected_bounds(screen_geometry: QRect) -> Rect:
+    return window_bounds(rect_from_qrect(screen_geometry), GEOMETRY)
 
 
 def geometry_of(window: NotchWindow) -> Rect:
@@ -147,9 +163,9 @@ def test_the_window_tracks_the_selected_screen(window):
 
 
 def test_the_window_is_the_expanded_notch_top_centre_on_its_screen(window):
-    available = QGuiApplication.primaryScreen().availableGeometry()
+    screen_geometry = QGuiApplication.primaryScreen().geometry()
 
-    assert geometry_of(window) == expected_bounds(available)
+    assert geometry_of(window) == expected_bounds(screen_geometry)
     assert window.width() == 360 and window.height() == 96
 
 
@@ -176,13 +192,35 @@ def test_a_screen_with_a_non_zero_origin_places_the_window_on_it(window):
     assert geometry_of(window) == Rect(-820, -200, 360, 96)
 
 
-def test_the_top_margin_lowers_the_window():
+def test_the_top_margin_lowers_the_window_from_the_screen_top_exactly_once():
     notch = NotchWindow(NotchGeometry(top_margin=6.0))
     try:
-        notch.track_screen(FakeScreen(QRect(0, 32, 1920, 1048)))
-        assert notch.y() == 38
+        # The work area (top 32) must not add to the margin.
+        notch.track_screen(FakeScreen(QRect(0, 0, 1920, 1080), available=QRect(0, 32, 1920, 1048)))
+        assert notch.y() == 6
+        notch.track_screen(FakeScreen(QRect(0, 313, 1920, 1080)))
+        assert notch.y() == 319
     finally:
         notch.deleteLater()
+
+
+def test_a_zero_margin_puts_the_notch_top_on_the_screen_top_not_the_work_area(window):
+    # The reported layout: the central screen starts at y=313 while the
+    # desktop work area, pushed down by the top bar, starts at 345.
+    screen = FakeScreen(QRect(1920, 313, 2560, 1080), available=QRect(1920, 345, 2560, 1048))
+
+    window.track_screen(screen)
+
+    assert window.y() == 313
+    assert window.shape.bounds.y == 0.0
+    # Centred on the selected screen: 1920 + (2560 - 360) / 2.
+    assert window.x() == 3020
+
+
+def test_a_negative_origin_screen_anchors_to_its_own_top_and_centre(window):
+    window.track_screen(FakeScreen(QRect(-2560, -1440, 2560, 1440)))
+
+    assert (window.x(), window.y()) == (-2560 + (2560 - 360) // 2, -1440)
 
 
 def test_fractional_geometry_rounds_to_the_documented_whole_pixels():
@@ -201,13 +239,24 @@ def test_fractional_geometry_rounds_to_the_documented_whole_pixels():
 # --- Screen changes ----------------------------------------------------------
 
 
-def test_a_changed_available_geometry_moves_the_window(window):
+def test_a_changed_screen_geometry_moves_the_window(window):
     screen = FakeScreen(QRect(0, 0, 1920, 1080))
     window.track_screen(screen)
 
-    screen.move_panel(QRect(0, 48, 2560, 1392))
+    screen.move_to(QRect(0, 48, 2560, 1392))
 
     assert geometry_of(window) == expected_bounds(QRect(0, 48, 2560, 1392))
+
+
+def test_a_changed_work_area_does_not_move_the_window(window):
+    screen = FakeScreen(QRect(0, 0, 1920, 1080))
+    window.track_screen(screen)
+    before = geometry_of(window)
+
+    screen.move_panel(QRect(0, 64, 1920, 1016))
+
+    assert geometry_of(window) == before
+    assert screen.work_area_connections() == 0
 
 
 def test_tracking_a_new_screen_drops_the_old_connection(window):
@@ -221,7 +270,7 @@ def test_tracking_a_new_screen_drops_the_old_connection(window):
     assert second.connections() == 1
     assert window.tracked_screen is second
 
-    first.move_panel(QRect(0, 0, 800, 600))
+    first.move_to(QRect(0, 0, 800, 600))
     assert geometry_of(window) == expected_bounds(QRect(1920, 0, 1280, 1024))
 
 

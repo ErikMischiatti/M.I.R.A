@@ -112,9 +112,13 @@ class NotchWindow(QWidget):
     """A frameless top-level overlay that draws the notch and nothing else.
 
     The window keeps one fixed size, the expanded notch rounded to whole pixels,
-    hung top-centre from the primary screen's available geometry — so below a
-    desktop panel such as GNOME's top bar. Presence only changes the shape drawn
-    inside it; the window is never resized to follow the notch.
+    hung top-centre from the selected screen's full geometry: with no top margin
+    the notch's top edge is the screen's top edge. The desktop work area
+    (`QScreen.availableGeometry`) is deliberately not used — on X11 it follows
+    the window manager's panel struts, which change asynchronously with
+    monitor hot-plugging and can leave a gap above the notch. Presence only
+    changes the shape drawn inside the window; it is never resized to follow
+    the notch.
 
     Three things are kept apart:
 
@@ -409,13 +413,13 @@ class NotchWindow(QWidget):
 
     def _release_tracked_screen(self):
         try:
-            self._screen.availableGeometryChanged.disconnect(self._on_available_geometry)
+            self._screen.geometryChanged.disconnect(self._on_tracked_geometry)
         except (RuntimeError, TypeError):
             pass  # The screen is already gone, and its connections with it.
         self._screen = None
 
     def track_screen(self, screen: QScreen | None):
-        """Follow ``screen``'s available geometry, dropping the previous screen.
+        """Follow ``screen``'s geometry, dropping the previous screen.
 
         Normally called by `retarget_screen` with the selector's choice. The
         previous screen's connection is removed first, so repeated or
@@ -429,7 +433,7 @@ class NotchWindow(QWidget):
             self._release_tracked_screen()
         self._screen = screen
         if screen is not None:
-            screen.availableGeometryChanged.connect(self._on_available_geometry)
+            screen.geometryChanged.connect(self._on_tracked_geometry)
         self.reposition()
 
     def reposition(self):
@@ -438,16 +442,14 @@ class NotchWindow(QWidget):
         if self._screen is None:
             self._apply_shape()
             return
-        self._window_bounds = window_bounds(
-            rect_from_qrect(self._screen.availableGeometry()), self._geometry
-        )
+        self._window_bounds = window_bounds(rect_from_qrect(self._screen.geometry()), self._geometry)
         bounds = self._window_bounds
         self._update_eye_layout()
         self.setFixedSize(int(bounds.width), int(bounds.height))
         self.move(int(bounds.x), int(bounds.y))
         self._apply_shape()
 
-    def _on_available_geometry(self, _geometry: QRect):
+    def _on_tracked_geometry(self, _geometry: QRect):
         self.reposition()
 
     def _update_eye_layout(self):
