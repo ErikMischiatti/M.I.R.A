@@ -73,6 +73,25 @@ the symlink. It preserves the caller's working directory, which the desktop
 actions use for the `current` alias and relative paths (see
 [configuration.md](configuration.md#desktop-actions)).
 
+### Notch launchers
+
+The notch is developer tooling for now; `MIRA` never shows it. Two more
+launchers run it standalone with the same `venv` and symlink resolution:
+
+| Command | Script | Runs |
+|---|---|---|
+| `MIRA-NOTCH` | `bin/mira-notch` | `python -m mira.ui.notch --notch-only`: the notch alone, with the saved notch configuration and no tuning window. Ctrl+C quits. |
+| `MIRA-TUNE` | `bin/mira-tune` | `python -m mira.ui.notch --tune`: the notch with its tuning window, which changes it live and can Save, Reload and Reset defaults. Closing the window quits. |
+
+```bash
+ln -s "$PWD/bin/mira-notch" ~/.local/bin/MIRA-NOTCH
+ln -s "$PWD/bin/mira-tune" ~/.local/bin/MIRA-TUNE
+MIRA-TUNE --config /tmp/notch-experiment.json   # any other configuration file
+```
+
+The configuration file and its rules are in
+[configuration.md](configuration.md#notch).
+
 ## Repository layout
 
 ```text
@@ -88,7 +107,7 @@ mira/
 ├── ui/           # Qt window, chat panel, debug drawer, face/ rendering
 ├── config/       # packaged expression profiles
 └── main.py       # process entry point
-bin/mira          # launcher script
+bin/mira          # launcher script; bin/mira-notch, bin/mira-tune for the notch
 scripts/          # architecture checkers
 tests/            # pytest suite
 docs/             # technical documentation

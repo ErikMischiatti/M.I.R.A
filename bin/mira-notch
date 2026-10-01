@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+#
+# M.I.R.A. standalone notch launcher: the notch alone, with the saved notch configuration and no tuning window.
+#
+# Developer tooling: the notch is not part of the normal application yet; use
+# bin/mira for that. Runs from any working directory using the repository's
+# own virtual environment. Intended to be reached through a symlink on PATH,
+# for example:
+#
+#   ln -s "$PWD/bin/mira-notch" ~/.local/bin/MIRA-NOTCH
+#
+# Arguments are passed on to `python -m mira.ui.notch`, e.g. --config PATH.
+set -euo pipefail
+
+# Resolve this script through any symlink chain so the repository root is
+# derived from the real file location, not from the caller's PATH entry.
+script_path="$(readlink -f -- "${BASH_SOURCE[0]}")"
+repo_root="$(cd -- "$(dirname -- "$script_path")/.." && pwd -P)"
+
+python_bin="$repo_root/venv/bin/python"
+
+if [ ! -x "$python_bin" ]; then
+    printf 'MIRA-NOTCH: no virtual environment at %s\n' "$repo_root/venv" >&2
+    printf 'MIRA-NOTCH: create it with\n' >&2
+    printf '  cd %s\n' "$repo_root" >&2
+    printf '  python3.12 -m venv venv\n' >&2
+    printf '  venv/bin/python -m pip install --requirement requirements.txt\n' >&2
+    exit 1
+fi
+
+# exec so signals and the exit status pass straight through to the caller.
+exec "$python_bin" -m mira.ui.notch --notch-only "$@"
