@@ -116,21 +116,24 @@ intentionally.
 `MIRA`, `MIRA-NOTCH` and `MIRA-TUNE` (`python -m mira.ui.notch`) read the
 notch's tuned settings from one JSON file: `MIRA_NOTCH_CONFIG`, else
 `$XDG_CONFIG_HOME/mira/notch.json` (`~/.config/mira/notch.json`); the notch
-tools also accept `--config PATH`. `MIRA` only reads it, at startup, and
-prints which file it used. Only the tuning window's **Save** writes it. The production defaults live in code
+tools also accept `--config PATH`. `MIRA` reads it at startup and
+prints which file it used. Only the settings window's **Save** writes it. The production defaults live in code
 and never change by saving; the tuning window's **Reset defaults** restores
 them at run time only.
 
 ```json
 {
-  "version": 1,
+  "version": 2,
   "compact":   {"width": 200.0, "height": 32.0, "radius": 14.0},
   "expanded":  {"width": 360.0, "height": 96.0, "radius": 24.0},
   "placement": {"offset_x": 0.0, "top_margin": 0.0},
   "eyes": {"height_share": 0.28, "top_offset": 0.0, "center_offset": 0.0,
            "spacing": 300.0, "motion_gain": 0.5},
   "animation": {"duration_ms": 200},
-  "display": {"monitor": null}
+  "display": {"monitor": null},
+  "behaviour": {"expand_on_hover": true,
+                "automatic_expansion": {"alert": true, "device": true, "task": false},
+                "notice_duration_ms": 4000}
 }
 ```
 
@@ -144,6 +147,25 @@ does not match the schema, or would clip the eyes is ignored with a
 diagnostic, the notch starts with the defaults, and the file is left
 untouched. Saving is atomic: a temporary file in the same directory replaces
 the old one in a single rename.
+
+**Behaviour.** `expand_on_hover` expands the notch while the pointer is over
+it. `automatic_expansion` has one switch per notice category — `alert`
+(warnings and errors), `device` (device changes), `task` (results of actions
+MIRA ran) — saying whether such a notice expands the notch by itself; a
+notice of a disabled category still shows if the notch is open anyway.
+`notice_duration_ms` (1000–30000) is how long a notice stays. Defaults are
+conservative: alerts and device changes expand, task results do not. Only
+task notices have a producer today.
+
+**Version 1.** Files written before behaviour existed (`"version": 1`, no
+`behaviour` section) still load, with the default behaviour; the file is not
+touched until **Save**, which rewrites it as version 2. Diagnostics shows the
+schema version. Code older than this change cannot read version 2.
+
+**Settings while running.** Right-click the notch → *Notch settings…* opens
+the same paged settings window as `MIRA-TUNE` for the running notch (without
+the development previews); double-click the notch to bring the main window
+forward.
 
 **Placement.** `top_margin` 0 puts the notch's top edge on the selected
 screen's top edge — the screen geometry, not the desktop work area below a

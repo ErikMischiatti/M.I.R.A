@@ -76,6 +76,8 @@ mira.main
       → FaceController → FaceAnimator   (the one embodiment and its clock)
       → MainWindow(application, animator)
       → NotchWindow(animator, saved notch settings)   (build_notch)
+      → NotchPresenter(application.scheduler, saved behaviour)
+                                        (what the notch presents; bind_presenter)
   → aboutToQuit: desktop.shutdown(), then application.shutdown()
   → application.start()   (starts camera capture, if enabled)
   → desktop.start()       (shows the window, starts the animator)
@@ -90,9 +92,12 @@ the notch. Surfaces only repaint on its ticks; none creates, steps or drives
 the embodiment.
 
 `EmbodimentIntent` (what MIRA is doing) and `NotchPresence` (how much notch is
-visible) stay separate. Activity reaches the notch only as the shared face;
-presence is the shell's policy, currently fixed at compact from start to
-shutdown.
+visible) stay separate. What the notch presents is decided by one Qt-free
+`NotchPresenter` the shell owns (section 9a); the window only renders it.
+
+`mira/application/scheduling.py` holds the production `Scheduler` choice on
+its own, so the standalone notch tools can time notices without loading the
+application graph.
 
 `Brain` currently constructs its own session memory, selected intent engine,
 response builder, action registry, executor, and concrete action handlers. The
@@ -281,6 +286,78 @@ came from a mouse.
 `EmbodiedBehavior` (in `core`) shapes timing around responses: brief affect
 reactions to `greeting`/`unknown` intents and a delayed decay from the response
 expression back to idle or listening.
+
+## 9a. Notch presentation
+
+The notch is ambient presence and glanceable, transient information; the
+main window stays the place for conversation, detail and configuration.
+
+```text
+EventBus ── state_changed ──────────┐
+         ── action_completed/failed ┤      (DesktopShell maps them)
+NotchWindow ── hover_changed ───────┤
+                                    ▼
+                           NotchPresenter          mira/ui/notch/presentation.py
+                     (base presence, activity,     Qt-free; timers via the
+                      hover, pin, one notice)      Scheduler port
+                                    │
+                           NotchPresentation        immutable value
+               presence · activity · notice · reasons · actions · content
+                                    ▼
+                              NotchWindow  ── action_requested ──▶ DesktopShell
+                      (eyes; symbol + label row)                   (MainWindow,
+                                                                    settings)
+```
+
+- **Notices** (`mira/domain/notice.py`) are UI-independent: a `NoticeCategory`
+  (why it matters — alert, device, task; what preferences are keyed on), a
+  `NoticeTone` (info, success, warning, error) and optional short text. A
+  producer never says how a notice is shown. Today's only producer is the
+  shell mapping action results to TASK notices.
+- **Presence** is resolved, never set from several places. The owner picks a
+  base (hidden or shown); the notch is EXPANDED while any `ExpansionReason`
+  holds — HOVER (if `expand_on_hover`), PINNED (tuning preview), NOTICE (a
+  notice whose category expands automatically) — and COMPACT otherwise.
+  Activity alone never expands; it only chooses the content shown while open.
+- **Lifetime and replacement.** A notice shows for `notice_duration_ms`, on one
+  timer from the injected `Scheduler` (the application's own in production).
+  The latest notice replaces the showing one and gets the full duration; there
+  is no queue. A notice whose category does not expand still becomes the
+  content for its lifetime.
+- **Rendering.** COMPACT shows only the eyes. EXPANDED keeps the eyes where
+  the compact notch places them and uses the revealed row beneath them for a
+  vector symbol (`symbol_painter`, Qt primitives only) and an optional short,
+  elided label (`expanded_layout`). Valid configurations keep every eye pose
+  inside the compact notch, so the row can never overlap the eyes.
+- **Actions.** The window emits `NotchAction` values (double click:
+  OPEN_MAIN_WINDOW; context menu: every offered action) and only those its
+  presentation offers. `DesktopShell` honours them; the notch never holds
+  `MainWindow`. The standalone tools offer none.
+
+**Embodiment independence.** Nothing in the presenter assumes a microphone,
+camera, text or pointer: notices are categories, content may lack a label,
+the set of actions is presented per embodiment, and hover is just one
+expansion reason. The desktop-specific adapter boundary is `NotchWindow`
+plus the shell's mapping of bus events to presenter input; another
+embodiment would supply its own renderer for `NotchPresentation` or its own
+presenter for the same notices.
+
+**Semantic eye treatments (not implemented).** Eyes are drawn from
+`FaceController`'s `EmbodimentFrame` by `EyePainter`. A future WARNING/ERROR/
+SUCCESS eye treatment has two possible homes, and the choice is per
+treatment: one shared by every embodiment belongs in the embodiment path
+(`EmbodimentIntent` → `ExpressionKey`/frame, through the one controller); a
+notch-only treatment belongs at paint time, derived from
+`NotchPresentation.content`/`notice` and applied by the notch's own painter,
+so `FaceWidget` never sees it. Either must keep the motion-envelope safety
+rule (`visual_config`) true for the new shapes. Deferred to a later tranche.
+
+**Input level (not implemented).** No audio subsystem exists, so there is no
+real microphone level to show. The intended interface is a domain value such
+as `AudioInputLevel(amplitude: float in [0, 1], timestamp_ms: int)`, produced
+by a future audio adapter and fed to the presenter like activity (pulled or
+pushed on the UI thread), never a synthetic waveform. LISTENING's symbol is
+static until that source exists.
 
 ## 10. Camera input
 
