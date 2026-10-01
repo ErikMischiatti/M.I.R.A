@@ -111,12 +111,10 @@ class DesktopShell:
         # Built on first request; one window however often it is asked for.
         self.settings_window: NotchDebugWindow | None = None
 
-        application.event_bus.subscribe(
-            "action_completed", lambda payload: self.presenter.present(task_notice(True, payload))
-        )
-        application.event_bus.subscribe(
-            "action_failed", lambda payload: self.presenter.present(task_notice(False, payload))
-        )
+        # After MainWindow's own action handlers, which subscribed while it
+        # was built above.
+        application.event_bus.subscribe("action_completed", self.on_action_completed)
+        application.event_bus.subscribe("action_failed", self.on_action_failed)
 
     def start(self) -> None:
         """Show the surfaces, then start the one clock that steps them."""
@@ -140,6 +138,12 @@ class DesktopShell:
         if self.settings_window is not None:
             self.settings_window.close()
         self.window.close()
+
+    def on_action_completed(self, payload) -> None:
+        self.presenter.present(task_notice(True, payload))
+
+    def on_action_failed(self, payload) -> None:
+        self.presenter.present(task_notice(False, payload))
 
     # --- Notch actions ----------------------------------------------------------
 
