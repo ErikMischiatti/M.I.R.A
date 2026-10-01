@@ -41,6 +41,7 @@ from mira.ui.notch.config_store import ConfigSession, ConfigSource, NotchSetting
 from mira.ui.notch.eye_layout import NotchEyeStyle
 from mira.ui.notch.notch_window import NotchWindow
 from mira.ui.notch.presence import NotchGeometry, NotchPresence, NotchSize
+from mira.ui.notch.presentation import NotchPresenter
 from mira.ui.notch.screen_selection import MonitorPreference, SelectionMode
 from mira.ui.notch.screens import monitor_identity
 from mira.ui.notch.visual_config import (
@@ -76,12 +77,14 @@ class NotchDebugWindow(QWidget):
         notch: NotchWindow,
         controller: FaceController | None = None,
         session: ConfigSession | None = None,
+        presenter: NotchPresenter | None = None,
     ):
         super().__init__()
         self.setWindowTitle("M.I.R.A. notch tuning")
         self.notch = notch
         self.controller = controller
         self.session = session
+        self.presenter = presenter
         self._visual_valid = True
         # The monitor preference behind each entry of `monitor`, by index.
         self._monitor_choices: list[MonitorPreference] = []
@@ -264,21 +267,37 @@ class NotchDebugWindow(QWidget):
         available = screen.availableGeometry()
         self.resize(min(width, available.width()), min(900, int(available.height() * 0.85)))
 
-    # --- Presence, through the production API ------------------------------
+    # --- Presence, through the presenter or the production API ---------------
+
+    # With a presenter, presence is its decision: Expanded pins the notch open
+    # (one expansion reason among others) and Compact releases the pin, so
+    # hover and notices keep working while tuning. Without one, the buttons
+    # use the notch's own presence API.
 
     def show_hidden(self):
-        self.notch.hide_notch()
+        if self.presenter is not None:
+            self.presenter.set_pinned(False)
+            self.presenter.hide()
+        else:
+            self.notch.hide_notch()
         self._refresh_status()
 
     def show_compact(self):
-        if self.notch.presence is NotchPresence.HIDDEN:
+        if self.presenter is not None:
+            self.presenter.set_pinned(False)
+            self.presenter.show()
+        elif self.notch.presence is NotchPresence.HIDDEN:
             self.notch.show_notch()
         else:
             self.notch.collapse_notch()
         self._refresh_status()
 
     def show_expanded(self):
-        self.notch.expand_notch()
+        if self.presenter is not None:
+            self.presenter.show()
+            self.presenter.set_pinned(True)
+        else:
+            self.notch.expand_notch()
         self._refresh_status()
 
     # --- Controls ← notch ---------------------------------------------------

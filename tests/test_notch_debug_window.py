@@ -19,6 +19,7 @@ from mira.ui.notch.debug_window import NotchDebugWindow
 from mira.ui.notch.eye_layout import BASE_EYE_HEIGHT_SHARE, NotchEyeStyle
 from mira.ui.notch.notch_window import NotchWindow
 from mira.ui.notch.presence import NotchGeometry, NotchPresence, NotchSize
+from mira.ui.notch.presentation import ExpansionReason
 from mira.ui.notch.screen_selection import MonitorIdentity, MonitorPreference
 
 
@@ -42,7 +43,7 @@ def env(config_path):
     # Settle the opening transition: these tests check values, not timing.
     finish(environment.notch)
     yield environment
-    environment.animator.stop()
+    environment.shutdown()
     environment.notch.transition.stop()
     environment.notch.hide()
     for widget in (environment.debug, environment.notch, environment.animator):
@@ -254,21 +255,50 @@ def test_the_derived_layout_is_shown(env):
 # --- Presence and expression ------------------------------------------------------
 
 
-def test_presence_buttons_use_the_production_presence_api(env, monkeypatch):
+def test_presence_buttons_go_through_the_presenter(env):
+    env.debug.expanded_button.click()
+    assert env.presenter.pinned
+    assert env.notch.presentation.reasons == {ExpansionReason.PINNED}
+    finish(env.notch)
+    env.debug.compact_button.click()
+    assert not env.presenter.pinned
+    finish(env.notch)
+    env.debug.hidden_button.click()
+    finish(env.notch)
+    assert env.presenter.presentation.presence is H
+    env.debug.compact_button.click()
+
+    assert env.notch.presence is C
+    assert env.notch.presentation == env.presenter.presentation
+
+
+def test_presence_buttons_use_the_notch_api_without_a_presenter(env, monkeypatch):
+    debug = NotchDebugWindow(env.notch, env.controller)
     calls = []
     for name in ("show_notch", "hide_notch", "expand_notch", "collapse_notch"):
         original = getattr(env.notch, name)
         monkeypatch.setattr(env.notch, name, lambda o=original, n=name: (calls.append(n), o())[1])
-
-    env.debug.expanded_button.click()
-    finish(env.notch)
-    env.debug.compact_button.click()
-    finish(env.notch)
-    env.debug.hidden_button.click()
-    finish(env.notch)
-    env.debug.compact_button.click()
+    try:
+        debug.expanded_button.click()
+        finish(env.notch)
+        debug.compact_button.click()
+        finish(env.notch)
+        debug.hidden_button.click()
+        finish(env.notch)
+        debug.compact_button.click()
+    finally:
+        debug.deleteLater()
 
     assert calls == ["expand_notch", "collapse_notch", "hide_notch", "show_notch"]
+
+
+def test_hover_still_expands_while_pinned_and_after(env):
+    env.debug.expanded_button.click()
+    env.notch.hover_changed.emit(True)
+    env.debug.compact_button.click()
+    assert env.notch.presence is E
+
+    env.notch.hover_changed.emit(False)
     assert env.notch.presence is C
 
 

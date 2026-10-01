@@ -40,8 +40,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from mira.adapters.opencv_camera import OpenCVCameraSource
-from mira.adapters.qt_scheduler import QtScheduler
 from mira.application.camera_config import camera_configuration_from_environment
+from mira.application.scheduling import build_scheduler
 from mira.core.activity_authority import ActivityAuthority
 from mira.core.brain import Brain
 from mira.core.camera_capture import CameraCapture
@@ -103,8 +103,8 @@ def build_application(
 ) -> Application:
     """Construct and wire the application graph.
 
-    `scheduler` defaults to the production `QtScheduler`, which binds its home
-    thread at construction (`mira/adapters/qt_scheduler.py:143`). That makes the
+    `scheduler` defaults to the production `QtScheduler` (`build_scheduler`),
+    which binds its home thread at construction (`mira/adapters/qt_scheduler.py:143`). That makes the
     *caller's* thread the serialized context, so production must call this from
     the Qt main thread — `mira.main` does, after creating the `QApplication`,
     which is where `MainWindow` used to build it.
@@ -124,7 +124,7 @@ def build_application(
     # that used to write it. Two authorities would each commit against the
     # same StateManager and neither would be authoritative.
     activity = ActivityAuthority(state_manager)
-    scheduler = QtScheduler() if scheduler is None else scheduler
+    scheduler = build_scheduler() if scheduler is None else scheduler
 
     brain = Brain(event_bus, activity, scheduler=scheduler)
 

@@ -28,13 +28,16 @@ from pathlib import Path
 
 from PySide6.QtWidgets import QApplication
 
+from mira.application.scheduling import build_scheduler
 from mira.domain.embodiment import ActivityState, EmbodimentIntent
+from mira.domain.scheduler import Scheduler
 from mira.ui.face.face_animator import FaceAnimator
 from mira.ui.face.face_controller import FaceController
 from mira.ui.notch.config_store import ConfigSession, NotchSettings
 from mira.ui.notch.debug_window import NotchDebugWindow
 from mira.ui.notch.notch_window import NotchWindow
-from mira.ui.notch.startup import build_notch
+from mira.ui.notch.presentation import NotchPresenter
+from mira.ui.notch.startup import bind_presenter, build_notch
 from mira.ui.notch.screen_selection import desktop_bounds, distance_squared_to_desktop_centre
 from mira.ui.notch.screens import monitor_identity, rect_from_qrect
 
@@ -45,14 +48,27 @@ class NotchEnvironment:
     animator: FaceAnimator
     notch: NotchWindow
     session: ConfigSession | None
+    presenter: NotchPresenter
+    scheduler: Scheduler
     debug: NotchDebugWindow | None = None
+
+    def shutdown(self):
+        """Stop the clock and the notice timer; idempotent."""
+        self.animator.stop()
+        self.presenter.shutdown()
+        self.scheduler.shutdown()
 
 
 # The tuning environment is the notch environment with its tuning window.
 TuningEnvironment = NotchEnvironment
 
 
-def build_notch_environment(session: ConfigSession | None = None, *, tuning: bool = True) -> NotchEnvironment:
+def build_notch_environment(
+    session: ConfigSession | None = None,
+    *,
+    tuning: bool = True,
+    scheduler: Scheduler | None = None,
+) -> NotchEnvironment:
     """The notch, opening to compact with the idle expression.
 
     The notch starts with ``session``'s startup settings, or the production
@@ -60,6 +76,10 @@ def build_notch_environment(session: ConfigSession | None = None, *, tuning: boo
     are reported and replaced by the defaults; startup never fails on
     configuration. With ``tuning`` a tuning window is built too. The animator
     is not started and no tuning window is shown.
+
+    The notch is presented by its own `NotchPresenter`, as in the
+    application, so hover expands it here too. Its notice timer runs on
+    ``scheduler``, by default the production one (`build_scheduler`).
     """
 
     controller = FaceController()
@@ -67,18 +87,23 @@ def build_notch_environment(session: ConfigSession | None = None, *, tuning: boo
     animator = FaceAnimator(controller)
     settings = NotchSettings() if session is None else session.startup_settings
     notch = build_notch(settings, animator=animator)
-    notch.show_notch()
+    scheduler = build_scheduler() if scheduler is None else scheduler
+    presenter = NotchPresenter(scheduler)
+    bind_presenter(notch, presenter)
+    presenter.show()
 
-    environment = NotchEnvironment(controller, animator, notch, session)
+    environment = NotchEnvironment(controller, animator, notch, session, presenter, scheduler)
     if tuning:
-        environment.debug = NotchDebugWindow(notch, controller, session)
+        environment.debug = NotchDebugWindow(notch, controller, session, presenter)
     return environment
 
 
-def build_tuning_environment(session: ConfigSession | None = None) -> NotchEnvironment:
+def build_tuning_environment(
+    session: ConfigSession | None = None, *, scheduler: Scheduler | None = None
+) -> NotchEnvironment:
     """The notch and its tuner; without ``session`` nothing is persisted."""
 
-    return build_notch_environment(session, tuning=True)
+    return build_notch_environment(session, tuning=True, scheduler=scheduler)
 
 
 def print_screens(app: QApplication, notch: NotchWindow):
@@ -137,6 +162,7 @@ def main(argv: list[str] | None = None):
     print(f"[notch] platform: {app.platformName()}")
     print_screens(app, environment.notch)
 
+    app.aboutToQuit.connect(environment.shutdown)
     environment.animator.start()
     if environment.debug is not None:
         # The notch is a tool window, which Qt does not count as a last window.

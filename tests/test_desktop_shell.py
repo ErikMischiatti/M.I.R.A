@@ -23,6 +23,7 @@ from PySide6.QtCore import QCoreApplication, QEvent, QObject
 from mira.application.composition import build_application
 from mira.domain.embodiment import ActivityState
 from mira.domain.micro_motion import MicroMotions
+from mira.domain.notice import Notice, NoticeCategory, NoticeTone
 from mira.domain.scheduler import ManualScheduler
 from mira.ui.desktop_shell import DesktopShell
 from mira.ui.face.face_animator import FaceAnimator
@@ -214,6 +215,51 @@ def test_activity_never_changes_the_notch_presence(composed):
 
     # The activity did change underneath; only presence stayed put.
     assert activities == [ActivityState.LISTENING, ActivityState.IDLE]
+
+
+def test_the_notch_presenter_follows_the_committed_activity(composed):
+    desktop, application = composed()
+    desktop.start()
+
+    application.event_bus.emit("input_focused")
+    assert desktop.presenter.presentation.activity is ActivityState.LISTENING
+    assert desktop.notch.presentation.activity is ActivityState.LISTENING
+
+    application.event_bus.emit("input_unfocused")
+    assert desktop.notch.presentation.activity is ActivityState.IDLE
+
+
+def test_hover_expands_the_running_notch_and_leaving_collapses_it(composed):
+    desktop, _ = composed()
+    desktop.start()
+
+    desktop.notch.hover_changed.emit(True)
+    assert desktop.notch.presence is NotchPresence.EXPANDED
+    desktop.notch.hover_changed.emit(False)
+    assert desktop.notch.presence is NotchPresence.COMPACT
+
+
+def test_notices_expire_on_the_applications_scheduler(composed):
+    desktop, application = composed()
+    desktop.start()
+
+    desktop.presenter.present(Notice(NoticeCategory.ALERT, NoticeTone.WARNING))
+    assert desktop.notch.presence is NotchPresence.EXPANDED
+    assert application.scheduler.pending_timers() == 1
+
+    application.scheduler.advance(desktop.presenter.behaviour.notice_duration_ms)
+    assert desktop.notch.presence is NotchPresence.COMPACT
+
+
+def test_shutdown_cancels_a_showing_notice_before_the_scheduler_stops(composed):
+    desktop, application = composed()
+    desktop.start()
+    desktop.presenter.present(Notice(NoticeCategory.ALERT, NoticeTone.WARNING))
+
+    desktop.shutdown()
+
+    assert application.scheduler.pending_timers() == 0
+    assert desktop.notch.presence is NotchPresence.HIDDEN
 
 
 # --- Notch configuration ----------------------------------------------------------

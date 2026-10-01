@@ -22,6 +22,7 @@ from mira.ui.notch.eye_layout import (
     notch_eye_layout,
     production_envelope,
 )
+from mira.ui.notch.presentation import NotchPresentation
 from mira.ui.notch.presence import (
     NotchGeometry,
     NotchPresence,
@@ -172,12 +173,21 @@ class NotchWindow(QWidget):
     is that of the animator's expression library (or the packaged profiles).
 
     The window never takes keyboard focus and shows without activating.
+
+    What the notch presents is decided elsewhere (`NotchPresenter`). The window
+    reports the pointer entering and leaving the drawn notch through
+    `hover_changed` — plain Qt enter/leave events, so the input mask decides
+    what counts as inside — and renders whatever `present` hands it. It never
+    expands or collapses itself on hover; see `bind_presenter`.
     """
 
     TRANSITION_DURATION_MS = 200
 
     # Emitted after every screen selection, whether or not the screen changed.
     screen_selection_changed = Signal()
+
+    # The pointer entered (True) or left (False) the notch.
+    hover_changed = Signal(bool)
 
     def __init__(
         self,
@@ -225,6 +235,8 @@ class NotchWindow(QWidget):
         self.color = QColor(0, 0, 0) if color is None else color
 
         self._presence = NotchPresence.HIDDEN
+        self._presentation = NotchPresentation()
+        self._hovered = False
         self._visual_size = self._geometry.size_for(NotchPresence.HIDDEN)
         self._from_size = self._visual_size
         self._to_size = self._visual_size
@@ -419,6 +431,42 @@ class NotchWindow(QWidget):
     def _set_visual_size(self, size: NotchSize):
         self._visual_size = size
         self._apply_shape()
+
+    # --- Presentation and pointer ------------------------------------------
+
+    @property
+    def presentation(self) -> NotchPresentation:
+        """What the notch was last asked to present."""
+        return self._presentation
+
+    def present(self, presentation: NotchPresentation):
+        """Render ``presentation``: move to its presence and repaint."""
+        self._presentation = presentation
+        self.set_presence(presentation.presence)
+        self.update()
+
+    @property
+    def hovered(self) -> bool:
+        return self._hovered
+
+    def _set_hovered(self, hovered: bool):
+        if hovered is self._hovered:
+            return
+        self._hovered = hovered
+        self.hover_changed.emit(hovered)
+
+    def enterEvent(self, event):
+        self._set_hovered(True)
+        super().enterEvent(event)
+
+    def leaveEvent(self, event):
+        self._set_hovered(False)
+        super().leaveEvent(event)
+
+    def hideEvent(self, event):
+        # A hidden window receives no leave event; the pointer is gone anyway.
+        self._set_hovered(False)
+        super().hideEvent(event)
 
     # --- Screen placement ----------------------------------------------------
 

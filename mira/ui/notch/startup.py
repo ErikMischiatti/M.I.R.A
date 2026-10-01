@@ -13,6 +13,7 @@ import sys
 from mira.ui.face.face_animator import FaceAnimator
 from mira.ui.notch.config_store import NotchSettings
 from mira.ui.notch.notch_window import NotchWindow
+from mira.ui.notch.presentation import NotchPresenter
 from mira.ui.notch.visual_config import InvalidVisualConfig
 
 
@@ -33,3 +34,17 @@ def build_notch(settings: NotchSettings, *, animator: FaceAnimator) -> NotchWind
         print(f"[notch] saved visual configuration not applied: {error}", file=sys.stderr)
         notch.apply_visual_config(NotchSettings().visual)
     return notch
+
+
+def bind_presenter(notch: NotchWindow, presenter: NotchPresenter) -> None:
+    """Make ``presenter`` the authority over what ``notch`` presents.
+
+    The notch's hover reports become presenter input, and every presentation
+    the presenter resolves is rendered by the notch, starting with the
+    current one. Afterwards nothing else should call the notch's presence
+    methods; ask the presenter instead.
+    """
+
+    notch.hover_changed.connect(presenter.set_hovered)
+    presenter.subscribe(notch.present)
+    notch.present(presenter.presentation)

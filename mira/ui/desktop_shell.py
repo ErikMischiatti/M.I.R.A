@@ -24,11 +24,12 @@ same `NotchSettings` model `MIRA-NOTCH` and `MIRA-TUNE` use, built by the same
 
 Two questions stay apart. `EmbodimentIntent` — what MIRA is doing and
 expressing — comes from the activity authority through `state_changed`.
-`NotchPresence` — how much notch is visible — is the shell's own policy, and
-for now that policy is fixed: compact from start to shutdown, whatever the
-activity. Presence is never derived from activity here; a later presentation
-model can own that decision without the notch learning about application
-internals.
+What the notch presents — how much of it is visible, and what it shows when
+open — is decided by one `NotchPresenter`, which the shell owns and feeds:
+the committed activity, hover reported by the notch, and transient notices.
+Activity alone never expands the notch; the presenter's expansion reasons do
+(see `mira.ui.notch.presentation`). The presenter's notice timer runs on the
+application's own `Scheduler`, so the notch adds no clock of its own.
 
 Plain on purpose: no registry, no singleton. Constructing a shell has no side
 effects beyond subscribing to the bus and reading no files; `start` shows and
@@ -42,12 +43,10 @@ from mira.ui.face.face_animator import FaceAnimator
 from mira.ui.face.face_controller import FaceController
 from mira.ui.main_window import MainWindow
 from mira.ui.notch.config_store import NotchSettings
+from mira.domain.embodiment import ActivityState
 from mira.ui.notch.presence import NotchPresence
-from mira.ui.notch.startup import build_notch
-
-# The notch's presence while the application runs. Deliberately constant: no
-# activity expands or collapses it yet.
-STARTUP_PRESENCE = NotchPresence.COMPACT
+from mira.ui.notch.presentation import NotchPresenter
+from mira.ui.notch.startup import bind_presenter, build_notch
 
 
 class DesktopShell:
@@ -77,15 +76,15 @@ class DesktopShell:
         application.event_bus.subscribe("state_changed", self.on_state_changed)
 
         self.window = MainWindow(application, self.animator)
-        self.notch = build_notch(
-            NotchSettings() if notch_settings is None else notch_settings,
-            animator=self.animator,
-        )
+        settings = NotchSettings() if notch_settings is None else notch_settings
+        self.notch = build_notch(settings, animator=self.animator)
+        self.presenter = NotchPresenter(application.scheduler)
+        bind_presenter(self.notch, self.presenter)
 
     def start(self) -> None:
         """Show the surfaces, then start the one clock that steps them."""
         self.window.show()
-        self.notch.set_presence(STARTUP_PRESENCE)
+        self.presenter.show()
         self.animator.start()
 
     def shutdown(self) -> None:
@@ -93,9 +92,12 @@ class DesktopShell:
 
         The notch is hidden without animating — nothing would drive the
         transition once the event loop ends — and closed with the window, so
-        neither outlives the application. Idempotent.
+        neither outlives the application. The presenter stops first: its
+        notice timer is cancelled while the scheduler still accepts it, and it
+        presents nothing more. Idempotent.
         """
         self.animator.stop()
+        self.presenter.shutdown()
         self.notch.set_presence(NotchPresence.HIDDEN, animated=False)
         self.notch.close()
         self.window.close()
@@ -109,5 +111,7 @@ class DesktopShell:
 
         if embodiment is None:
             self.controller.set_state(new_state)
+            self.presenter.set_activity(ActivityState.IDLE)
         else:
             self.controller.set_intent(embodiment)
+            self.presenter.set_activity(embodiment.activity)
