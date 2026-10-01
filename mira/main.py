@@ -6,7 +6,7 @@ from PySide6.QtWidgets import QApplication
 
 from mira.application.composition import build_application
 from mira.ui.desktop_shell import DesktopShell
-from mira.ui.notch.config_store import load_settings
+from mira.ui.notch.config_store import ConfigSession
 
 
 def quit_on_interrupt(app: QApplication) -> tuple[socket.socket, socket.socket] | None:
@@ -66,11 +66,12 @@ def main():
 
     # The same file `MIRA-NOTCH` and `MIRA-TUNE` read and save: missing or
     # invalid contents fall back to the production defaults, never fail.
-    notch = load_settings()
+    # The session also lets the notch settings window save and reload it.
+    notch = ConfigSession()
     print(f"[notch] configuration: {notch.path} ({notch.source.value})")
     if notch.diagnostic:
         print(f"[notch] saved configuration ignored, using production defaults: {notch.diagnostic}", file=sys.stderr)
-    desktop = DesktopShell(application, notch_settings=notch.settings)
+    desktop = DesktopShell(application, notch_settings=notch.startup_settings, notch_session=notch)
 
     # Qt calls these in connection order: the surfaces and their clock stop
     # first, then the services they present (camera, scheduler).

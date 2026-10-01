@@ -10,7 +10,7 @@ from PySide6.QtGui import (
     QRegion,
     QScreen,
 )
-from PySide6.QtWidgets import QWidget
+from PySide6.QtWidgets import QMenu, QWidget
 
 from mira.domain.embodiment_frame import FACE_HEIGHT_UNITS, FACE_WIDTH_UNITS
 from mira.ui.face.eye import Eye
@@ -25,7 +25,7 @@ from mira.ui.notch.eye_layout import (
     production_envelope,
 )
 from mira.ui.notch.expanded_layout import ContentRow, content_row, reveal_fraction
-from mira.ui.notch.presentation import NotchContent, NotchPresentation
+from mira.ui.notch.presentation import NotchAction, NotchContent, NotchPresentation
 from mira.ui.notch.symbol_painter import paint_symbol
 from mira.ui.notch.presence import (
     NotchGeometry,
@@ -131,6 +131,13 @@ def layout_eyes(layout: NotchEyeLayout) -> tuple[Eye, Eye]:
     return eye("left"), eye("right")
 
 
+# What the context menu calls each action, in menu order.
+ACTION_LABELS = {
+    NotchAction.OPEN_MAIN_WINDOW: "Open M.I.R.A.",
+    NotchAction.OPEN_SETTINGS: "Notch settings…",
+}
+
+
 class NotchWindow(QWidget):
     """A frameless top-level overlay that draws the notch and nothing else.
 
@@ -187,6 +194,12 @@ class NotchWindow(QWidget):
     `hover_changed` — plain Qt enter/leave events, so the input mask decides
     what counts as inside — and renders whatever `present` hands it. It never
     expands or collapses itself on hover; see `bind_presenter`.
+
+    User intents leave the window as `action_requested`, carrying a
+    `NotchAction` value, and only for the actions the presentation offers: a
+    double click asks for the main window, and a context menu (right click)
+    lists every offered action. The window never knows who honours them. A
+    single click does nothing.
     """
 
     TRANSITION_DURATION_MS = 200
@@ -196,6 +209,9 @@ class NotchWindow(QWidget):
 
     # The pointer entered (True) or left (False) the notch.
     hover_changed = Signal(bool)
+
+    # A `NotchAction` value the user asked for.
+    action_requested = Signal(str)
 
     def __init__(
         self,
@@ -490,6 +506,32 @@ class NotchWindow(QWidget):
     def leaveEvent(self, event):
         self._set_hovered(False)
         super().leaveEvent(event)
+
+    def mouseDoubleClickEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self._request(NotchAction.OPEN_MAIN_WINDOW)
+        event.accept()
+
+    def contextMenuEvent(self, event):
+        offered = [action for action in ACTION_LABELS if action in self._presentation.actions]
+        if not offered:
+            event.ignore()
+            return
+        menu = QMenu(self)
+        for action in offered:
+            menu.addAction(ACTION_LABELS[action]).setData(action.value)
+        chosen = self.exec_menu(menu, event.globalPos())
+        if chosen is not None:
+            self._request(NotchAction(chosen.data()))
+        event.accept()
+
+    def exec_menu(self, menu: QMenu, position):
+        """Run ``menu`` modally; a seam so tests can choose an entry."""
+        return menu.exec(position)
+
+    def _request(self, action: NotchAction):
+        if action in self._presentation.actions:
+            self.action_requested.emit(action.value)
 
     def hideEvent(self, event):
         # A hidden window receives no leave event; the pointer is gone anyway.

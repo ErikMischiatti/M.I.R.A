@@ -43,10 +43,33 @@ from mira.ui.face.face_animator import FaceAnimator
 from mira.ui.face.face_controller import FaceController
 from mira.ui.main_window import MainWindow
 from mira.ui.notch.config_store import NotchSettings
+from PySide6.QtCore import Qt
+
 from mira.domain.embodiment import ActivityState
+from mira.domain.notice import Notice, NoticeCategory, NoticeTone
+from mira.ui.notch.config_store import ConfigSession
+from mira.ui.notch.debug_window import NotchDebugWindow
 from mira.ui.notch.presence import NotchPresence
-from mira.ui.notch.presentation import NotchPresenter
+from mira.ui.notch.presentation import NotchAction, NotchPresenter
 from mira.ui.notch.startup import bind_presenter, build_notch
+
+# The intents the integrated notch offers; the shell honours each of them.
+NOTCH_ACTIONS = frozenset({NotchAction.OPEN_MAIN_WINDOW, NotchAction.OPEN_SETTINGS})
+
+
+def task_notice(succeeded: bool, payload) -> Notice:
+    """The notice for an action lifecycle event.
+
+    Read by attribute, as `MainWindow` does, so the UI needs no import from
+    `mira.actions`. An action held back for confirmation is a warning, not
+    an error: nothing went wrong yet.
+    """
+    if succeeded:
+        return Notice(NoticeCategory.TASK, NoticeTone.SUCCESS)
+    data = getattr(payload, "data", None) or {}
+    if data.get("requires_confirmation"):
+        return Notice(NoticeCategory.TASK, NoticeTone.WARNING, "Needs confirmation")
+    return Notice(NoticeCategory.TASK, NoticeTone.ERROR, "Failed")
 
 
 class DesktopShell:
@@ -54,7 +77,9 @@ class DesktopShell:
 
     `notch_settings` are the loaded notch settings (`config_store.load_settings`
     in production); without them the notch uses the production defaults, so
-    building a shell never reads a file. `controller` is an injection seam for
+    building a shell never reads a file. `notch_session` is the file behind
+    them, which the notch settings window saves to and reloads from; without
+    it that window cannot persist. `controller` is an injection seam for
     tests (a seeded `MicroMotions`, say); production passes nothing and gets the
     packaged expression library.
     """
@@ -64,6 +89,7 @@ class DesktopShell:
         application: Application,
         *,
         notch_settings: NotchSettings | None = None,
+        notch_session: ConfigSession | None = None,
         controller: FaceController | None = None,
     ):
         self.controller = FaceController() if controller is None else controller
@@ -78,8 +104,19 @@ class DesktopShell:
         self.window = MainWindow(application, self.animator)
         settings = NotchSettings() if notch_settings is None else notch_settings
         self.notch = build_notch(settings, animator=self.animator)
-        self.presenter = NotchPresenter(application.scheduler)
+        self.presenter = NotchPresenter(application.scheduler, actions=NOTCH_ACTIONS)
         bind_presenter(self.notch, self.presenter)
+        self.notch.action_requested.connect(self.on_notch_action)
+        self.notch_session = notch_session
+        # Built on first request; one window however often it is asked for.
+        self.settings_window: NotchDebugWindow | None = None
+
+        application.event_bus.subscribe(
+            "action_completed", lambda payload: self.presenter.present(task_notice(True, payload))
+        )
+        application.event_bus.subscribe(
+            "action_failed", lambda payload: self.presenter.present(task_notice(False, payload))
+        )
 
     def start(self) -> None:
         """Show the surfaces, then start the one clock that steps them."""
@@ -100,7 +137,33 @@ class DesktopShell:
         self.presenter.shutdown()
         self.notch.set_presence(NotchPresence.HIDDEN, animated=False)
         self.notch.close()
+        if self.settings_window is not None:
+            self.settings_window.close()
         self.window.close()
+
+    # --- Notch actions ----------------------------------------------------------
+
+    def on_notch_action(self, action: str) -> None:
+        if action == NotchAction.OPEN_MAIN_WINDOW:
+            self.open_main_window()
+        elif action == NotchAction.OPEN_SETTINGS:
+            self.open_settings()
+
+    def open_main_window(self) -> None:
+        """Bring the one main window forward: restored, shown, raised, active."""
+        _bring_forward(self.window)
+
+    def open_settings(self) -> None:
+        """Open the notch settings for the running notch, or bring them forward.
+
+        The settings tune this notch and its presenter live. They hold no face
+        controller, so they can never override the application's expression.
+        """
+        if self.settings_window is None:
+            self.settings_window = NotchDebugWindow(
+                self.notch, None, self.notch_session, self.presenter
+            )
+        _bring_forward(self.settings_window)
 
     def on_state_changed(self, payload) -> None:
         """Present a committed state change on the shared embodiment."""
@@ -115,3 +178,11 @@ class DesktopShell:
         else:
             self.controller.set_intent(embodiment)
             self.presenter.set_activity(embodiment.activity)
+
+
+def _bring_forward(window) -> None:
+    if window.windowState() & Qt.WindowMinimized:
+        window.setWindowState(window.windowState() & ~Qt.WindowMinimized)
+    window.show()
+    window.raise_()
+    window.activateWindow()
