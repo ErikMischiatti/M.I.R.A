@@ -1,7 +1,8 @@
 """Standalone notch: ``python -m mira.ui.notch [--tune | --notch-only]``.
 
-Developer tooling only; M.I.R.A.'s normal startup never shows the notch. This
-opens the real `NotchWindow`, showing its own running embodiment (one
+Developer tooling, independent of the application: `MIRA` shows the notch as
+part of its own desktop (`mira.ui.desktop_shell`), while this opens the real
+`NotchWindow` on its own, showing its own running embodiment (one
 `FaceController` stepped by one `FaceAnimator`, so blink and micro-motions
 play), with the saved notch configuration (see `config_store`), or the
 production defaults when there is none or it is invalid. The notch starts
@@ -33,9 +34,9 @@ from mira.ui.face.face_controller import FaceController
 from mira.ui.notch.config_store import ConfigSession, NotchSettings
 from mira.ui.notch.debug_window import NotchDebugWindow
 from mira.ui.notch.notch_window import NotchWindow
+from mira.ui.notch.startup import build_notch
 from mira.ui.notch.screen_selection import desktop_bounds, distance_squared_to_desktop_centre
 from mira.ui.notch.screens import monitor_identity, rect_from_qrect
-from mira.ui.notch.visual_config import InvalidVisualConfig
 
 
 @dataclass
@@ -65,14 +66,7 @@ def build_notch_environment(session: ConfigSession | None = None, *, tuning: boo
     controller.set_intent(EmbodimentIntent(ActivityState.IDLE))
     animator = FaceAnimator(controller)
     settings = NotchSettings() if session is None else session.startup_settings
-    notch = NotchWindow(animator=animator, monitor_preference=settings.monitor)
-    try:
-        notch.apply_visual_config(settings.visual)
-    except InvalidVisualConfig as error:
-        # Saved settings were checked against the packaged profiles; the
-        # embodiment shown here may differ. Fall back rather than clip.
-        print(f"[notch] saved visual configuration not applied: {error}", file=sys.stderr)
-        notch.apply_visual_config(NotchSettings().visual)
+    notch = build_notch(settings, animator=animator)
     notch.show_notch()
 
     environment = NotchEnvironment(controller, animator, notch, session)

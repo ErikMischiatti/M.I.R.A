@@ -75,6 +75,7 @@ mira.main
   → DesktopShell(application)          (mira/ui/desktop_shell.py)
       → FaceController → FaceAnimator   (the one embodiment and its clock)
       → MainWindow(application, animator)
+      → NotchWindow(animator, saved notch settings)   (build_notch)
   → aboutToQuit: desktop.shutdown(), then application.shutdown()
   → application.start()   (starts camera capture, if enabled)
   → desktop.start()       (shows the window, starts the animator)
@@ -84,8 +85,14 @@ mira.main
 `mira.application` must not import `mira.ui`, and the face's runtime is a UI
 object, so the UI has its own composition owner: `DesktopShell` creates one
 `FaceController` stepped by one `FaceAnimator`, renders `state_changed` onto
-it, and hands the animator to every surface that shows MIRA. Surfaces only
-repaint on its ticks; none creates, steps or drives the embodiment.
+it, and hands the animator to every surface that shows MIRA — the main window and
+the notch. Surfaces only repaint on its ticks; none creates, steps or drives
+the embodiment.
+
+`EmbodimentIntent` (what MIRA is doing) and `NotchPresence` (how much notch is
+visible) stay separate. Activity reaches the notch only as the shared face;
+presence is the shell's policy, currently fixed at compact from start to
+shutdown.
 
 `Brain` currently constructs its own session memory, selected intent engine,
 response builder, action registry, executor, and concrete action handlers. The

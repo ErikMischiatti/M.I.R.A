@@ -2,10 +2,10 @@
 #
 # M.I.R.A. standalone notch launcher: the notch alone, with the saved notch configuration and no tuning window.
 #
-# Developer tooling: the notch is not part of the normal application yet; use
-# bin/mira for that. Runs from any working directory using the repository's
-# own virtual environment. Intended to be reached through a symlink on PATH,
-# for example:
+# Developer tooling: runs the notch without the application; bin/mira shows
+# the notch as part of the application. Runs from any working directory using
+# the repository's own virtual environment. Intended to be reached through a
+# symlink on PATH, for example:
 #
 #   ln -s "$PWD/bin/mira-notch" ~/.local/bin/MIRA-NOTCH
 #

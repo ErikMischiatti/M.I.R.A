@@ -2,8 +2,9 @@
 
 The application has no configuration file. Runtime behavior is selected by a
 small set of environment variables, a packaged expression-profile file, and
-fixed tables in the desktop-action module. The standalone notch tooling keeps
-one user file of its own, described under [Notch](#notch). Architecture context is in
+fixed tables in the desktop-action module. The notch keeps one user file of
+its own, shared by `MIRA` and the standalone notch tools and described under
+[Notch](#notch). Architecture context is in
 [architecture.md](architecture.md).
 
 ## Environment variables
@@ -25,7 +26,7 @@ environment.
 | `MIRA_CAMERA_WIDTH` | device default | Requested frame width in pixels. Non-integer or non-positive values are ignored. |
 | `MIRA_CAMERA_HEIGHT` | device default | Requested frame height in pixels. Non-integer or non-positive values are ignored. |
 | `MIRA_CAMERA_FPS` | device default | Requested frame rate. Non-numeric, non-finite or non-positive values are ignored. |
-| `MIRA_NOTCH_CONFIG` | `$XDG_CONFIG_HOME/mira/notch.json` | Notch configuration file used by `MIRA-NOTCH` and `MIRA-TUNE`. `--config PATH` overrides it. |
+| `MIRA_NOTCH_CONFIG` | `$XDG_CONFIG_HOME/mira/notch.json` | Notch configuration file used by `MIRA`, `MIRA-NOTCH` and `MIRA-TUNE`. `--config PATH` overrides it for the notch tools. |
 
 The four `MIRA_OLLAMA_*`/`MIRA_LLM_*` variables only matter in LLM mode, and
 the `MIRA_CAMERA_*` settings only when `MIRA_CAMERA` enables the camera.
@@ -112,10 +113,11 @@ intentionally.
 
 ## Notch
 
-`MIRA-NOTCH` and `MIRA-TUNE` (`python -m mira.ui.notch`) read the notch's
-tuned settings from one JSON file: `--config PATH`, else `MIRA_NOTCH_CONFIG`,
-else `$XDG_CONFIG_HOME/mira/notch.json` (`~/.config/mira/notch.json`). Only
-the tuning window's **Save** writes it. The production defaults live in code
+`MIRA`, `MIRA-NOTCH` and `MIRA-TUNE` (`python -m mira.ui.notch`) read the
+notch's tuned settings from one JSON file: `MIRA_NOTCH_CONFIG`, else
+`$XDG_CONFIG_HOME/mira/notch.json` (`~/.config/mira/notch.json`); the notch
+tools also accept `--config PATH`. `MIRA` only reads it, at startup, and
+prints which file it used. Only the tuning window's **Save** writes it. The production defaults live in code
 and never change by saving; the tuning window's **Reset defaults** restores
 them at run time only.
 

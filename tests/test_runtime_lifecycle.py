@@ -64,7 +64,7 @@ def test_main_connects_application_shutdown_before_running(monkeypatch):
             return 0
 
     class FakeDesktop:
-        def __init__(self, application):
+        def __init__(self, application, *, notch_settings):
             events.append("desktop built")
             assert application is runtime
 
@@ -91,6 +91,89 @@ def test_main_connects_application_shutdown_before_running(monkeypatch):
         "desktop.shutdown",
         "application.shutdown",
     ]
+
+
+def _run_main_capturing_notch_settings(monkeypatch):
+    """Run `main` with fakes around it; return the settings handed to the shell."""
+    import mira.main as main_module
+
+    captured = {}
+
+    class FakeSignal:
+        def connect(self, callback):
+            pass
+
+    class FakeQApplication:
+        def __init__(self, argv):
+            self.aboutToQuit = FakeSignal()
+
+        def exec(self):
+            return 0
+
+    class FakeRuntime:
+        def start(self):
+            pass
+
+        def shutdown(self):
+            pass
+
+    class FakeDesktop:
+        def __init__(self, application, *, notch_settings):
+            captured["settings"] = notch_settings
+
+        def start(self):
+            pass
+
+        def shutdown(self):
+            pass
+
+    monkeypatch.setattr(main_module, "QApplication", FakeQApplication)
+    monkeypatch.setattr(main_module, "build_application", FakeRuntime)
+    monkeypatch.setattr(main_module, "DesktopShell", FakeDesktop)
+    with pytest.raises(SystemExit):
+        main_module.main()
+    return captured["settings"]
+
+
+def test_main_opens_the_notch_with_the_saved_configuration(monkeypatch, tmp_path, capsys):
+    import dataclasses
+
+    from mira.ui.notch.config_store import NotchSettings, save_settings
+    from mira.ui.notch.screen_selection import MonitorIdentity, MonitorPreference
+    from mira.ui.notch.visual_config import NotchVisualConfig
+
+    saved = NotchSettings(
+        visual=dataclasses.replace(NotchVisualConfig(), transition_duration_ms=420),
+        monitor=MonitorPreference(MonitorIdentity(name="DP-3")),
+    )
+    path = save_settings(saved, tmp_path / "notch.json")
+    # The variable `MIRA-NOTCH` and `MIRA-TUNE` honour too: one config path.
+    monkeypatch.setenv("MIRA_NOTCH_CONFIG", str(path))
+
+    assert _run_main_capturing_notch_settings(monkeypatch) == saved
+    assert f"[notch] configuration: {path} (saved)" in capsys.readouterr().out
+
+
+def test_main_falls_back_to_the_defaults_for_an_invalid_configuration(monkeypatch, tmp_path, capsys):
+    from mira.ui.notch.config_store import NotchSettings
+
+    path = tmp_path / "notch.json"
+    path.write_text("{ not json")
+    monkeypatch.setenv("MIRA_NOTCH_CONFIG", str(path))
+
+    assert _run_main_capturing_notch_settings(monkeypatch) == NotchSettings()
+    output = capsys.readouterr()
+    assert "(invalid fallback)" in output.out
+    assert "saved configuration ignored, using production defaults" in output.err
+    assert path.read_text() == "{ not json"  # never rewritten
+
+
+def test_main_uses_the_defaults_when_no_configuration_exists(monkeypatch, tmp_path):
+    from mira.ui.notch.config_store import NotchSettings
+
+    monkeypatch.setenv("MIRA_NOTCH_CONFIG", str(tmp_path / "absent.json"))
+
+    assert _run_main_capturing_notch_settings(monkeypatch) == NotchSettings()
 
 
 @pytest.mark.skipif(

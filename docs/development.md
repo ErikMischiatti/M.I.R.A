@@ -75,8 +75,9 @@ actions use for the `current` alias and relative paths (see
 
 ### Notch launchers
 
-The notch is developer tooling for now; `MIRA` never shows it. Two more
-launchers run it standalone with the same `venv` and symlink resolution:
+`MIRA` shows the notch as part of the application, compact, with the saved
+notch configuration. Two more launchers run it standalone, without the
+application, with the same `venv` and symlink resolution:
 
 | Command | Script | Runs |
 |---|---|---|

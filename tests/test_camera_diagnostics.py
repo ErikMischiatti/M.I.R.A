@@ -97,3 +97,9 @@ def test_the_window_reports_the_composed_camera_status(qt_application):
     finally:
         desktop.shutdown()
         application.shutdown()
+        # A live notch would keep answering the application's screen signals.
+        from PySide6.QtCore import QCoreApplication, QEvent
+
+        for obj in (desktop.notch, desktop.window, desktop.animator):
+            obj.deleteLater()
+        QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)

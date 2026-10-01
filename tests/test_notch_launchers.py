@@ -12,6 +12,7 @@ import os
 import pathlib
 import shutil
 import subprocess
+import sys
 
 import pytest
 
@@ -87,11 +88,39 @@ def test_each_launcher_explains_a_missing_virtual_environment(command, fake_repo
     assert f"{command}: no virtual environment" in result.stderr
 
 
-def test_mira_still_starts_only_the_normal_application():
+def test_mira_runs_the_application_entry_point_which_owns_its_notch():
+    # The notch is part of the application process (`mira.main` builds it
+    # through `DesktopShell`), not a second program the launcher starts.
     text = (BIN / "mira").read_text()
 
     assert 'exec "$python_bin" -m mira.main "$@"' in text
     assert "notch" not in text
+
+
+def test_the_standalone_notch_tools_never_load_the_application_window():
+    # MIRA-NOTCH and MIRA-TUNE build their own embodiment and notch; neither
+    # may depend on MainWindow or the application's desktop shell.
+    source = """
+import sys
+from PySide6.QtWidgets import QApplication
+app = QApplication([])
+from mira.ui.notch.__main__ import build_notch_environment
+for tuning in (False, True):
+    environment = build_notch_environment(tuning=tuning)
+    environment.notch.close()
+    if environment.debug is not None:
+        environment.debug.close()
+loaded = sorted(name for name in sys.modules
+                if name in {"mira.ui.main_window", "mira.ui.desktop_shell", "mira.application.composition"})
+print("LOADED", loaded)
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", source], capture_output=True, text=True, timeout=60,
+        env={**os.environ, "QT_QPA_PLATFORM": "offscreen"},
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "LOADED []" in result.stdout
 
 
 def test_the_mode_flags():
