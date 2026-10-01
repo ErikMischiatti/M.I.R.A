@@ -161,11 +161,12 @@ class DesktopShell:
         """Open the notch settings for the running notch, or bring them forward.
 
         The settings tune this notch and its presenter live. They hold no face
-        controller, so they can never override the application's expression.
+        controller and offer no previews, so they can never override the
+        application's expression or show synthetic notices.
         """
         if self.settings_window is None:
             self.settings_window = NotchDebugWindow(
-                self.notch, None, self.notch_session, self.presenter
+                self.notch, None, self.notch_session, self.presenter, previews=False
             )
         _bring_forward(self.settings_window)
 

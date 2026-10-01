@@ -12,14 +12,15 @@ from PySide6.QtCore import QAbstractAnimation, QCoreApplication, QEvent, QEventL
 from PySide6.QtWidgets import QApplication
 from PySide6.QtGui import QGuiApplication
 
-from mira.domain.embodiment import ExpressionKey
+from mira.domain.embodiment import ActivityState, ExpressionKey
+from mira.domain.notice import NoticeCategory
 from mira.ui.notch.__main__ import build_notch_environment, build_tuning_environment
 from mira.ui.notch.config_store import ConfigSession, ConfigSource, NotchSettings, save_settings, settings_to_dict
-from mira.ui.notch.debug_window import NotchDebugWindow
+from mira.ui.notch.debug_window import PREVIEW_NOTICES, NotchDebugWindow
 from mira.ui.notch.eye_layout import BASE_EYE_HEIGHT_SHARE, NotchEyeStyle
 from mira.ui.notch.notch_window import NotchWindow
 from mira.ui.notch.presence import NotchGeometry, NotchPresence, NotchSize
-from mira.ui.notch.presentation import ExpansionReason
+from mira.ui.notch.presentation import ExpansionReason, NotchBehaviour
 from mira.ui.notch.screen_selection import MonitorIdentity, MonitorPreference
 
 
@@ -387,12 +388,43 @@ def test_the_motion_gain_control_is_live(env):
 # --- Layout -----------------------------------------------------------------------------
 
 
-def test_the_controls_scroll_and_the_window_fits_a_laptop_screen(env):
-    assert env.debug.scroll_area.widgetResizable()
-    assert env.debug.scroll_area.widget().isAncestorOf(env.debug.compact_width)
-    # The persistence bar stays outside the scrolling area, always in view.
-    assert not env.debug.scroll_area.widget().isAncestorOf(env.debug.save_button)
-    available = QGuiApplication.primaryScreen().availableGeometry()
+def page_titles(debug: NotchDebugWindow) -> list[str]:
+    return [debug.pages.tabText(index) for index in range(debug.pages.count())]
+
+
+def page_of(debug: NotchDebugWindow, widget) -> str:
+    for index in range(debug.pages.count()):
+        if debug.pages.widget(index).widget().isAncestorOf(widget):
+            return debug.pages.tabText(index)
+    return "-"
+
+
+def test_the_settings_are_organised_in_pages(env):
+    debug = env.debug
+
+    assert page_titles(debug) == ["Appearance", "Behaviour", "Display", "Diagnostics"]
+    assert page_of(debug, debug.compact_width) == "Appearance"
+    assert page_of(debug, debug.expanded_height) == "Appearance"
+    assert page_of(debug, debug.eye_height_share) == "Appearance"
+    assert page_of(debug, debug.expand_on_hover) == "Behaviour"
+    assert page_of(debug, debug.notice_duration) == "Behaviour"
+    assert page_of(debug, debug.duration) == "Behaviour"
+    assert page_of(debug, debug.monitor) == "Display"
+    assert page_of(debug, debug.offset_x) == "Display"
+    assert page_of(debug, debug.loaded_label) == "Diagnostics"
+    assert page_of(debug, debug.config_path_label) == "Diagnostics"
+
+
+def test_persistence_and_presence_stay_outside_the_pages(env):
+    debug = env.debug
+    for widget in (debug.save_button, debug.reload_button, debug.reset_button, debug.expanded_button):
+        assert page_of(debug, widget) == "-"
+    for index in range(debug.pages.count()):
+        assert debug.pages.widget(index).widgetResizable()
+
+
+def test_the_window_fits_a_laptop_screen(env):
+    available = env.debug.screen().availableGeometry()
     assert env.debug.height() <= max(int(available.height() * 0.85), 1)
 
 
@@ -572,3 +604,168 @@ def test_the_monitor_list_follows_topology_changes(env):
     QGuiApplication.instance().screenAdded.emit(QGuiApplication.primaryScreen())
 
     assert rebuilt
+
+
+# --- Behaviour ---------------------------------------------------------------------------------
+
+
+def behaviour_controls(debug: NotchDebugWindow) -> dict:
+    return {
+        "hover": debug.expand_on_hover.isChecked(),
+        "automatic": {category for category, box in debug.automatic.items() if box.isChecked()},
+        "duration": debug.notice_duration.value(),
+    }
+
+
+TUNED_BEHAVIOUR = NotchBehaviour(
+    expand_on_hover=False, automatic_expansion=frozenset({NoticeCategory.TASK}), notice_duration_ms=7000
+)
+
+
+def test_the_behaviour_controls_show_the_production_defaults(env):
+    assert behaviour_controls(env.debug) == {
+        "hover": True,
+        "automatic": {NoticeCategory.ALERT, NoticeCategory.DEVICE},
+        "duration": 4000,
+    }
+    assert set(env.debug.automatic) == set(NoticeCategory)
+
+
+def test_saved_behaviour_loads_into_the_controls_and_the_presenter(config_path):
+    save_settings(NotchSettings(behaviour=TUNED_BEHAVIOUR), config_path)
+    environment = build_tuning_environment(ConfigSession(config_path))
+    try:
+        assert environment.presenter.behaviour == TUNED_BEHAVIOUR
+        assert behaviour_controls(environment.debug) == {
+            "hover": False, "automatic": {NoticeCategory.TASK}, "duration": 7000,
+        }
+    finally:
+        environment.shutdown()
+        environment.notch.hide()
+        for widget in (environment.debug, environment.notch):
+            widget.deleteLater()
+        QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+
+
+def test_behaviour_changes_apply_live_and_are_unsaved(env):
+    env.debug.expand_on_hover.setChecked(False)
+    env.debug.automatic[NoticeCategory.TASK].setChecked(True)
+    env.debug.notice_duration.setValue(9000)
+
+    assert env.presenter.behaviour == NotchBehaviour(
+        expand_on_hover=False,
+        automatic_expansion=frozenset({NoticeCategory.ALERT, NoticeCategory.DEVICE, NoticeCategory.TASK}),
+        notice_duration_ms=9000,
+    )
+    assert env.debug.unsaved_label.text() == "Yes"
+    env.notch.hover_changed.emit(True)
+    assert env.notch.presence is C
+
+
+def test_save_persists_the_behaviour(env, config_path):
+    env.debug.automatic[NoticeCategory.DEVICE].setChecked(False)
+    env.debug.notice_duration.setValue(2500)
+
+    env.debug.save_button.click()
+
+    assert env.debug.unsaved_label.text() == "No"
+    saved = json.loads(config_path.read_text())["behaviour"]
+    assert saved["automatic_expansion"]["device"] is False
+    assert saved["notice_duration_ms"] == 2500
+    assert ConfigSession(config_path).startup_settings.behaviour == env.presenter.behaviour
+
+
+def test_reload_restores_the_saved_behaviour(env):
+    env.debug.notice_duration.setValue(2500)
+    env.debug.save_button.click()
+    env.debug.expand_on_hover.setChecked(False)
+    env.debug.notice_duration.setValue(12000)
+
+    env.debug.reload_button.click()
+
+    assert env.presenter.behaviour.notice_duration_ms == 2500
+    assert env.presenter.behaviour.expand_on_hover
+    assert behaviour_controls(env.debug)["duration"] == 2500
+    assert env.debug.unsaved_label.text() == "No"
+
+
+def test_reset_restores_the_default_behaviour_in_memory_only(env, config_path):
+    env.debug.expand_on_hover.setChecked(False)
+    env.debug.save_button.click()
+    written = config_path.read_bytes()
+
+    env.debug.reset_button.click()
+
+    assert env.presenter.behaviour == NotchBehaviour()
+    assert env.debug.expand_on_hover.isChecked()
+    assert env.debug.unsaved_label.text() == "Yes"
+    assert config_path.read_bytes() == written
+
+
+def test_a_version_1_file_is_shown_as_migrated_and_unchanged(config_path):
+    data = settings_to_dict(NotchSettings())
+    data.pop("behaviour")
+    data["version"] = 1
+    data["compact"]["width"] = 230.0
+    config_path.parent.mkdir(parents=True)
+    config_path.write_text(json.dumps(data), encoding="utf-8")
+
+    environment = build_tuning_environment(ConfigSession(config_path))
+    try:
+        debug = environment.debug
+        assert debug.loaded_label.text() == "Saved"
+        assert debug.schema_label.text().startswith("Version 1")
+        assert debug.unsaved_label.text() == "No"
+        assert debug.compact_width.value() == 230.0
+        assert environment.presenter.behaviour == NotchBehaviour()
+
+        debug.save_button.click()
+        assert json.loads(config_path.read_text())["version"] == 2
+        assert debug.schema_label.text() == "Version 2"
+    finally:
+        environment.shutdown()
+        environment.notch.hide()
+        for widget in (environment.debug, environment.notch):
+            widget.deleteLater()
+        QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+
+
+# --- Previews -------------------------------------------------------------------------------------
+
+
+def test_previews_show_activity_and_notices_on_this_notch_only(env):
+    env.debug.preview_buttons["thinking"].click()
+    assert env.presenter.presentation.activity is ActivityState.THINKING
+    assert env.controller.intent.activity is ActivityState.THINKING
+    assert env.notch.presence is C  # activity never expands
+
+    env.debug.preview_buttons["Warning"].click()
+    assert env.notch.presence is E
+    assert env.presenter.presentation.notice == PREVIEW_NOTICES["Warning"]
+    assert "notice" in env.debug.presentation_label.text()
+
+
+@pytest.mark.parametrize("name", list(PREVIEW_NOTICES))
+def test_every_preview_notice_presents(env, name):
+    env.debug.preview_buttons[name].click()
+
+    assert env.notch.presentation.notice == PREVIEW_NOTICES[name]
+
+
+def test_previews_can_be_left_out(env):
+    debug = NotchDebugWindow(env.notch, None, env.session, env.presenter, previews=False)
+    try:
+        assert debug.preview_buttons == {}
+        assert not debug.expression.isEnabled()
+    finally:
+        debug.deleteLater()
+
+
+def test_without_a_presenter_behaviour_controls_are_disabled_and_kept(env):
+    debug = NotchDebugWindow(env.notch, env.controller, env.session)
+    try:
+        assert not debug.expand_on_hover.isEnabled()
+        assert not debug.notice_duration.isEnabled()
+        assert debug.runtime_settings.behaviour == env.session.startup_settings.behaviour
+    finally:
+        debug.deleteLater()

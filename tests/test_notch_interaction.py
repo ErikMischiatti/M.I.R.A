@@ -182,6 +182,8 @@ def test_settings_open_once_for_the_running_notch(desktop):
     # No controller: settings can never override the application's expression.
     assert settings.controller is None
     assert not settings.expression.isEnabled()
+    # Nor synthetic notices: the running application shows only real ones.
+    assert settings.preview_buttons == {}
 
 
 def test_shutdown_closes_the_settings(desktop):

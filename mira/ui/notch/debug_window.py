@@ -1,14 +1,18 @@
-"""Developer tuning window for a live `NotchWindow`.
+"""Tuning and settings window for a live `NotchWindow`.
 
-Developer tooling only. The window owns no notch state and draws no notch: its
+`MIRA-TUNE` opens it next to a standalone notch; the running application
+opens it from the notch's context menu (without previews and without a face
+controller). The window owns no notch state and draws no notch: its
 controls read the notch's current settings, build one immutable
 `NotchVisualConfig` from all of them and hand it to
 `NotchWindow.apply_visual_config`, which validates the eyes' whole motion
 envelope before applying it through the production pipeline. A combination
 that would clip the eyes is shown as invalid and not applied; the notch keeps
 its last valid configuration. Presence changes go through the production
-presence API, expressions through the `FaceController` and the monitor
-choice through `NotchWindow.set_monitor_preference`.
+presence API (or the `NotchPresenter`, when given one), expressions through
+the `FaceController`, behaviour preferences through
+`NotchPresenter.set_behaviour` and the monitor choice through
+`NotchWindow.set_monitor_preference`.
 
 Given a `ConfigSession`, the window also persists: Save writes the runtime
 settings, Reload reads the file again, and Reset defaults restores the
@@ -21,6 +25,7 @@ from __future__ import annotations
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QGuiApplication
 from PySide6.QtWidgets import (
+    QCheckBox,
     QComboBox,
     QDoubleSpinBox,
     QFormLayout,
@@ -31,17 +36,25 @@ from PySide6.QtWidgets import (
     QPushButton,
     QScrollArea,
     QSpinBox,
+    QTabWidget,
     QVBoxLayout,
     QWidget,
 )
 
 from mira.domain.embodiment import ActivityState, EmbodimentIntent, ExpressionKey
+from mira.domain.notice import Notice, NoticeCategory, NoticeTone
 from mira.ui.face.face_controller import FaceController
-from mira.ui.notch.config_store import ConfigSession, ConfigSource, NotchSettings
+from mira.ui.notch.config_store import SCHEMA_VERSION, ConfigSession, ConfigSource, NotchSettings
 from mira.ui.notch.eye_layout import NotchEyeStyle
 from mira.ui.notch.notch_window import NotchWindow
 from mira.ui.notch.presence import NotchGeometry, NotchPresence, NotchSize
-from mira.ui.notch.presentation import NotchBehaviour, NotchPresenter
+from mira.ui.notch.presentation import (
+    MAX_NOTICE_DURATION_MS,
+    MIN_NOTICE_DURATION_MS,
+    NotchBehaviour,
+    NotchPresentation,
+    NotchPresenter,
+)
 from mira.ui.notch.screen_selection import MonitorPreference, SelectionMode
 from mira.ui.notch.screens import monitor_identity
 from mira.ui.notch.visual_config import (
@@ -67,8 +80,33 @@ SOURCE_LABELS = {
 }
 
 
+# One automatic-expansion switch per notice category, in display order.
+CATEGORY_LABELS = {
+    NoticeCategory.ALERT: "Warnings and errors",
+    NoticeCategory.DEVICE: "Device changes",
+    NoticeCategory.TASK: "Task results",
+}
+
+# Synthetic notices for visual tuning; they exist only in this window.
+PREVIEW_NOTICES = {
+    "Success": Notice(NoticeCategory.TASK, NoticeTone.SUCCESS),
+    "Warning": Notice(NoticeCategory.ALERT, NoticeTone.WARNING, "Low battery"),
+    "Error": Notice(NoticeCategory.ALERT, NoticeTone.ERROR, "Something failed"),
+    "Device": Notice(NoticeCategory.DEVICE, NoticeTone.INFO, "Device connected"),
+}
+
+
 class NotchDebugWindow(QWidget):
-    """Live controls for one notch, the controller its eyes show and its file."""
+    """Live controls for one notch, the controller its eyes show and its file.
+
+    The controls are split into pages — Appearance, Behaviour, Display and
+    Diagnostics — under one presence preview bar, with Save, Reload and Reset
+    below every page so persistence is never out of reach. ``previews`` adds
+    development-only preview buttons (activity, notices, expression) to the
+    Behaviour page; they drive the presenter and the face controller directly
+    and never reach application state. `DesktopShell` opens this window
+    without them and without a controller.
+    """
 
     closed = Signal()
 
@@ -78,9 +116,11 @@ class NotchDebugWindow(QWidget):
         controller: FaceController | None = None,
         session: ConfigSession | None = None,
         presenter: NotchPresenter | None = None,
+        *,
+        previews: bool = True,
     ):
         super().__init__()
-        self.setWindowTitle("M.I.R.A. notch tuning")
+        self.setWindowTitle("M.I.R.A. notch settings")
         self.notch = notch
         self.controller = controller
         self.session = session
@@ -92,78 +132,19 @@ class NotchDebugWindow(QWidget):
         # The monitor preference behind each entry of `monitor`, by index.
         self._monitor_choices: list[MonitorPreference] = []
 
-        # The controls scroll; the persistence bar and messages stay in view.
-        content = QWidget()
-        layout = QVBoxLayout(content)
-        layout.addWidget(self._status_group())
-        layout.addWidget(self._presence_group())
-        layout.addWidget(self._display_group())
-
-        self.compact_width = number(1, 2000)
-        self.compact_height = number(1, 400)
-        self.compact_radius = number(0, 200)
-        layout.addWidget(self._group("Compact geometry", (
-            ("Width (px)", self.compact_width),
-            ("Height (px)", self.compact_height),
-            ("Corner radius (px)", self.compact_radius),
-        )))
-
-        self.expanded_width = number(1, 2000)
-        self.expanded_height = number(1, 400)
-        self.expanded_radius = number(0, 200)
-        layout.addWidget(self._group("Expanded geometry", (
-            ("Width (px)", self.expanded_width),
-            ("Height (px)", self.expanded_height),
-            ("Corner radius (px)", self.expanded_radius),
-        )))
-
-        self.offset_x = number(-4000, 4000)
-        self.top_margin = number(0, 400)
-        layout.addWidget(self._group("Placement (from the selected screen's top centre)", (
-            ("Horizontal offset (px)", self.offset_x),
-            ("Top margin (px)", self.top_margin),
-        )))
-
-        self.duration = QSpinBox()
-        self.duration.setRange(0, MAX_TRANSITION_DURATION_MS)
-        self.duration.setSingleStep(10)
-        self.duration.setKeyboardTracking(False)
-        layout.addWidget(self._group("Animation", (("Transition duration (ms)", self.duration),)))
-
-        self.eye_height_share = number(0.01, 3.0, decimals=3, step=0.005)
-        self.eye_top_offset = number(-200, 200, step=0.1)
-        self.eye_center_offset = number(-1000, 1000, step=0.5)
-        self.eye_spacing = number(0, 3000, step=5)
-        self.eye_motion_gain = number(0.05, 1.0, decimals=2, step=0.05)
-        self.eye_layout_label = QLabel()
-        layout.addWidget(self._group("Eyes", (
-            ("Scale: base eye / compact height", self.eye_height_share),
-            ("Top offset (px)", self.eye_top_offset),
-            ("Pair centre offset X (px)", self.eye_center_offset),
-            ("Spacing (face units)", self.eye_spacing),
-            ("Motion gain (offset / size scale)", self.eye_motion_gain),
-            ("Derived layout", self.eye_layout_label),
-        )))
-
-        self.expression = QComboBox()
-        # Qt keeps item data as plain strings, so store the key's value and
-        # convert back on selection.
-        for key in ExpressionKey:
-            self.expression.addItem(key.name, key.value)
-        self.expression.setEnabled(controller is not None)
-        layout.addWidget(self._group("Expression (not persisted)", (("Expression", self.expression),)))
-        layout.addStretch()
-
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setFrameShape(QFrame.NoFrame)
-        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        scroll.setWidget(content)
-        self.scroll_area = scroll
+        self.pages = QTabWidget()
+        self.pages.setDocumentMode(True)
+        self.pages.addTab(self._scrolling(self._appearance_page()), "Appearance")
+        self.pages.addTab(self._scrolling(self._behaviour_page(previews)), "Behaviour")
+        self.pages.addTab(self._scrolling(self._display_page()), "Display")
+        self.pages.addTab(self._scrolling(self._diagnostics_page()), "Diagnostics")
 
         self.save_button = QPushButton("Save")
         self.reload_button = QPushButton("Reload")
         self.reset_button = QPushButton("Reset defaults")
+        self.save_button.setToolTip("Write the current settings to the configuration file")
+        self.reload_button.setToolTip("Discard unsaved changes and read the file again")
+        self.reset_button.setToolTip("Restore the production defaults now; nothing is written until Save")
         for button in (self.save_button, self.reload_button):
             button.setEnabled(session is not None)
         buttons = QHBoxLayout()
@@ -178,7 +159,8 @@ class NotchDebugWindow(QWidget):
         self.message_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
 
         outer = QVBoxLayout(self)
-        outer.addWidget(scroll, 1)
+        outer.addWidget(self._presence_group())
+        outer.addWidget(self.pages, 1)
         outer.addLayout(buttons)
         outer.addWidget(self.error_label)
         outer.addWidget(self.message_label)
@@ -197,12 +179,18 @@ class NotchDebugWindow(QWidget):
             self.eye_spacing, self.eye_motion_gain, self.duration,
         ):
             box.valueChanged.connect(self._apply_visual_config)
+        self.expand_on_hover.toggled.connect(self._apply_behaviour)
+        for box in self.automatic.values():
+            box.toggled.connect(self._apply_behaviour)
+        self.notice_duration.valueChanged.connect(self._apply_behaviour)
         self.monitor.currentIndexChanged.connect(self._apply_monitor)
         self.expression.currentIndexChanged.connect(self._apply_expression)
         self.save_button.clicked.connect(self.save)
         self.reload_button.clicked.connect(self.reload)
         self.reset_button.clicked.connect(self.reset_defaults)
         notch.screen_selection_changed.connect(self._on_screen_selection_changed)
+        if presenter is not None:
+            presenter.subscribe(self._on_presentation)
 
     # --- Construction helpers ------------------------------------------------
 
@@ -213,27 +201,170 @@ class NotchDebugWindow(QWidget):
             form.addRow(label, widget)
         return group
 
-    def _status_group(self) -> QGroupBox:
+    def _page(self, *groups: QWidget) -> QWidget:
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        for group in groups:
+            layout.addWidget(group)
+        layout.addStretch()
+        return page
+
+    def _scrolling(self, page: QWidget) -> QScrollArea:
+        # A page taller than the window scrolls; the bars around it stay.
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        scroll.setWidget(page)
+        return scroll
+
+    def _appearance_page(self) -> QWidget:
+        self.compact_width = number(1, 2000)
+        self.compact_height = number(1, 400)
+        self.compact_radius = number(0, 200)
+        self.expanded_width = number(1, 2000)
+        self.expanded_height = number(1, 400)
+        self.expanded_radius = number(0, 200)
+        self.eye_height_share = number(0.01, 3.0, decimals=3, step=0.005)
+        self.eye_top_offset = number(-200, 200, step=0.1)
+        self.eye_center_offset = number(-1000, 1000, step=0.5)
+        self.eye_spacing = number(0, 3000, step=5)
+        self.eye_motion_gain = number(0.05, 1.0, decimals=2, step=0.05)
+        self.eye_layout_label = QLabel()
+        self.eye_layout_label.setWordWrap(True)
+        return self._page(
+            self._group("Compact geometry", (
+                ("Width (px)", self.compact_width),
+                ("Height (px)", self.compact_height),
+                ("Corner radius (px)", self.compact_radius),
+            )),
+            self._group("Expanded geometry", (
+                ("Width (px)", self.expanded_width),
+                ("Height (px)", self.expanded_height),
+                ("Corner radius (px)", self.expanded_radius),
+            )),
+            self._group("Eyes", (
+                ("Scale: base eye / compact height", self.eye_height_share),
+                ("Top offset (px)", self.eye_top_offset),
+                ("Pair centre offset X (px)", self.eye_center_offset),
+                ("Spacing (face units)", self.eye_spacing),
+                ("Motion gain (offset / size scale)", self.eye_motion_gain),
+                ("Derived layout", self.eye_layout_label),
+            )),
+        )
+
+    def _behaviour_page(self, previews: bool) -> QWidget:
+        enabled = self.presenter is not None
+        self.expand_on_hover = QCheckBox("Expand while the pointer is over the notch")
+        self.automatic = {category: QCheckBox(label) for category, label in CATEGORY_LABELS.items()}
+        self.notice_duration = QSpinBox()
+        self.notice_duration.setRange(MIN_NOTICE_DURATION_MS, MAX_NOTICE_DURATION_MS)
+        self.notice_duration.setSingleStep(500)
+        self.notice_duration.setSuffix(" ms")
+        self.notice_duration.setKeyboardTracking(False)
+        for control in (self.expand_on_hover, self.notice_duration, *self.automatic.values()):
+            control.setEnabled(enabled)
+
+        self.duration = QSpinBox()
+        self.duration.setRange(0, MAX_TRANSITION_DURATION_MS)
+        self.duration.setSingleStep(10)
+        self.duration.setKeyboardTracking(False)
+
+        automatic = QGroupBox("Expand automatically for")
+        automatic_layout = QVBoxLayout(automatic)
+        for box in self.automatic.values():
+            automatic_layout.addWidget(box)
+
+        groups = [
+            self._group("Hover", (("", self.expand_on_hover),)),
+            automatic,
+            self._group("Notices", (("Shown for", self.notice_duration),)),
+            self._group("Animation", (("Transition duration (ms)", self.duration),)),
+        ]
+
+        self.expression = QComboBox()
+        # Qt keeps item data as plain strings, so store the key's value and
+        # convert back on selection.
+        for key in ExpressionKey:
+            self.expression.addItem(key.name, key.value)
+        self.expression.setEnabled(self.controller is not None)
+        self.preview_buttons: dict[str, QPushButton] = {}
+        if previews:
+            groups.append(self._preview_group())
+        return self._page(*groups)
+
+    def _preview_group(self) -> QGroupBox:
+        """Development-only triggers; nothing here is persisted or reaches the application."""
+
+        group = QGroupBox("Preview (development only, not saved)")
+        form = QFormLayout(group)
+        activities = QHBoxLayout()
+        for activity in ActivityState:
+            button = QPushButton(activity.value.capitalize())
+            button.setEnabled(self.presenter is not None)
+            button.clicked.connect(lambda _=False, a=activity: self.preview_activity(a))
+            self.preview_buttons[activity.value] = button
+            activities.addWidget(button)
+        notices = QHBoxLayout()
+        for name, notice in PREVIEW_NOTICES.items():
+            button = QPushButton(name)
+            button.setEnabled(self.presenter is not None)
+            button.clicked.connect(lambda _=False, n=notice: self.preview_notice(n))
+            self.preview_buttons[name] = button
+            notices.addWidget(button)
+        form.addRow("Activity", activities)
+        form.addRow("Notice", notices)
+        form.addRow("Expression", self.expression)
+        return group
+
+    def _display_page(self) -> QWidget:
+        self.monitor = QComboBox()
+        self.monitors_label = QLabel()
+        self.monitors_label.setTextFormat(Qt.PlainText)
+        self.monitors_label.setStyleSheet("font-family: monospace;")
+        self.offset_x = number(-4000, 4000)
+        self.top_margin = number(0, 400)
+        return self._page(
+            self._group("Monitor", (
+                ("Monitor", self.monitor),
+                ("Connected", self.monitors_label),
+            )),
+            self._group("Placement (from the selected screen's top centre)", (
+                ("Horizontal offset (px)", self.offset_x),
+                ("Top margin (px)", self.top_margin),
+            )),
+        )
+
+    def _diagnostics_page(self) -> QWidget:
         self.loaded_label = QLabel()
+        self.schema_label = QLabel()
         self.monitor_mode_label = QLabel()
         self.selected_monitor_label = QLabel()
         self.monitor_count_label = QLabel()
         self.visual_label = QLabel()
         self.unsaved_label = QLabel()
         self.window_label = QLabel()
+        self.presentation_label = QLabel()
+        self.presentation_label.setWordWrap(True)
         self.config_path_label = QLabel()
         self.config_path_label.setWordWrap(True)
         self.config_path_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
-        return self._group("Status", (
-            ("Loaded config:", self.loaded_label),
-            ("Monitor mode:", self.monitor_mode_label),
-            ("Selected monitor:", self.selected_monitor_label),
-            ("Available monitors:", self.monitor_count_label),
-            ("Visual config:", self.visual_label),
-            ("Unsaved changes:", self.unsaved_label),
-            ("Window:", self.window_label),
-            ("File:", self.config_path_label),
-        ))
+        return self._page(
+            self._group("Configuration", (
+                ("Loaded config:", self.loaded_label),
+                ("Schema:", self.schema_label),
+                ("Visual config:", self.visual_label),
+                ("Unsaved changes:", self.unsaved_label),
+                ("File:", self.config_path_label),
+            )),
+            self._group("Display", (
+                ("Monitor mode:", self.monitor_mode_label),
+                ("Selected monitor:", self.selected_monitor_label),
+                ("Available monitors:", self.monitor_count_label),
+                ("Window:", self.window_label),
+            )),
+            self._group("Runtime", (("Presentation:", self.presentation_label),)),
+        )
 
     def _presence_group(self) -> QGroupBox:
         group = QGroupBox("Presence")
@@ -241,6 +372,7 @@ class NotchDebugWindow(QWidget):
         self.hidden_button = QPushButton("Hidden")
         self.compact_button = QPushButton("Compact")
         self.expanded_button = QPushButton("Expanded")
+        self.expanded_button.setToolTip("Hold the notch open (released by Compact)")
         self.presence_label = QLabel()
         for button in (self.hidden_button, self.compact_button, self.expanded_button):
             row.addWidget(button)
@@ -250,25 +382,15 @@ class NotchDebugWindow(QWidget):
         self.expanded_button.clicked.connect(self.show_expanded)
         return group
 
-    def _display_group(self) -> QGroupBox:
-        self.monitor = QComboBox()
-        self.monitors_label = QLabel()
-        self.monitors_label.setTextFormat(Qt.PlainText)
-        self.monitors_label.setStyleSheet("font-family: monospace;")
-        return self._group("Display", (
-            ("Monitor", self.monitor),
-            ("Connected", self.monitors_label),
-        ))
-
     def _fit_to_screen(self):
-        # Tall content scrolls: never open taller than most of the screen.
+        # Long pages scroll: never open taller than most of the screen.
         screen = self.screen() or QGuiApplication.primaryScreen()
-        width = max(self.sizeHint().width(), 440)
+        width = max(self.sizeHint().width(), 480)
         if screen is None:
-            self.resize(width, 700)
+            self.resize(width, 640)
             return
         available = screen.availableGeometry()
-        self.resize(min(width, available.width()), min(900, int(available.height() * 0.85)))
+        self.resize(min(width, available.width()), min(720, int(available.height() * 0.85)))
 
     # --- Presence, through the presenter or the production API ---------------
 
@@ -343,6 +465,16 @@ class NotchDebugWindow(QWidget):
             box.blockSignals(True)
             box.setValue(value)
             box.blockSignals(False)
+        behaviour = self.runtime_behaviour
+        controls = [(self.expand_on_hover, behaviour.expand_on_hover)]
+        controls += [(box, behaviour.expands_for(category)) for category, box in self.automatic.items()]
+        for box, checked in controls:
+            box.blockSignals(True)
+            box.setChecked(checked)
+            box.blockSignals(False)
+        self.notice_duration.blockSignals(True)
+        self.notice_duration.setValue(behaviour.notice_duration_ms)
+        self.notice_duration.blockSignals(False)
         if self.controller is not None:
             self.expression.blockSignals(True)
             self.expression.setCurrentIndex(self.expression.findData(self.controller.expression_key.value))
@@ -397,10 +529,16 @@ class NotchDebugWindow(QWidget):
 
         if self.session is None:
             self.loaded_label.setText("No file (not persisted)")
+            self.schema_label.setText("-")
             self.config_path_label.setText("-")
             self.unsaved_label.setText("-")
         else:
             self.loaded_label.setText(SOURCE_LABELS[self.session.source])
+            migrated = self.session.last_load.migrated_from
+            self.schema_label.setText(
+                f"Version {migrated} (upgraded to {SCHEMA_VERSION} on Save)" if migrated is not None
+                else f"Version {SCHEMA_VERSION}"
+            )
             self.config_path_label.setText(str(self.session.path))
             unsaved = self.session.has_unsaved_changes(self.runtime_settings)
             self.unsaved_label.setText("Yes" if unsaved else "No")
@@ -418,6 +556,16 @@ class NotchDebugWindow(QWidget):
         self.visual_label.setText("Valid" if self._visual_valid else "Invalid (not applied)")
         self.save_button.setEnabled(self.session is not None and self._visual_valid)
         self.window_label.setText(f"{bounds.x()},{bounds.y()} {bounds.width()}×{bounds.height()}")
+
+        presentation = notch.presentation
+        reasons = ", ".join(sorted(reason.value for reason in presentation.reasons)) or "none"
+        notice = presentation.notice
+        self.presentation_label.setText(
+            f"{presentation.presence.value} · activity {presentation.activity.value} · "
+            f"expanded by: {reasons} · notice: "
+            + ("none" if notice is None else f"{notice.category.value}/{notice.tone.value}")
+            + ("" if self.presenter is not None else " (no presenter)")
+        )
 
         eyes = notch.eye_layout
         self.eye_layout_label.setText(
@@ -469,6 +617,36 @@ class NotchDebugWindow(QWidget):
             self._visual_valid = True
             self.error_label.clear()
         self._refresh_status()
+
+    def _behaviour_from_controls(self) -> NotchBehaviour:
+        return NotchBehaviour(
+            expand_on_hover=self.expand_on_hover.isChecked(),
+            automatic_expansion=frozenset(c for c, box in self.automatic.items() if box.isChecked()),
+            notice_duration_ms=self.notice_duration.value(),
+        )
+
+    def _apply_behaviour(self, *_):
+        if self.presenter is None:
+            return
+        self.presenter.set_behaviour(self._behaviour_from_controls())
+        self._refresh_status()
+
+    def _on_presentation(self, _presentation: NotchPresentation):
+        self._refresh_status()
+
+    # --- Previews (development only) ------------------------------------------
+
+    def preview_activity(self, activity: ActivityState):
+        """Show ``activity`` on this notch's own presenter and face only."""
+        if self.presenter is None:
+            return
+        if self.controller is not None:
+            self.controller.set_intent(EmbodimentIntent(activity))
+        self.presenter.set_activity(activity)
+
+    def preview_notice(self, notice: Notice):
+        if self.presenter is not None:
+            self.presenter.present(notice)
 
     def _apply_monitor(self, index: int):
         if 0 <= index < len(self._monitor_choices):
