@@ -77,6 +77,7 @@ def test_main_connects_application_shutdown_before_running(monkeypatch):
     monkeypatch.setattr(main_module, "QApplication", FakeQApplication)
     monkeypatch.setattr(main_module, "build_application", lambda: runtime)
     monkeypatch.setattr(main_module, "DesktopShell", FakeDesktop)
+    monkeypatch.setattr(main_module, "quit_on_interrupt", lambda app: events.append("interrupt handler"))
 
     with pytest.raises(SystemExit) as exit_info:
         main_module.main()
@@ -88,6 +89,7 @@ def test_main_connects_application_shutdown_before_running(monkeypatch):
         "desktop built",
         "application.start after 2 quit callbacks",
         "desktop.start",
+        "interrupt handler",
         "desktop.shutdown",
         "application.shutdown",
     ]
@@ -130,6 +132,7 @@ def _run_main_capturing_notch_settings(monkeypatch):
     monkeypatch.setattr(main_module, "QApplication", FakeQApplication)
     monkeypatch.setattr(main_module, "build_application", FakeRuntime)
     monkeypatch.setattr(main_module, "DesktopShell", FakeDesktop)
+    monkeypatch.setattr(main_module, "quit_on_interrupt", lambda app: None)
     with pytest.raises(SystemExit):
         main_module.main()
     return captured["settings"]

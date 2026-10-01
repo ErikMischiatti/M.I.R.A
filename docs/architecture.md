@@ -366,6 +366,19 @@ refuses to start again. A read that outlasts the join still releases the
 device when it returns, and no second reader starts meanwhile; the capture
 thread is a daemon, so it cannot keep the process alive.
 
+Ctrl+C takes the same path. `mira.main` installs a SIGINT handler that asks
+the event loop to quit and watches the signal's wakeup fd, so the handler runs
+promptly from inside the Qt loop instead of raising `KeyboardInterrupt` in
+whichever slot happens to run next; `aboutToQuit` then shuts everything down
+in the order above. A second Ctrl+C falls back to the default action.
+
+Ctrl+C takes the same path. `mira.main` installs a SIGINT handler that asks Qt
+to quit, and watches the signal's wakeup fd from the event loop so the handler
+runs at once; without it Python raised `KeyboardInterrupt` inside whichever
+slot ran next (the animator tick), PySide swallowed it, and the application
+kept running. A second Ctrl+C restores the default action, for a shutdown that
+hangs. Signal handling lives only at that entry point.
+
 `QtScheduler` owns delayed timers and completion receivers on its construction
 thread. Shutdown is idempotent: it cancels pending timers, detaches completion
 callbacks, rejects new work, and prevents in-flight results from re-entering the
