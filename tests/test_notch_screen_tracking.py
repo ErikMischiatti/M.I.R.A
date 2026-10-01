@@ -121,7 +121,7 @@ LANDSCAPE = QRect(1920, 273, 2560, 1080)
 PORTRAIT = QRect(4480, 0, 1080, 1920)
 
 
-def test_the_default_selector_is_the_central_screen_policy(made):
+def test_the_default_selector_is_the_monitor_preference_policy(made):
     notch = NotchWindow(GEOMETRY)
     made.append(notch)
 

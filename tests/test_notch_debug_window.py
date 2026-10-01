@@ -8,6 +8,7 @@ pytest.importorskip("PySide6")
 
 from PySide6.QtCore import QAbstractAnimation, QCoreApplication, QEvent, QEventLoop, QTimer
 from PySide6.QtWidgets import QApplication
+from PySide6.QtGui import QGuiApplication
 
 from mira.domain.embodiment import ExpressionKey
 from mira.ui.notch.__main__ import build_tuning_environment
@@ -15,7 +16,6 @@ from mira.ui.notch.debug_window import NotchDebugWindow
 from mira.ui.notch.eye_layout import NotchEyeStyle
 from mira.ui.notch.notch_window import NotchWindow
 from mira.ui.notch.presence import NotchGeometry, NotchPresence, NotchSize
-from mira.ui.notch.screens import central_screen
 
 
 H, C, E = NotchPresence.HIDDEN, NotchPresence.COMPACT, NotchPresence.EXPANDED
@@ -125,11 +125,11 @@ def test_nothing_changes_on_its_own(env):
     assert env.notch.transition.state() is QAbstractAnimation.State.Stopped
 
 
-def test_the_screen_is_still_chosen_by_the_central_policy(env):
+def test_the_screen_is_still_chosen_by_the_selection_policy(env):
     env.debug.expanded_width.setValue(500.0)
     env.debug.offset_x.setValue(120.0)
 
-    assert env.notch.tracked_screen is central_screen()
+    assert env.notch.tracked_screen is QGuiApplication.screens()[0]
 
 
 # --- Geometry --------------------------------------------------------------------

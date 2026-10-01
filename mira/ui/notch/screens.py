@@ -4,7 +4,14 @@ from PySide6.QtCore import QRect
 from PySide6.QtGui import QGuiApplication, QScreen
 
 from mira.ui.notch.presence import Rect
-from mira.ui.notch.screen_selection import central_screens
+from mira.ui.notch.screen_selection import (
+    MonitorIdentity,
+    MonitorPreference,
+    ScreenInfo,
+    ScreenSelection,
+    central_screens,
+    select_screen,
+)
 
 
 class ScreenLike(Protocol):
@@ -16,8 +23,8 @@ class ScreenLike(Protocol):
 
 
 # Chooses the screen the notch should appear on, or None when there is none.
-# The automatic central-screen policy is the only one today; a primary-screen
-# or explicitly chosen screen policy would be another function of this shape.
+# `NotchWindow`'s default is `select_screen` under its monitor preference;
+# tests and tools may substitute any function of this shape.
 ScreenSelector = Callable[[], QScreen | None]
 
 
@@ -51,7 +58,45 @@ def rect_order(screen: ScreenLike) -> tuple[int, int, int, int]:
     return (geometry.x(), geometry.y(), geometry.width(), geometry.height())
 
 
-def central_screen() -> QScreen | None:
-    """The application's central screen: the default `ScreenSelector`."""
+def monitor_identity(screen: ScreenLike) -> MonitorIdentity:
+    """The identity a `QScreen` reports: connector name plus EDID data.
 
-    return central_screen_of(QGuiApplication.screens(), QGuiApplication.primaryScreen())
+    Screens that report no EDID data (or stand-ins without those queries)
+    are identified by connector name alone.
+    """
+
+    def text(query: str) -> str:
+        method = getattr(screen, query, None)
+        return (method() or "").strip() if method is not None else ""
+
+    return MonitorIdentity(
+        name=screen.name(),
+        manufacturer=text("manufacturer"),
+        model=text("model"),
+        serial=text("serialNumber"),
+    )
+
+
+def screen_infos(screens: Sequence[ScreenLike], primary: ScreenLike | None) -> list[ScreenInfo]:
+    return [
+        ScreenInfo(
+            identity=monitor_identity(screen),
+            geometry=rect_from_qrect(screen.geometry()),
+            primary=screen is primary,
+        )
+        for screen in screens
+    ]
+
+
+def select_screen_of(
+    screens: Sequence[ScreenLike], primary: ScreenLike | None, preference: MonitorPreference
+) -> tuple[ScreenLike | None, ScreenSelection]:
+    """Run the selection policy over Qt screens; the screen and the decision."""
+
+    selection = select_screen(screen_infos(screens, primary), preference)
+    chosen = None if selection.index is None else screens[selection.index]
+    return chosen, selection
+
+
+def application_screens() -> tuple[list[QScreen], QScreen | None]:
+    return QGuiApplication.screens(), QGuiApplication.primaryScreen()

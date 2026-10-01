@@ -1,4 +1,4 @@
-from PySide6.QtCore import QEasingCurve, QRect, QRectF, Qt, QTimer, QVariantAnimation
+from PySide6.QtCore import QEasingCurve, QRect, QRectF, Qt, QTimer, QVariantAnimation, Signal
 from PySide6.QtGui import (
     QColor,
     QGuiApplication,
@@ -25,7 +25,13 @@ from mira.ui.notch.presence import (
     window_bounds,
     window_shape_for_size,
 )
-from mira.ui.notch.screens import ScreenSelector, central_screen, rect_from_qrect
+from mira.ui.notch.screen_selection import MonitorPreference, ScreenSelection
+from mira.ui.notch.screens import (
+    ScreenSelector,
+    application_screens,
+    rect_from_qrect,
+    select_screen_of,
+)
 
 
 def notch_path(shape: NotchShape) -> QPainterPath:
@@ -141,10 +147,13 @@ class NotchWindow(QWidget):
     Without an animator the notch is a plain overlay.
 
     Which screen the notch appears on is `screen_selector`'s choice — by
-    default the geometrically central screen (`central_screen`). The window
-    re-runs it whenever screens are added or removed, change geometry, or the
-    primary screen changes, and follows whatever it picks; it knows nothing of
-    how the choice is made.
+    default `select_screen` under the window's `monitor_preference`: the
+    preferred monitor when connected, otherwise the automatic 1 / 2 / 3+
+    screen policy. The window re-runs it whenever screens are added or
+    removed, change geometry, or the primary screen changes, and follows
+    whatever it picks, emitting `screen_selection_changed` each time. A
+    preferred monitor that is unplugged is therefore left for the automatic
+    choice and returned to when it is plugged in again.
 
     The visual parameters — `notch_geometry`, `eye_style` and
     `transition_duration_ms` — can be replaced at run time through their
@@ -156,6 +165,9 @@ class NotchWindow(QWidget):
 
     TRANSITION_DURATION_MS = 200
 
+    # Emitted after every screen selection, whether or not the screen changed.
+    screen_selection_changed = Signal()
+
     def __init__(
         self,
         geometry: NotchGeometry | None = None,
@@ -164,6 +176,7 @@ class NotchWindow(QWidget):
         animator: FaceAnimator | None = None,
         screen_selector: ScreenSelector | None = None,
         eye_style: NotchEyeStyle | None = None,
+        monitor_preference: MonitorPreference | None = None,
     ):
         super().__init__(None)
 
@@ -202,7 +215,9 @@ class NotchWindow(QWidget):
         self._transition.valueChanged.connect(self._on_transition_value)
         self._transition.finished.connect(self._on_transition_finished)
 
-        self._select_screen = central_screen if screen_selector is None else screen_selector
+        self._monitor_preference = MonitorPreference() if monitor_preference is None else monitor_preference
+        self._selection: ScreenSelection | None = None
+        self._select_screen = self._select_preferred_screen if screen_selector is None else screen_selector
         self._watched_screens: list[QScreen] = []
         application = QGuiApplication.instance()
         application.screenAdded.connect(self._on_screen_added)
@@ -372,9 +387,29 @@ class NotchWindow(QWidget):
         """Screens whose geometry changes trigger a new screen selection."""
         return list(self._watched_screens)
 
+    @property
+    def monitor_preference(self) -> MonitorPreference:
+        return self._monitor_preference
+
+    def set_monitor_preference(self, preference: MonitorPreference):
+        """Prefer a monitor (or none: automatic) and select again at once."""
+        self._monitor_preference = preference
+        self.retarget_screen()
+
+    @property
+    def selection(self) -> ScreenSelection | None:
+        """How the default selector chose; None under a substituted selector."""
+        return self._selection
+
+    def _select_preferred_screen(self) -> QScreen | None:
+        screens, primary = application_screens()
+        screen, self._selection = select_screen_of(screens, primary, self._monitor_preference)
+        return screen
+
     def retarget_screen(self):
         """Re-run screen selection and follow the screen it picks."""
         self.track_screen(self._select_screen())
+        self.screen_selection_changed.emit()
 
     def _watch_screen(self, screen: QScreen):
         if any(watched is screen for watched in self._watched_screens):
@@ -404,11 +439,11 @@ class NotchWindow(QWidget):
         QTimer.singleShot(0, self, self.retarget_screen)
 
     def _on_primary_screen_changed(self, _screen: QScreen):
-        # The primary screen breaks exact ties, so the choice may change.
+        # The primary screen decides between two screens and breaks ties.
         self.retarget_screen()
 
     def _on_screen_geometry(self, _geometry: QRect):
-        # Any screen moving or resizing can change which one is central.
+        # Any screen moving or resizing can change the automatic choice.
         self.retarget_screen()
 
     def _release_tracked_screen(self):
