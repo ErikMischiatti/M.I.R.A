@@ -72,10 +72,20 @@ mira.main
       → InteractionManager
       → EmbodiedBehavior
       → CameraCapture(OpenCVCameraSource if MIRA_CAMERA is set, else none)
+  → DesktopShell(application)          (mira/ui/desktop_shell.py)
+      → FaceController → FaceAnimator   (the one embodiment and its clock)
+      → MainWindow(application, animator)
+  → aboutToQuit: desktop.shutdown(), then application.shutdown()
   → application.start()   (starts camera capture, if enabled)
-  → MainWindow(application)
+  → desktop.start()       (shows the window, starts the animator)
   → Qt event loop
 ```
+
+`mira.application` must not import `mira.ui`, and the face's runtime is a UI
+object, so the UI has its own composition owner: `DesktopShell` creates one
+`FaceController` stepped by one `FaceAnimator`, renders `state_changed` onto
+it, and hands the animator to every surface that shows MIRA. Surfaces only
+repaint on its ticks; none creates, steps or drives the embodiment.
 
 `Brain` currently constructs its own session memory, selected intent engine,
 response builder, action registry, executor, and concrete action handlers. The
@@ -103,7 +113,7 @@ UserInput
   → ResponseBuilder
   → SessionMemory records the response
   → response event + semantic activity/affect transition
-  → MainWindow chat callback and face rendering
+  → MainWindow chat callback; DesktopShell renders the state on the shared face
 ```
 
 Worker code has no authority to execute actions, mutate session memory, emit
@@ -127,7 +137,7 @@ currently in use:
 | `intent_inferred` | `Brain` | `EmbodiedBehavior` |
 | `action_started`, `action_completed`, `action_failed` | `ActionExecutor` | `MainWindow` |
 | `response_ready` | `Brain` | `InteractionManager`, `EmbodiedBehavior` |
-| `state_changed` | `StateManager` (via `ActivityAuthority`) | `MainWindow` |
+| `state_changed` | `StateManager` (via `ActivityAuthority`) | `DesktopShell` (onto the shared embodiment) |
 
 ## 6. Cognition
 
@@ -336,10 +346,13 @@ CameraFrame
 tree, and a `FaceAnimator` owns the frame timer, the only clock that steps the
 face: each tick advances its controller once and then notifies the views, which
 only repaint. A standalone `FaceWidget` creates and parents its own animator;
-views sharing one embodiment share one animator. Each `FaceController` owns one `MicroMotions` instance (injectable for
+views sharing one embodiment share one animator. In the application that
+animator and its controller belong to `DesktopShell`, which outlives every
+surface showing them. Each `FaceController` owns one `MicroMotions` instance (injectable for
 tests); it holds no timer and has nothing to shut down. `Application` owns the
 shared scheduler boundary and the camera capture. `QApplication.aboutToQuit`
-calls `Application.shutdown()`, which first shuts down the camera (stopping
+first calls `DesktopShell.shutdown()`, which stops the animator and then
+closes the surfaces, and then `Application.shutdown()`, which first shuts down the camera (stopping
 capture, joining the capture thread for up to two seconds, and releasing the
 device) and then the scheduler. Both are idempotent, and a shut-down camera
 refuses to start again. A read that outlasts the join still releases the

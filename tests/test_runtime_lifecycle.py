@@ -38,53 +38,59 @@ def test_application_shutdown_owns_scheduler_cleanup():
 def test_main_connects_application_shutdown_before_running(monkeypatch):
     import mira.main as main_module
 
-    observed: dict[str, object] = {}
+    events: list[str] = []
+    quit_callbacks: list = []
 
     class FakeSignal:
         def connect(self, callback):
-            observed["shutdown_callback"] = callback
+            quit_callbacks.append(callback)
 
     class FakeApplicationRuntime:
-        def __init__(self):
-            self.shutdown_calls = 0
-            self.started_after_shutdown_connected = None
-
         def start(self):
-            self.started_after_shutdown_connected = "shutdown_callback" in observed
+            events.append(f"application.start after {len(quit_callbacks)} quit callbacks")
 
         def shutdown(self):
-            self.shutdown_calls += 1
+            events.append("application.shutdown")
 
     runtime = FakeApplicationRuntime()
 
     class FakeQApplication:
         def __init__(self, argv):
-            observed["argv"] = argv
             self.aboutToQuit = FakeSignal()
 
         def exec(self):
-            observed["shutdown_callback"]()
+            for callback in quit_callbacks:
+                callback()
             return 0
 
-    class FakeWindow:
+    class FakeDesktop:
         def __init__(self, application):
-            observed["window_application"] = application
+            events.append("desktop built")
+            assert application is runtime
 
-        def show(self):
-            observed["shown"] = True
+        def start(self):
+            events.append("desktop.start")
+
+        def shutdown(self):
+            events.append("desktop.shutdown")
 
     monkeypatch.setattr(main_module, "QApplication", FakeQApplication)
     monkeypatch.setattr(main_module, "build_application", lambda: runtime)
-    monkeypatch.setattr(main_module, "MainWindow", FakeWindow)
+    monkeypatch.setattr(main_module, "DesktopShell", FakeDesktop)
 
     with pytest.raises(SystemExit) as exit_info:
         main_module.main()
 
     assert exit_info.value.code == 0
-    assert observed["window_application"] is runtime
-    assert observed["shown"] is True
-    assert runtime.shutdown_calls == 1
-    assert runtime.started_after_shutdown_connected is True
+    # Both shutdowns are connected before anything starts, and on quit the
+    # surfaces stop before the services they present.
+    assert events == [
+        "desktop built",
+        "application.start after 2 quit callbacks",
+        "desktop.start",
+        "desktop.shutdown",
+        "application.shutdown",
+    ]
 
 
 @pytest.mark.skipif(
@@ -98,6 +104,8 @@ from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import QApplication
 from mira.application.composition import build_application
 from mira.domain.models import IntentResult
+from mira.ui.face.face_animator import FaceAnimator
+from mira.ui.face.face_controller import FaceController
 from mira.ui.main_window import MainWindow
 
 started = threading.Event()
@@ -121,7 +129,7 @@ application.brain.intent_engine = BlockingIntentEngine()
 application.brain.listening_delay_ms = 0
 app.aboutToQuit.connect(application.shutdown)
 app.aboutToQuit.connect(release.set)
-window = RecordingWindow(application)
+window = RecordingWindow(application, FaceAnimator(FaceController()))
 window.show()
 
 callbacks = []

@@ -37,12 +37,15 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 #     from mira.ui.main_window import MainWindow
 #     window = MainWindow()
 #     graph, bus = window, window.event_bus
+# The window is now built by `DesktopShell`, which owns the embodiment the
+# window shows; the shell, not the window, presents `state_changed`.
 BUILD_GRAPH = """
 from mira.application.composition import build_application
-from mira.ui.main_window import MainWindow
+from mira.ui.desktop_shell import DesktopShell
 
 application = build_application()
-window = MainWindow(application)
+desktop = DesktopShell(application)
+window = desktop.window
 graph, bus = application, application.event_bus
 """
 
@@ -218,7 +221,7 @@ def test_subscribers_are_registered_exactly_once_in_a_fixed_order(graph):
             "InteractionManager.on_response_ready",
             "EmbodiedBehavior.on_response_ready",
         ],
-        "state_changed": ["MainWindow.on_state_changed"],
+        "state_changed": ["DesktopShell.on_state_changed"],
         "user_input_received": ["InteractionManager.on_user_input_received"],
     }
 

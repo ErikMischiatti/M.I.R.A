@@ -3,6 +3,7 @@ from __future__ import annotations
 from PySide6.QtCore import QSize, Qt
 from PySide6.QtWidgets import QMainWindow, QWidget, QHBoxLayout, QVBoxLayout, QPushButton, QSplitter
 
+from mira.ui.face.face_animator import FaceAnimator
 from mira.ui.face.face_widget import FaceWidget
 from mira.ui.debug_panel import DebugPanel
 from mira.ui.chat_panel import ChatPanel
@@ -18,9 +19,14 @@ class MainWindow(QMainWindow):
     subscribes to for rendering, and the brain it hands submitted text to.
     Nothing here decides which scheduler, memory or intent engine exists — that
     is `mira.application.composition`.
+
+    The face shows the embodiment `animator` steps. The window neither creates
+    nor drives that embodiment: its owner (`DesktopShell` in production)
+    starts and stops the clock and maps application state onto the
+    controller, so other surfaces can show the same embodiment.
     """
 
-    def __init__(self, application: Application):
+    def __init__(self, application: Application, animator: FaceAnimator):
         super().__init__()
 
         self.setWindowTitle("M.I.R.A. - Modular Interactive Responsive Agent")
@@ -77,7 +83,7 @@ class MainWindow(QMainWindow):
         top_bar_layout.addWidget(self.debug_toggle)
         main_layout.addWidget(top_bar)
 
-        self.face_widget = FaceWidget()
+        self.face_widget = FaceWidget(animator=animator)
         self.chat_panel = ChatPanel()
 
         main_layout.addWidget(self.face_widget, stretch=3)
@@ -103,8 +109,8 @@ class MainWindow(QMainWindow):
         # The window's own presentation handlers, registered after the graph's
         # subscribers because the graph was composed first. Rendering runs last
         # for a given event, which is the order this had before composition
-        # moved out.
-        self.event_bus.subscribe("state_changed", self.on_state_changed)
+        # moved out. `state_changed` is not among them: the embodiment's owner
+        # renders it, once, for every surface that shows the face.
         self.event_bus.subscribe("action_started", self.on_action_started)
         self.event_bus.subscribe("action_completed", self.on_action_completed)
         self.event_bus.subscribe("action_failed", self.on_action_failed)
@@ -155,18 +161,6 @@ class MainWindow(QMainWindow):
                 width: 1px;
             }
         """)
-
-    def on_state_changed(self, payload):
-        new_state = payload["new_state"]
-        embodiment = payload.get("embodiment")
-
-        print(f"[STATE] {new_state}")
-
-        if embodiment is None:
-            self.face_widget.controller.set_state(new_state)
-        else:
-            self.face_widget.controller.set_intent(embodiment)
-        self.face_widget.update()
 
     def on_action_started(self, payload):
         action_name = getattr(payload, "action_name", "azione")

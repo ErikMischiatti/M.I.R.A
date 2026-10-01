@@ -83,17 +83,17 @@ def test_a_drawer_without_a_status_reader_has_no_camera_section(qt_application):
 
 def test_the_window_reports_the_composed_camera_status(qt_application):
     from mira.application.composition import build_application
-    from mira.ui.main_window import MainWindow
+    from mira.ui.desktop_shell import DesktopShell
 
     application = build_application(
         scheduler=ManualScheduler(),
         camera_source=FakeCameraSource(open_error=CameraError("no device")),
     )
-    window = MainWindow(application)
+    desktop = DesktopShell(application)
+    window = desktop.window
     try:
         assert window.debug_panel.camera_status_label.text() == "Stopped"
         assert window.camera_status() is application.camera.status
     finally:
-        window.face_widget.frame_timer.stop()
-        window.close()
+        desktop.shutdown()
         application.shutdown()

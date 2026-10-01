@@ -2,7 +2,7 @@ import sys
 from PySide6.QtWidgets import QApplication
 
 from mira.application.composition import build_application
-from mira.ui.main_window import MainWindow
+from mira.ui.desktop_shell import DesktopShell
 
 
 def main():
@@ -12,11 +12,14 @@ def main():
     # `QtScheduler` binds whichever thread builds it as the serialized context,
     # and this is the thread that runs the event loop below.
     application = build_application()
+    desktop = DesktopShell(application)
+
+    # Qt calls these in connection order: the surfaces and their clock stop
+    # first, then the services they present (camera, scheduler).
+    app.aboutToQuit.connect(desktop.shutdown)
     app.aboutToQuit.connect(application.shutdown)
     application.start()
-
-    window = MainWindow(application)
-    window.show()
+    desktop.start()
 
     sys.exit(app.exec())
 
