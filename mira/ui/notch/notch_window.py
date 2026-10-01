@@ -1,6 +1,8 @@
-from PySide6.QtCore import QEasingCurve, QRect, QRectF, Qt, QTimer, QVariantAnimation, Signal
+from PySide6.QtCore import QElapsedTimer, QEasingCurve, QRect, QRectF, Qt, QTimer, QVariantAnimation, Signal
 from PySide6.QtGui import (
     QColor,
+    QFont,
+    QFontMetricsF,
     QGuiApplication,
     QPainter,
     QPainterPath,
@@ -22,7 +24,9 @@ from mira.ui.notch.eye_layout import (
     notch_eye_layout,
     production_envelope,
 )
-from mira.ui.notch.presentation import NotchPresentation
+from mira.ui.notch.expanded_layout import ContentRow, content_row, reveal_fraction
+from mira.ui.notch.presentation import NotchContent, NotchPresentation
+from mira.ui.notch.symbol_painter import paint_symbol
 from mira.ui.notch.presence import (
     NotchGeometry,
     NotchPresence,
@@ -96,6 +100,10 @@ def notch_mask(shape: NotchShape) -> QRegion:
 
 
 EYE_COLOR = QColor(245, 245, 245)
+
+# Symbols and labels: the eyes' colour, slightly receded so the eyes stay the
+# primary visual.
+CONTENT_COLOR = QColor(245, 245, 245, 210)
 
 
 def eye_canvas(layout: NotchEyeLayout) -> QRectF:
@@ -237,6 +245,9 @@ class NotchWindow(QWidget):
         self._presence = NotchPresence.HIDDEN
         self._presentation = NotchPresentation()
         self._hovered = False
+        # Symbol animation phase; read only while painting.
+        self._clock = QElapsedTimer()
+        self._clock.start()
         self._visual_size = self._geometry.size_for(NotchPresence.HIDDEN)
         self._from_size = self._visual_size
         self._to_size = self._visual_size
@@ -439,6 +450,23 @@ class NotchWindow(QWidget):
         """What the notch was last asked to present."""
         return self._presentation
 
+    @property
+    def content_row(self) -> ContentRow | None:
+        """Where expanded content is drawn; see `expanded_layout`."""
+        return content_row(self._window_bounds, self._geometry)
+
+    @property
+    def content_opacity(self) -> float:
+        """How visible the content row is now: 0 at compact, 1 at expanded.
+
+        It follows the drawn height, so content fades in as the notch grows
+        and out as it collapses, never popping at either end.
+        """
+        if self._presentation.content is None:
+            return 0.0
+        reveal = reveal_fraction(self._visual_size, self._geometry)
+        return reveal * reveal
+
     def present(self, presentation: NotchPresentation):
         """Render ``presentation``: move to its presence and repaint."""
         self._presentation = presentation
@@ -612,6 +640,36 @@ class NotchWindow(QWidget):
         painter.setPen(Qt.NoPen)
         painter.fillPath(path, self.color)
 
+        painter.setClipPath(path)
         if self.animator is not None:
-            painter.setClipPath(path)
             self.eye_painter.paint(painter, self.eye_canvas, self.animator.controller.get_frame())
+
+        content = self._presentation.content
+        opacity = self.content_opacity
+        row = self.content_row
+        if content is not None and row is not None and opacity > 0.01:
+            painter.setOpacity(opacity)
+            self._paint_content(painter, content, row)
+
+    def _paint_content(self, painter: QPainter, content: NotchContent, row: ContentRow):
+        """Symbol, then the label if any, centred as one group in the row."""
+
+        font = QFont(self.font())
+        font.setPixelSize(max(round(row.label_px), 1))
+        metrics = QFontMetricsF(font)
+        area = row.area
+        label = content.label or ""
+        room = area.width - row.symbol_px - (row.gap_px if label else 0.0)
+        label = metrics.elidedText(label, Qt.ElideRight, max(room, 0.0)) if label else ""
+        label_width = metrics.horizontalAdvance(label) if label else 0.0
+        group = row.symbol_px + (row.gap_px + label_width if label else 0.0)
+        left = area.x + (area.width - group) / 2.0
+        top = row.center_y - row.symbol_px / 2.0
+
+        phase = self._clock.elapsed() / 1000.0
+        paint_symbol(painter, content.symbol, QRectF(left, top, row.symbol_px, row.symbol_px), CONTENT_COLOR, phase)
+        if label:
+            painter.setFont(font)
+            painter.setPen(CONTENT_COLOR)
+            text_rect = QRectF(left + row.symbol_px + row.gap_px, top, label_width + 1.0, row.symbol_px)
+            painter.drawText(text_rect, Qt.AlignVCenter | Qt.AlignLeft, label)
