@@ -1,0 +1,303 @@
+"""Persisting the notch's tuned settings: Qt-free, against real files."""
+
+from __future__ import annotations
+
+import ast
+import json
+import os
+import pathlib
+
+import pytest
+
+import mira.ui.notch.config_store as config_store
+from mira.ui.notch.config_store import (
+    SCHEMA_VERSION,
+    ConfigSource,
+    NotchSettings,
+    config_path_from,
+    default_config_path,
+    load_settings,
+    save_settings,
+    settings_from_dict,
+    settings_to_dict,
+)
+from mira.ui.notch.eye_layout import NotchEyeStyle
+from mira.ui.notch.presence import NotchGeometry, NotchSize
+from mira.ui.notch.screen_selection import MonitorIdentity, MonitorPreference
+from mira.ui.notch.visual_config import InvalidVisualConfig, NotchVisualConfig
+
+
+TUNED = NotchSettings(
+    visual=NotchVisualConfig(
+        geometry=NotchGeometry(
+            compact=NotchSize(220.0, 36.0, 16.0),
+            expanded=NotchSize(400.0, 110.0, 26.0),
+            top_margin=4.0,
+            offset_x=-35.5,
+        ),
+        eye_style=NotchEyeStyle(height_share=0.25, top_offset=0.5, center_offset=-6.0, spacing=320.0, motion_gain=0.6),
+        transition_duration_ms=260,
+    ),
+    monitor=MonitorPreference(MonitorIdentity("HDMI-1", "Philips Consumer Electronics Company", "Philips 298P4", "1844")),
+)
+
+
+@pytest.fixture
+def path(tmp_path) -> pathlib.Path:
+    return tmp_path / "config" / "mira" / "notch.json"
+
+
+def write(path: pathlib.Path, data) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(data if isinstance(data, str) else json.dumps(data), encoding="utf-8")
+
+
+# --- Location -------------------------------------------------------------------
+
+
+def test_the_default_location_follows_xdg(tmp_path):
+    home = tmp_path / "home"
+    assert config_path_from(explicit=None, xdg_config_home=None, home=home) == home / ".config/mira/notch.json"
+    assert config_path_from(explicit=None, xdg_config_home="/xdg", home=home) == pathlib.Path("/xdg/mira/notch.json")
+    # A relative XDG_CONFIG_HOME is ignored, as the specification requires.
+    assert config_path_from(explicit=None, xdg_config_home="rel", home=home) == home / ".config/mira/notch.json"
+
+
+def test_an_explicit_path_wins(tmp_path, monkeypatch):
+    monkeypatch.setenv("MIRA_NOTCH_CONFIG", str(tmp_path / "elsewhere.json"))
+    assert default_config_path() == tmp_path / "elsewhere.json"
+    assert config_path_from(explicit="  ", xdg_config_home="/xdg", home=tmp_path) == pathlib.Path("/xdg/mira/notch.json")
+
+
+# --- Round trip ---------------------------------------------------------------------
+
+
+def test_the_defaults_serialize_to_the_documented_schema():
+    data = settings_to_dict(NotchSettings())
+
+    assert data == {
+        "version": SCHEMA_VERSION,
+        "compact": {"width": 200.0, "height": 32.0, "radius": 14.0},
+        "expanded": {"width": 360.0, "height": 96.0, "radius": 24.0},
+        "placement": {"offset_x": 0.0, "top_margin": 0.0},
+        "eyes": {"height_share": 0.28, "top_offset": 0.0, "center_offset": 0.0, "spacing": 300.0, "motion_gain": 0.5},
+        "animation": {"duration_ms": 200},
+        "display": {"monitor": None},
+    }
+
+
+def test_settings_round_trip_through_a_dict():
+    assert settings_from_dict(settings_to_dict(TUNED)) == TUNED
+    assert settings_from_dict(settings_to_dict(NotchSettings())) == NotchSettings()
+
+
+def test_save_then_reload_round_trips(path):
+    save_settings(TUNED, path)
+
+    loaded = load_settings(path)
+
+    assert loaded.source is ConfigSource.SAVED
+    assert loaded.settings == TUNED
+    assert loaded.diagnostic is None
+
+
+def test_saving_twice_replaces_the_file(path):
+    save_settings(TUNED, path)
+    save_settings(NotchSettings(), path)
+
+    assert load_settings(path).settings == NotchSettings()
+
+
+def test_integers_in_the_file_are_accepted_as_numbers(path):
+    data = settings_to_dict(NotchSettings())
+    data["compact"] = {"width": 200, "height": 32, "radius": 14}
+    write(path, data)
+
+    assert load_settings(path).settings == NotchSettings()
+
+
+# --- Missing, malformed, invalid ---------------------------------------------------
+
+
+def test_a_missing_file_yields_the_defaults_without_a_diagnostic(path):
+    loaded = load_settings(path)
+
+    assert loaded.source is ConfigSource.DEFAULTS
+    assert loaded.settings == NotchSettings()
+    assert loaded.diagnostic is None
+    assert not path.exists()
+
+
+@pytest.mark.parametrize(
+    "content,reason",
+    [
+        ("{not json", "not valid JSON"),
+        ("", "not valid JSON"),
+        (b"\xff\xfe\x00".decode("latin-1"), "not valid JSON"),
+    ],
+)
+def test_a_malformed_file_falls_back_and_is_left_untouched(path, content, reason):
+    write(path, content)
+    before = path.read_bytes()
+
+    loaded = load_settings(path)
+
+    assert loaded.source is ConfigSource.INVALID_FALLBACK
+    assert loaded.settings == NotchSettings()
+    assert reason in loaded.diagnostic and str(path) in loaded.diagnostic
+    assert path.read_bytes() == before
+
+
+def structurally_broken():
+    good = settings_to_dict(NotchSettings())
+
+    def changed(edit):
+        data = json.loads(json.dumps(good))
+        edit(data)
+        return data
+
+    return {
+        "not an object": [1, 2, 3],
+        "wrong version": changed(lambda d: d.update(version=2)),
+        "boolean version": changed(lambda d: d.update(version=True)),
+        "missing section": changed(lambda d: d.pop("eyes")),
+        "unknown section": changed(lambda d: d.update(extra={})),
+        "missing key": changed(lambda d: d["compact"].pop("radius")),
+        "unknown key": changed(lambda d: d["placement"].update(offset_y=3)),
+        "string number": changed(lambda d: d["compact"].update(width="200")),
+        "boolean number": changed(lambda d: d["eyes"].update(spacing=True)),
+        "fractional duration": changed(lambda d: d["animation"].update(duration_ms=20.5)),
+        "negative duration": changed(lambda d: d["animation"].update(duration_ms=-1)),
+        "radius too large": changed(lambda d: d["compact"].update(radius=40.0)),
+        "expanded smaller than compact": changed(lambda d: d["expanded"].update(width=100.0)),
+        "negative top margin": changed(lambda d: d["placement"].update(top_margin=-2.0)),
+        "zero motion gain": changed(lambda d: d["eyes"].update(motion_gain=0.0)),
+        "monitor not an object": changed(lambda d: d["display"].update(monitor="HDMI-1")),
+        "monitor without a name": changed(
+            lambda d: d["display"].update(monitor={"name": "", "manufacturer": "", "model": "", "serial": ""})
+        ),
+    }
+
+
+@pytest.mark.parametrize("label", list(structurally_broken()))
+def test_a_structurally_invalid_file_falls_back_and_is_left_untouched(path, label):
+    write(path, structurally_broken()[label])
+    before = path.read_bytes()
+
+    loaded = load_settings(path)
+
+    assert loaded.source is ConfigSource.INVALID_FALLBACK, label
+    assert loaded.settings == NotchSettings()
+    assert "schema" in loaded.diagnostic
+    assert path.read_bytes() == before
+
+
+def test_a_non_finite_number_is_structurally_invalid(path):
+    write(path, json.dumps(settings_to_dict(NotchSettings())).replace('"spacing": 300.0', '"spacing": NaN'))
+
+    loaded = load_settings(path)
+
+    assert loaded.source is ConfigSource.INVALID_FALLBACK and "finite" in loaded.diagnostic
+
+
+def test_a_visually_invalid_file_falls_back_with_the_reason(path):
+    data = settings_to_dict(NotchSettings())
+    data["eyes"]["height_share"] = 0.375
+    data["eyes"]["motion_gain"] = 1.0
+    write(path, data)
+    before = path.read_bytes()
+
+    loaded = load_settings(path)
+
+    assert loaded.source is ConfigSource.INVALID_FALLBACK
+    assert loaded.settings == NotchSettings()
+    assert "invalid visual configuration" in loaded.diagnostic and "COMPACT" in loaded.diagnostic
+    assert path.read_bytes() == before
+
+
+def test_an_unreadable_file_falls_back(path):
+    path.mkdir(parents=True)  # a directory where the file should be
+
+    loaded = load_settings(path)
+
+    assert loaded.source is ConfigSource.INVALID_FALLBACK and "cannot be read" in loaded.diagnostic
+
+
+# --- Saving -------------------------------------------------------------------------
+
+
+def test_an_invalid_configuration_is_never_saved(path):
+    save_settings(TUNED, path)
+    before = path.read_bytes()
+    clipping = NotchSettings(visual=NotchVisualConfig(eye_style=NotchEyeStyle(height_share=0.4)))
+
+    with pytest.raises(InvalidVisualConfig):
+        save_settings(clipping, path)
+
+    assert path.read_bytes() == before
+
+
+def test_saving_creates_missing_directories(path):
+    assert not path.parent.exists()
+    save_settings(NotchSettings(), path)
+    assert path.is_file()
+
+
+def test_saving_leaves_no_temporary_files(path):
+    save_settings(TUNED, path)
+    save_settings(NotchSettings(), path)
+
+    assert sorted(child.name for child in path.parent.iterdir()) == ["notch.json"]
+
+
+def test_a_failed_write_keeps_the_previous_file_and_cleans_up(path, monkeypatch):
+    save_settings(TUNED, path)
+    before = path.read_bytes()
+
+    def broken_replace(source, destination):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(config_store.os, "replace", broken_replace)
+    with pytest.raises(OSError):
+        save_settings(NotchSettings(), path)
+
+    assert path.read_bytes() == before
+    assert sorted(child.name for child in path.parent.iterdir()) == ["notch.json"]
+
+
+def test_the_write_is_an_atomic_replace_of_a_fully_written_file(path, monkeypatch):
+    replaced = []
+    real_replace = os.replace
+
+    def recording_replace(source, destination):
+        # At the moment of the rename the temporary file is complete.
+        replaced.append((pathlib.Path(source).parent, json.loads(pathlib.Path(source).read_text())))
+        real_replace(source, destination)
+
+    monkeypatch.setattr(config_store.os, "replace", recording_replace)
+    save_settings(TUNED, path)
+
+    assert replaced == [(path.parent, settings_to_dict(TUNED))]
+
+
+def test_the_saved_file_is_readable_json_with_the_schema_version(path):
+    save_settings(TUNED, path)
+
+    data = json.loads(path.read_text(encoding="utf-8"))
+
+    assert data["version"] == SCHEMA_VERSION
+    assert data["display"]["monitor"]["serial"] == "1844"
+
+
+def test_production_defaults_never_change_by_saving(path):
+    save_settings(TUNED, path)
+
+    assert NotchSettings() == NotchSettings(visual=NotchVisualConfig(), monitor=MonitorPreference())
+    assert NotchSettings() != TUNED
+
+
+def test_the_store_imports_no_qt():
+    source = pathlib.Path(config_store.__file__)
+    tree = ast.parse(source.read_text())
+    imported = {(node.module or "").split(".")[0] for node in ast.walk(tree) if isinstance(node, ast.ImportFrom)}
+    assert "PySide6" not in imported
