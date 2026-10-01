@@ -2,8 +2,8 @@
 #
 # M.I.R.A. standalone notch launcher: the notch with its live tuning window, which can save, reload and reset the notch configuration.
 #
-# Developer tooling: runs the notch without the application; bin/mira shows
-# the notch as part of the application. Runs from any working directory using
+# Developer tooling: runs the notch without the application; bin/mira-notch
+# runs it as part of the application. Runs from any working directory using
 # the repository's own virtual environment. Intended to be reached through a
 # symlink on PATH, for example:
 #

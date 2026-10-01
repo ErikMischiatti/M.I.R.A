@@ -1,15 +1,16 @@
 #!/usr/bin/env bash
 #
-# M.I.R.A. standalone notch launcher: the notch alone, with the saved notch configuration and no tuning window.
+# M.I.R.A. ambient notch launcher: the application runtime with the notch as
+# its only initial surface, and the saved notch configuration.
 #
-# Developer tooling: runs the notch without the application; bin/mira shows
-# the notch as part of the application. Runs from any working directory using
-# the repository's own virtual environment. Intended to be reached through a
-# symlink on PATH, for example:
+# Double-clicking the notch opens the main window of the same runtime (never a
+# second process); bin/mira opens the main window without a notch. Runs from
+# any working directory using the repository's own virtual environment.
+# Intended to be reached through a symlink on PATH, for example:
 #
 #   ln -s "$PWD/bin/mira-notch" ~/.local/bin/MIRA-NOTCH
 #
-# Arguments are passed on to `python -m mira.ui.notch`, e.g. --config PATH.
+# Arguments are passed on to `python -m mira.main --notch`, e.g. --config PATH.
 set -euo pipefail
 
 # Resolve this script through any symlink chain so the repository root is
@@ -29,4 +30,4 @@ if [ ! -x "$python_bin" ]; then
 fi
 
 # exec so signals and the exit status pass straight through to the caller.
-exec "$python_bin" -m mira.ui.notch --notch-only "$@"
+exec "$python_bin" -m mira.main --notch "$@"

@@ -1,7 +1,10 @@
 """The desktop shell: one embodiment, owned once, shown by every surface.
 
 The surfaces are `MainWindow` and `NotchWindow`; the notch's presence is the
-shell's own policy and stays apart from the activity it shows.
+shell's own policy and stays apart from the activity it shows. `MIRA` builds
+the shell in MAIN_WINDOW mode (no notch), `MIRA-NOTCH` in NOTCH mode (the
+notch, and the main window only once asked for); tests that need both open
+the window from a NOTCH shell, as a double click does.
 
 Built in-process on the offscreen platform with `ManualScheduler` and no
 camera, so nothing here needs a display, a timer loop or a webcam. State
@@ -25,7 +28,9 @@ from mira.domain.embodiment import ActivityState
 from mira.domain.micro_motion import MicroMotions
 from mira.domain.notice import Notice, NoticeCategory, NoticeTone
 from mira.domain.scheduler import ManualScheduler
-from mira.ui.desktop_shell import DesktopShell
+from mira.ui.desktop_shell import DesktopShell, ShellMode
+from mira.ui.main_window import MainWindow
+from mira.ui.notch.notch_window import NotchWindow
 from mira.ui.face.face_animator import FaceAnimator
 from mira.ui.face.face_controller import FaceController
 from mira.ui.face.face_widget import FaceWidget
@@ -79,9 +84,9 @@ def composed(qt_application):
     """A production-shaped application and shell, torn down in owner order."""
     built: list[tuple] = []
 
-    def compose(**shell_options):
+    def compose(mode=ShellMode.NOTCH, **shell_options):
         application = build_application(scheduler=ManualScheduler())
-        desktop = DesktopShell(application, **shell_options)
+        desktop = DesktopShell(application, mode=mode, **shell_options)
         built.append((desktop, application))
         return desktop, application
 
@@ -93,7 +98,8 @@ def composed(qt_application):
         # application's screen signals and would answer later tests' screen
         # changes. Production builds one shell per process; tests build many.
         for obj in (desktop.notch, desktop.window, desktop.animator):
-            obj.deleteLater()
+            if obj is not None:
+                obj.deleteLater()
     QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
 
 
@@ -102,6 +108,7 @@ def composed(qt_application):
 
 def test_the_window_and_the_notch_show_the_shells_one_embodiment(composed):
     desktop, _ = composed()
+    desktop.open_main_window()
 
     face = desktop.window.face_widget
     assert face.animator is desktop.animator
@@ -134,7 +141,7 @@ def test_composition_creates_exactly_one_controller_and_one_clock(composed, monk
 def test_one_tick_advances_the_embodiment_once_and_repaints_both_surfaces(composed):
     controller = CountingController()
     desktop, _ = composed(controller=controller)
-    desktop.window.show()
+    desktop.open_main_window()
     desktop.notch.set_presence(NotchPresence.COMPACT, animated=False)
     QCoreApplication.processEvents()
     face_paints = PaintCounter(desktop.window.face_widget)
@@ -151,7 +158,7 @@ def test_one_tick_advances_the_embodiment_once_and_repaints_both_surfaces(compos
 def test_ticks_advance_once_each_however_many_surfaces_show_them(composed):
     controller = CountingController()
     desktop, _ = composed(controller=controller)
-    desktop.window.show()
+    desktop.open_main_window()
     desktop.notch.set_presence(NotchPresence.COMPACT, animated=False)
 
     for _ in range(20):
@@ -163,6 +170,7 @@ def test_ticks_advance_once_each_however_many_surfaces_show_them(composed):
 
 def test_both_surfaces_paint_the_same_frame(composed):
     desktop, _ = composed(controller=CountingController())
+    desktop.open_main_window()
     for _ in range(15):
         desktop.animator.advance()
 
@@ -174,6 +182,7 @@ def test_both_surfaces_paint_the_same_frame(composed):
 
 def test_committed_state_changes_reach_both_surfaces(composed):
     desktop, application = composed()
+    desktop.open_main_window()
 
     application.event_bus.emit("input_focused")
     assert desktop.window.face_widget.controller.intent.activity is ActivityState.LISTENING
@@ -183,8 +192,10 @@ def test_committed_state_changes_reach_both_surfaces(composed):
     assert desktop.controller.intent.activity is ActivityState.IDLE
 
 
-def test_the_window_no_longer_presents_state_itself(composed):
-    _, application = composed()
+@pytest.mark.parametrize("mode", list(ShellMode))
+def test_the_window_no_longer_presents_state_itself(composed, mode):
+    desktop, application = composed(mode)
+    desktop.open_main_window()
 
     subscribers = application.event_bus._subscribers["state_changed"]
     assert [type(callback.__self__).__name__ for callback in subscribers] == ["DesktopShell"]
@@ -299,12 +310,10 @@ def test_settings_the_embodiment_rejects_fall_back_to_the_defaults(composed, cap
 def test_building_starts_nothing_and_start_shows_and_runs_the_clock(composed):
     desktop, _ = composed()
     assert not desktop.animator.is_running()
-    assert not desktop.window.isVisible()
     assert not desktop.notch.isVisible()
 
     desktop.start()
 
-    assert desktop.window.isVisible()
     assert desktop.notch.isVisible()
     assert desktop.animator.is_running()
 
@@ -312,6 +321,7 @@ def test_building_starts_nothing_and_start_shows_and_runs_the_clock(composed):
 def test_shutdown_stops_the_clock_and_closes_every_surface_idempotently(composed):
     desktop, _ = composed()
     desktop.start()
+    desktop.open_main_window()
 
     desktop.shutdown()
     desktop.shutdown()
@@ -320,6 +330,17 @@ def test_shutdown_stops_the_clock_and_closes_every_surface_idempotently(composed
     assert not desktop.window.isVisible()
     assert not desktop.notch.isVisible()
     assert desktop.notch.presence is NotchPresence.HIDDEN
+
+
+def test_a_main_window_shell_shuts_down_without_a_notch(composed):
+    desktop, _ = composed(ShellMode.MAIN_WINDOW)
+    desktop.start()
+
+    desktop.shutdown()
+    desktop.shutdown()
+
+    assert not desktop.animator.is_running()
+    assert not desktop.window.isVisible()
 
 
 def test_shutdown_mid_transition_leaves_no_notch_behind(composed):
@@ -331,6 +352,92 @@ def test_shutdown_mid_transition_leaves_no_notch_behind(composed):
 
     assert desktop.notch.transition.state() is desktop.notch.transition.State.Stopped
     assert not desktop.notch.isVisible()
+
+
+# --- Surfaces per launcher ---------------------------------------------------------
+
+
+def visible_top_levels(kind) -> list:
+    from PySide6.QtWidgets import QApplication
+
+    return [widget for widget in QApplication.topLevelWidgets() if isinstance(widget, kind) and widget.isVisible()]
+
+
+def test_mira_shows_the_main_window_and_builds_no_notch(composed):
+    desktop, application = composed(ShellMode.MAIN_WINDOW)
+    desktop.start()
+
+    assert desktop.window.isVisible()
+    assert desktop.notch is None and desktop.presenter is None
+    assert visible_top_levels(NotchWindow) == []
+    assert visible_top_levels(MainWindow) == [desktop.window]
+
+
+def test_mira_still_presents_state_without_a_notch(composed):
+    desktop, application = composed(ShellMode.MAIN_WINDOW)
+    desktop.start()
+
+    application.event_bus.emit("input_focused")
+
+    assert desktop.window.face_widget.controller.intent.activity is ActivityState.LISTENING
+
+
+def test_mira_notch_shows_only_the_notch_and_builds_no_main_window(composed, monkeypatch):
+    built = []
+    original = MainWindow.__init__
+    monkeypatch.setattr(MainWindow, "__init__", lambda self, *a, **k: (built.append(self), original(self, *a, **k))[1])
+
+    desktop, _ = composed(ShellMode.NOTCH)
+    desktop.start()
+
+    assert desktop.notch.isVisible()
+    assert desktop.window is None and built == []
+    assert visible_top_levels(MainWindow) == []
+
+
+def test_the_main_window_opened_from_the_notch_belongs_to_the_same_runtime(composed, monkeypatch):
+    built_controllers = []
+    original_controller = FaceController.__init__
+    monkeypatch.setattr(
+        FaceController, "__init__",
+        lambda self, *a, **k: (built_controllers.append(self), original_controller(self, *a, **k))[1],
+    )
+    desktop, application = composed(ShellMode.NOTCH)
+    desktop.start()
+
+    window = desktop.open_main_window()
+
+    assert window is desktop.window and window.isVisible()
+    assert window.event_bus is application.event_bus
+    assert window.brain is application.brain
+    assert window.face_widget.animator is desktop.animator
+    assert window.face_widget.controller is desktop.controller
+    assert built_controllers == [desktop.controller]
+
+
+def test_opening_the_main_window_again_never_builds_another(composed, monkeypatch):
+    built = []
+    original = MainWindow.__init__
+    monkeypatch.setattr(MainWindow, "__init__", lambda self, *a, **k: (built.append(self), original(self, *a, **k))[1])
+    desktop, _ = composed(ShellMode.NOTCH)
+    desktop.start()
+
+    first = desktop.open_main_window()
+    first.close()
+    again = [desktop.open_main_window() for _ in range(3)]
+
+    assert built == [first]
+    assert all(window is first for window in again) and first.isVisible()
+    assert visible_top_levels(MainWindow) == [first]
+
+
+def test_a_closed_main_window_leaves_the_notch_running(composed):
+    desktop, _ = composed(ShellMode.NOTCH)
+    desktop.start()
+    desktop.open_main_window().close()
+
+    assert desktop.notch.isVisible()
+    assert desktop.animator.is_running()
 
 
 # --- Standalone face -----------------------------------------------------------

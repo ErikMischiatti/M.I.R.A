@@ -1,4 +1,4 @@
-"""Repository launchers: MIRA unchanged, MIRA-NOTCH and MIRA-TUNE for the notch.
+"""Repository launchers: MIRA and MIRA-NOTCH run the application, MIRA-TUNE the tuner.
 
 Each launcher is run for real, through a symlink as on PATH, inside a copy of
 the repository layout whose virtual-environment interpreter is a stub that
@@ -24,7 +24,7 @@ BIN = REPO_ROOT / "bin"
 
 LAUNCHERS = {
     "MIRA": ("mira", ["-m", "mira.main"]),
-    "MIRA-NOTCH": ("mira-notch", ["-m", "mira.ui.notch", "--notch-only"]),
+    "MIRA-NOTCH": ("mira-notch", ["-m", "mira.main", "--notch"]),
     "MIRA-TUNE": ("mira-tune", ["-m", "mira.ui.notch", "--tune"]),
 }
 
@@ -88,18 +88,38 @@ def test_each_launcher_explains_a_missing_virtual_environment(command, fake_repo
     assert f"{command}: no virtual environment" in result.stderr
 
 
-def test_mira_runs_the_application_entry_point_which_owns_its_notch():
-    # The notch is part of the application process (`mira.main` builds it
-    # through `DesktopShell`), not a second program the launcher starts.
+def test_mira_runs_the_application_entry_point_without_a_notch():
+    # `mira.main` without --notch opens the main window only (`DesktopShell`
+    # in MAIN_WINDOW mode); the launcher starts nothing else.
     text = (BIN / "mira").read_text()
 
     assert 'exec "$python_bin" -m mira.main "$@"' in text
     assert "notch" not in text
 
 
+def test_mira_notch_runs_the_same_application_entry_point_in_notch_mode():
+    # One runtime with the notch as its first surface, not the standalone
+    # tool: double-clicking it opens this process's main window.
+    text = (BIN / "mira-notch").read_text()
+
+    assert 'exec "$python_bin" -m mira.main --notch "$@"' in text
+    assert "mira.ui.notch" not in text
+
+
+def test_the_runtime_mode_flags():
+    from mira.main import parse_arguments as runtime_arguments
+
+    assert runtime_arguments([])[0].notch is False
+    assert runtime_arguments(["--notch"])[0].notch is True
+    arguments, rest = runtime_arguments(["--notch", "--config", "/x/n.json", "-platform", "offscreen"])
+    assert arguments.config == pathlib.Path("/x/n.json")
+    # Everything else is Qt's.
+    assert rest == ["-platform", "offscreen"]
+
+
 def test_the_standalone_notch_tools_never_load_the_application_window():
-    # MIRA-NOTCH and MIRA-TUNE build their own embodiment and notch; neither
-    # may depend on MainWindow or the application's desktop shell.
+    # MIRA-TUNE (and the tool's --notch-only mode) build their own embodiment
+    # and notch; neither may depend on MainWindow or the application's shell.
     source = """
 import sys
 from PySide6.QtWidgets import QApplication
@@ -132,8 +152,11 @@ def test_the_mode_flags():
         parse_arguments(["--tune", "--notch-only"])
 
 
-@pytest.mark.parametrize("script", ["mira-notch", "mira-tune"])
-def test_the_real_launchers_reach_the_notch_entry_point(script):
+@pytest.mark.parametrize(("script", "options"), [
+    ("mira-notch", ("--notch", "--config")),
+    ("mira-tune", ("--notch-only", "--tune")),
+])
+def test_the_real_launchers_reach_their_entry_points(script, options):
     venv_python = REPO_ROOT / "venv" / "bin" / "python"
     if not os.access(venv_python, os.X_OK):
         pytest.skip("no repository virtual environment")
@@ -144,4 +167,4 @@ def test_the_real_launchers_reach_the_notch_entry_point(script):
     )
 
     assert result.returncode == 0, result.stderr
-    assert "--notch-only" in result.stdout and "--tune" in result.stdout
+    assert all(option in result.stdout for option in options)

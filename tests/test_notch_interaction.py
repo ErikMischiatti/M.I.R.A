@@ -1,8 +1,9 @@
 """Notch interaction: user intents leave the notch as actions the shell honours.
 
 The notch never holds the main window. A double click or a context-menu
-entry emits a `NotchAction`; `DesktopShell` shows, raises and activates the
-one window it owns. Offscreen, so stacking and real activation are left to
+entry emits a `NotchAction`; `DesktopShell` (in NOTCH mode, as `MIRA-NOTCH`
+runs it) builds the one window it owns on first request and afterwards shows,
+raises and activates that same window. Offscreen, so stacking and real activation are left to
 the manual smoke test; what is checked is that the right calls happen.
 """
 
@@ -23,7 +24,7 @@ from mira.domain.embodiment import ActivityState
 from mira.domain.notice import Notice, NoticeCategory, NoticeTone
 from mira.domain.scheduler import ManualScheduler
 from mira.ui import main_window as main_window_module
-from mira.ui.desktop_shell import NOTCH_ACTIONS, DesktopShell, task_notice
+from mira.ui.desktop_shell import NOTCH_ACTIONS, DesktopShell, ShellMode, task_notice
 from mira.ui.notch.config_store import ConfigSession
 from mira.ui.notch.notch_window import ACTION_LABELS, NotchWindow
 from mira.ui.notch.presence import NotchPresence
@@ -40,7 +41,12 @@ def qt_application(monkeypatch):
 @pytest.fixture
 def desktop(qt_application, tmp_path):
     application = build_application(scheduler=ManualScheduler())
-    shell = DesktopShell(application, notch_session=ConfigSession(tmp_path / "notch.json"))
+    quits = []
+    shell = DesktopShell(
+        application, mode=ShellMode.NOTCH, notch_session=ConfigSession(tmp_path / "notch.json"),
+        quit=lambda: quits.append(True),
+    )
+    shell.quits = quits  # for the tests' convenience only
     shell.start()
     shell.notch.transition.setCurrentTime(shell.notch.transition.duration())
     shell.application = application  # for the tests' convenience only
@@ -84,8 +90,17 @@ class Calls:
 # --- Double click ------------------------------------------------------------------
 
 
+def test_the_first_double_click_builds_and_shows_the_main_window(desktop):
+    assert desktop.window is None
+
+    double_click(desktop.notch)
+
+    assert isinstance(desktop.window, main_window_module.MainWindow)
+    assert desktop.window.isVisible()
+
+
 def test_double_click_shows_raises_and_activates_the_main_window(desktop):
-    desktop.window.hide()
+    desktop.open_main_window().hide()
     calls = Calls(desktop.window, ("show", "raise_", "activateWindow"))
 
     double_click(desktop.notch)
@@ -95,7 +110,7 @@ def test_double_click_shows_raises_and_activates_the_main_window(desktop):
 
 
 def test_double_click_restores_a_minimised_main_window(desktop):
-    desktop.window.setWindowState(Qt.WindowMinimized)
+    desktop.open_main_window().setWindowState(Qt.WindowMinimized)
 
     double_click(desktop.notch)
 
@@ -107,13 +122,14 @@ def test_double_click_never_creates_another_main_window(desktop, monkeypatch):
     original = main_window_module.MainWindow.__init__
     monkeypatch.setattr(main_window_module.MainWindow, "__init__",
                         lambda self, *a, **k: (built.append(self), original(self, *a, **k))[1])
-    window = desktop.window
-
     for _ in range(3):
         double_click(desktop.notch)
+    window = desktop.window
+    window.close()
+    double_click(desktop.notch)
 
-    assert built == []
-    assert desktop.window is window
+    assert built == [window]
+    assert desktop.window is window and window.isVisible()
 
 
 def test_the_notch_holds_no_main_window(desktop):
@@ -158,12 +174,18 @@ def test_the_context_menu_offers_exactly_the_shells_actions(desktop):
     context_menu(desktop.notch, None, offered)
 
     assert desktop.presenter.presentation.actions == NOTCH_ACTIONS
-    assert offered == [ACTION_LABELS[NotchAction.OPEN_MAIN_WINDOW], ACTION_LABELS[NotchAction.OPEN_SETTINGS]]
+    assert offered == [ACTION_LABELS[action] for action in (
+        NotchAction.OPEN_MAIN_WINDOW, NotchAction.OPEN_SETTINGS, NotchAction.QUIT,
+    )]
+
+
+def test_the_context_menu_can_quit_the_notch_runtime(desktop):
+    context_menu(desktop.notch, NotchAction.QUIT)
+
+    assert desktop.quits == [True]
 
 
 def test_the_context_menu_can_open_the_main_window(desktop):
-    desktop.window.hide()
-
     context_menu(desktop.notch, NotchAction.OPEN_MAIN_WINDOW)
 
     assert desktop.window.isVisible()

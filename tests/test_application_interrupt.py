@@ -26,6 +26,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 DRIVER = """
 from PySide6.QtCore import QTimer
 
+import sys
 import mira.main
 from mira.application.composition import Application
 from mira.ui.desktop_shell import DesktopShell
@@ -39,7 +40,8 @@ def reporting_start(self):
 
 def reporting_desktop_shutdown(self):
     desktop_shutdown(self)
-    print("desktop.shutdown", "window", self.window.isVisible(), "notch", self.notch.isVisible(),
+    shown = lambda surface: None if surface is None else surface.isVisible()
+    print("desktop.shutdown", "window", shown(self.window), "notch", shown(self.notch),
           "animator", self.animator.is_running(), flush=True)
 
 def reporting_application_shutdown(self):
@@ -49,11 +51,11 @@ def reporting_application_shutdown(self):
 DesktopShell.start = reporting_start
 DesktopShell.shutdown = reporting_desktop_shutdown
 Application.shutdown = reporting_application_shutdown
-mira.main.main()
+mira.main.main(sys.argv[1:])
 """
 
 
-def run_and_interrupt(tmp_path) -> tuple[int, str, str]:
+def run_and_interrupt(tmp_path, *arguments: str) -> tuple[int, str, str]:
     env = {
         **os.environ,
         "QT_QPA_PLATFORM": "offscreen",
@@ -62,7 +64,7 @@ def run_and_interrupt(tmp_path) -> tuple[int, str, str]:
     for name in ("MIRA_CAMERA", "MIRA_INTENT_ENGINE"):
         env.pop(name, None)
     process = subprocess.Popen(
-        [sys.executable, "-u", "-c", DRIVER],
+        [sys.executable, "-u", "-c", DRIVER, *arguments],
         cwd=REPO_ROOT,
         env=env,
         stdout=subprocess.PIPE,
@@ -87,19 +89,27 @@ def run_and_interrupt(tmp_path) -> tuple[int, str, str]:
     return process.returncode, "".join(lines) + out, err
 
 
-def test_ctrl_c_shuts_the_application_down_cleanly(tmp_path):
-    returncode, out, err = run_and_interrupt(tmp_path)
+MODES = {"MIRA": (), "MIRA-NOTCH": ("--notch",)}
+
+
+@pytest.mark.parametrize("launcher", list(MODES))
+def test_ctrl_c_shuts_the_application_down_cleanly(tmp_path, launcher):
+    returncode, out, err = run_and_interrupt(tmp_path, *MODES[launcher])
 
     assert returncode == 0, err
     assert "Traceback" not in err
     assert "KeyboardInterrupt" not in err
 
 
-def test_ctrl_c_stops_the_surfaces_before_the_services(tmp_path):
-    _, out, _ = run_and_interrupt(tmp_path)
+@pytest.mark.parametrize(("launcher", "surfaces"), [
+    ("MIRA", "window False notch None"),
+    ("MIRA-NOTCH", "window None notch False"),
+])
+def test_ctrl_c_stops_the_surfaces_before_the_services(tmp_path, launcher, surfaces):
+    _, out, _ = run_and_interrupt(tmp_path, *MODES[launcher])
 
     reported = [line for line in out.splitlines() if line.endswith("shutdown") or "shutdown " in line]
     assert reported == [
-        "desktop.shutdown window False notch False animator False",
+        f"desktop.shutdown {surfaces} animator False",
         "application.shutdown",
     ]

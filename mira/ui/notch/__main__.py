@@ -1,15 +1,16 @@
 """Standalone notch: ``python -m mira.ui.notch [--tune | --notch-only]``.
 
-Developer tooling, independent of the application: `MIRA` shows the notch as
-part of its own desktop (`mira.ui.desktop_shell`), while this opens the real
+Developer tooling, independent of the application: `MIRA-NOTCH` runs the
+notch as part of the application runtime (`python -m mira.main --notch`,
+`mira.ui.desktop_shell`), while this opens the real
 `NotchWindow` on its own, showing its own running embodiment (one
 `FaceController` stepped by one `FaceAnimator`, so blink and micro-motions
 play), with the saved notch configuration (see `config_store`), or the
 production defaults when there is none or it is invalid. The notch starts
 compact with the idle expression.
 
-- ``--notch-only`` (``bin/mira-notch``): the notch alone; Ctrl+C or SIGTERM
-  quits.
+- ``--notch-only``: the notch alone, with no application behind it (no
+  real notices, no main window); Ctrl+C or SIGTERM quits.
 - ``--tune`` (the default; ``bin/mira-tune``): the notch next to a
   `NotchDebugWindow` that tunes it live and can save, reload and reset the
   configuration. Closing the tuning window, or Ctrl+C, quits.

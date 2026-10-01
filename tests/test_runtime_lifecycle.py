@@ -35,8 +35,15 @@ def test_application_shutdown_owns_scheduler_cleanup():
     assert called == []
 
 
-def test_main_connects_application_shutdown_before_running(monkeypatch):
+@pytest.mark.parametrize(("argv", "mode", "notch_only"), [
+    ([], "main window", []),
+    # The notch runtime is not ended by closing its (optional) main window.
+    (["--notch"], "notch", ["quit on last window closed: False"]),
+])
+def test_main_connects_application_shutdown_before_running(monkeypatch, tmp_path, argv, mode, notch_only):
     import mira.main as main_module
+
+    monkeypatch.setenv("MIRA_NOTCH_CONFIG", str(tmp_path / "absent.json"))
 
     events: list[str] = []
     quit_callbacks: list = []
@@ -58,14 +65,17 @@ def test_main_connects_application_shutdown_before_running(monkeypatch):
         def __init__(self, argv):
             self.aboutToQuit = FakeSignal()
 
+        def setQuitOnLastWindowClosed(self, quits):
+            events.append(f"quit on last window closed: {quits}")
+
         def exec(self):
             for callback in quit_callbacks:
                 callback()
             return 0
 
     class FakeDesktop:
-        def __init__(self, application, *, notch_settings, notch_session):
-            events.append("desktop built")
+        def __init__(self, application, *, mode, **_notch):
+            events.append(f"desktop built ({mode.value})")
             assert application is runtime
 
         def start(self):
@@ -80,13 +90,14 @@ def test_main_connects_application_shutdown_before_running(monkeypatch):
     monkeypatch.setattr(main_module, "quit_on_interrupt", lambda app: events.append("interrupt handler"))
 
     with pytest.raises(SystemExit) as exit_info:
-        main_module.main()
+        main_module.main(argv)
 
     assert exit_info.value.code == 0
     # Both shutdowns are connected before anything starts, and on quit the
     # surfaces stop before the services they present.
     assert events == [
-        "desktop built",
+        *notch_only,
+        f"desktop built ({mode})",
         "application.start after 2 quit callbacks",
         "desktop.start",
         "interrupt handler",
@@ -95,8 +106,11 @@ def test_main_connects_application_shutdown_before_running(monkeypatch):
     ]
 
 
-def _run_main_capturing_notch_settings(monkeypatch):
-    """Run `main` with fakes around it; return the settings handed to the shell."""
+def _run_main_capturing_notch_settings(monkeypatch, argv=("--notch",)):
+    """Run `main` with fakes around it; return the settings handed to the shell.
+
+    None when the shell was given no notch settings at all.
+    """
     import mira.main as main_module
 
     captured = {}
@@ -109,6 +123,9 @@ def _run_main_capturing_notch_settings(monkeypatch):
         def __init__(self, argv):
             self.aboutToQuit = FakeSignal()
 
+        def setQuitOnLastWindowClosed(self, quits):
+            pass
+
         def exec(self):
             return 0
 
@@ -120,10 +137,12 @@ def _run_main_capturing_notch_settings(monkeypatch):
             pass
 
     class FakeDesktop:
-        def __init__(self, application, *, notch_settings, notch_session):
+        def __init__(self, application, *, mode, notch_settings=None, notch_session=None):
             captured["settings"] = notch_settings
+            captured["mode"] = mode
             # The settings window saves to the same file the settings came from.
-            assert notch_session.startup_settings == notch_settings
+            if notch_session is not None:
+                assert notch_session.startup_settings == notch_settings
 
         def start(self):
             pass
@@ -136,7 +155,7 @@ def _run_main_capturing_notch_settings(monkeypatch):
     monkeypatch.setattr(main_module, "DesktopShell", FakeDesktop)
     monkeypatch.setattr(main_module, "quit_on_interrupt", lambda app: None)
     with pytest.raises(SystemExit):
-        main_module.main()
+        main_module.main(list(argv))
     return captured["settings"]
 
 
@@ -171,6 +190,29 @@ def test_main_falls_back_to_the_defaults_for_an_invalid_configuration(monkeypatc
     assert "(invalid fallback)" in output.out
     assert "saved configuration ignored, using production defaults" in output.err
     assert path.read_text() == "{ not json"  # never rewritten
+
+
+def test_main_window_mode_never_reads_the_notch_configuration(monkeypatch, tmp_path, capsys):
+    path = tmp_path / "notch.json"
+    path.write_text("{ not json")
+    monkeypatch.setenv("MIRA_NOTCH_CONFIG", str(path))
+
+    assert _run_main_capturing_notch_settings(monkeypatch, argv=()) is None
+    output = capsys.readouterr()
+    assert "[notch]" not in output.out + output.err
+
+
+def test_an_explicit_config_path_reaches_the_notch(monkeypatch, tmp_path, capsys):
+    import dataclasses
+
+    from mira.ui.notch.config_store import NotchSettings, save_settings
+    from mira.ui.notch.visual_config import NotchVisualConfig
+
+    saved = NotchSettings(visual=dataclasses.replace(NotchVisualConfig(), transition_duration_ms=300))
+    path = save_settings(saved, tmp_path / "elsewhere.json")
+    monkeypatch.setenv("MIRA_NOTCH_CONFIG", str(tmp_path / "absent.json"))
+
+    assert _run_main_capturing_notch_settings(monkeypatch, argv=("--notch", "--config", str(path))) == saved
 
 
 def test_main_uses_the_defaults_when_no_configuration_exists(monkeypatch, tmp_path):

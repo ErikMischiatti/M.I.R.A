@@ -81,6 +81,7 @@ class NotchAction(StrEnum):
 
     OPEN_MAIN_WINDOW = "open main window"
     OPEN_SETTINGS = "open settings"
+    QUIT = "quit"
 
 
 @dataclass(frozen=True, slots=True)

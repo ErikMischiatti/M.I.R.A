@@ -135,6 +135,7 @@ def layout_eyes(layout: NotchEyeLayout) -> tuple[Eye, Eye]:
 ACTION_LABELS = {
     NotchAction.OPEN_MAIN_WINDOW: "Open M.I.R.A.",
     NotchAction.OPEN_SETTINGS: "Notch settings…",
+    NotchAction.QUIT: "Quit M.I.R.A.",
 }
 
 
