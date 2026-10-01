@@ -33,6 +33,30 @@ EYE_SPACING_UNITS = 300.0
 
 
 @dataclass(frozen=True, slots=True)
+class NotchEyeStyle:
+    """The tunable rules `notch_eye_layout` derives the eye layout from.
+
+    ``height_share`` is the base eye's height as a share of the compact
+    notch's height, and so sets the face scale. ``top_offset`` moves the eyes
+    down (positive) or up from where the tallest standard eye is centred in the
+    compact notch, and ``center_offset`` moves the pair right (positive) or
+    left of the window centre; both in pixels. ``spacing`` is centre-to-centre
+    in face units. The defaults are the production layout.
+    """
+
+    height_share: float = BASE_EYE_HEIGHT_SHARE
+    top_offset: float = 0.0
+    center_offset: float = 0.0
+    spacing: float = EYE_SPACING_UNITS
+
+    def __post_init__(self):
+        if self.height_share <= 0:
+            raise ValueError(f"eye height share must be positive, got {self.height_share}")
+        if self.spacing < 0:
+            raise ValueError(f"eye spacing must be non-negative, got {self.spacing}")
+
+
+@dataclass(frozen=True, slots=True)
 class NotchEyeLayout:
     """Where the resting eyes sit, in window pixels, and the one face scale.
 
@@ -65,17 +89,20 @@ class NotchEyeLayout:
         )
 
 
-def notch_eye_layout(geometry: NotchGeometry, window: Rect) -> NotchEyeLayout:
+def notch_eye_layout(
+    geometry: NotchGeometry, window: Rect, style: NotchEyeStyle = NotchEyeStyle()
+) -> NotchEyeLayout:
     """The eye layout for ``geometry`` in a window of ``window``'s size.
 
-    Derived from the compact notch alone, so it is identical for every
-    presence and every point of a transition.
+    Derived from the compact notch and ``style`` alone, so it is identical for
+    every presence and every point of a transition.
     """
 
-    base_height_px = geometry.compact.height * BASE_EYE_HEIGHT_SHARE
+    base_height_px = geometry.compact.height * style.height_share
     tallest_px = base_height_px * TALLEST_EYE_HEIGHT_SCALE
     return NotchEyeLayout(
         scale=base_height_px / BASE_EYE_HEIGHT_UNITS,
-        center_x=window.width / 2.0,
-        top=(geometry.compact.height - tallest_px) / 2.0,
+        center_x=window.width / 2.0 + style.center_offset,
+        top=(geometry.compact.height - tallest_px) / 2.0 + style.top_offset,
+        spacing=style.spacing,
     )

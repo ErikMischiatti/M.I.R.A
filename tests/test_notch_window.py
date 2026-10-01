@@ -71,7 +71,7 @@ def window():
     notch = NotchWindow(GEOMETRY)
     # These tests check settled states, not timing: make transitions instant.
     # Animated transitions are covered in test_notch_transitions.py.
-    notch.TRANSITION_DURATION_MS = 0
+    notch.transition_duration_ms = 0
     yield notch
     notch.hide()
     notch.deleteLater()

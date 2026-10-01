@@ -103,11 +103,16 @@ class NotchGeometry:
     showing it grows it downward and every presence shares one top-centre
     anchor. The expanded size must contain the compact one: a window sized to
     the expanded bounds then contains the notch at every presence.
+
+    ``top_margin`` lowers the notch below the area's top; ``offset_x`` moves
+    it sideways from the area's centre (positive is right). Both apply after
+    centring, to every presence alike.
     """
 
     compact: NotchSize = NotchSize(width=200.0, height=32.0, corner_radius=14.0)
     expanded: NotchSize = NotchSize(width=360.0, height=96.0, corner_radius=24.0)
     top_margin: float = 0.0
+    offset_x: float = 0.0
 
     def __post_init__(self):
         if self.expanded.width < self.compact.width or self.expanded.height < self.compact.height:
@@ -141,7 +146,9 @@ class NotchGeometry:
         height = min(size.height, area.bottom - top)
         radius = min(size.corner_radius, width / 2.0, height / 2.0)
         return NotchShape(
-            bounds=Rect(x=area.center_x - width / 2.0, y=top, width=width, height=height),
+            bounds=Rect(
+                x=area.center_x + self.offset_x - width / 2.0, y=top, width=width, height=height
+            ),
             corner_radius=radius,
         )
 
@@ -169,14 +176,15 @@ def window_bounds(area: Rect, geometry: NotchGeometry) -> Rect:
     """Whole-pixel top-level window bounds that contain every presence.
 
     ``area`` is where the notch may appear, normally a screen's available
-    geometry; the window hangs top-centre from it, ``top_margin`` below its top.
+    geometry; the window hangs top-centre from it, ``top_margin`` below its top
+    and ``offset_x`` beside its centre.
     """
 
     expanded = geometry.shape_for(area, NotchPresence.EXPANDED).bounds
     width = math.ceil(expanded.width)
     height = math.ceil(expanded.height)
     return Rect(
-        x=math.floor(area.x + (area.width - width) / 2.0),
+        x=math.floor(area.x + (area.width - width) / 2.0 + geometry.offset_x),
         y=math.floor(expanded.y),
         width=width,
         height=height,
@@ -193,12 +201,12 @@ def window_shape_for_size(window: Rect, geometry: NotchGeometry, size: NotchSize
     """A notch of any ``size`` in window-local coordinates of ``window``.
 
     The size need not belong to a presence: mid-transition sizes are placed the
-    same way. The window's own origin already carries the top margin, so the
-    notch hangs from the window's top edge.
+    same way. The window's own origin already carries the top margin and the
+    horizontal offset, so the notch hangs centred from the window's top edge.
     """
 
     local = Rect(x=0.0, y=0.0, width=window.width, height=window.height)
-    return replace(geometry, top_margin=0.0).place(local, size)
+    return replace(geometry, top_margin=0.0, offset_x=0.0).place(local, size)
 
 
 def size_distance(a: NotchSize, b: NotchSize) -> float:

@@ -14,7 +14,7 @@ from mira.domain.embodiment_frame import FACE_HEIGHT_UNITS, FACE_WIDTH_UNITS
 from mira.ui.face.eye import Eye
 from mira.ui.face.eye_painter import EyePainter
 from mira.ui.face.face_animator import FaceAnimator
-from mira.ui.notch.eye_layout import NotchEyeLayout, notch_eye_layout
+from mira.ui.notch.eye_layout import NotchEyeLayout, NotchEyeStyle, notch_eye_layout
 from mira.ui.notch.presence import (
     NotchGeometry,
     NotchPresence,
@@ -142,6 +142,11 @@ class NotchWindow(QWidget):
     primary screen changes, and follows whatever it picks; it knows nothing of
     how the choice is made.
 
+    The visual parameters — `notch_geometry`, `eye_style` and
+    `transition_duration_ms` — can be replaced at run time through their
+    setters; the window then re-derives bounds, shape, mask and eye layout
+    through the same pipeline as at construction.
+
     The window never takes keyboard focus and shows without activating.
     """
 
@@ -154,6 +159,7 @@ class NotchWindow(QWidget):
         color: QColor | None = None,
         animator: FaceAnimator | None = None,
         screen_selector: ScreenSelector | None = None,
+        eye_style: NotchEyeStyle | None = None,
     ):
         super().__init__(None)
 
@@ -168,16 +174,18 @@ class NotchWindow(QWidget):
         self.setFocusPolicy(Qt.NoFocus)
         self.setWindowTitle("M.I.R.A. notch")
 
-        self.notch_geometry = NotchGeometry() if geometry is None else geometry
+        self._geometry = NotchGeometry() if geometry is None else geometry
+        self._eye_style = NotchEyeStyle() if eye_style is None else eye_style
+        self.transition_duration_ms = self.TRANSITION_DURATION_MS
         self.animator = animator
-        self._eye_layout = notch_eye_layout(self.notch_geometry, Rect(0.0, 0.0, 0.0, 0.0))
+        self._eye_layout = notch_eye_layout(self._geometry, Rect(0.0, 0.0, 0.0, 0.0), self._eye_style)
         left, right = layout_eyes(self._eye_layout)
         # The eyelids cut into the eyes in the notch colour; see `color`.
         self.eye_painter = EyePainter(left, right, eye_color=EYE_COLOR, lid_color=QColor(0, 0, 0))
         self.color = QColor(0, 0, 0) if color is None else color
 
         self._presence = NotchPresence.HIDDEN
-        self._visual_size = self.notch_geometry.size_for(NotchPresence.HIDDEN)
+        self._visual_size = self._geometry.size_for(NotchPresence.HIDDEN)
         self._from_size = self._visual_size
         self._to_size = self._visual_size
         self._window_bounds = Rect(0.0, 0.0, 0.0, 0.0)
@@ -218,6 +226,38 @@ class NotchWindow(QWidget):
         self.eye_painter.lid_color = color
 
     @property
+    def notch_geometry(self) -> NotchGeometry:
+        return self._geometry
+
+    def set_notch_geometry(self, geometry: NotchGeometry):
+        """Replace the notch geometry; the current presence keeps its target.
+
+        At rest the notch takes the new size at once. Mid-transition the one
+        transition is restarted from the shape drawn now towards the new
+        target size, for the time it had left, so nothing jumps.
+        """
+
+        self._geometry = geometry
+        target = geometry.size_for(self._presence)
+        if self._transition.state() is QVariantAnimation.State.Stopped:
+            self._visual_size = target
+        else:
+            remaining = self._transition.duration() - self._transition.currentTime()
+            self._transition.stop()
+            self._run_transition(target, remaining)
+        self.reposition()
+
+    @property
+    def eye_style(self) -> NotchEyeStyle:
+        return self._eye_style
+
+    def set_eye_style(self, style: NotchEyeStyle):
+        """Replace the eye layout rules and re-derive the layout."""
+        self._eye_style = style
+        self._update_eye_layout()
+        self.update()
+
+    @property
     def eye_layout(self) -> NotchEyeLayout:
         return self._eye_layout
 
@@ -239,7 +279,7 @@ class NotchWindow(QWidget):
     @property
     def shape(self) -> NotchShape:
         """The notch as drawn now, in window-local coordinates."""
-        return window_shape_for_size(self._window_bounds, self.notch_geometry, self._visual_size)
+        return window_shape_for_size(self._window_bounds, self._geometry, self._visual_size)
 
     @property
     def transition(self) -> QVariantAnimation:
@@ -268,8 +308,8 @@ class NotchWindow(QWidget):
         if presence is self._presence:
             return
 
-        origin = self.notch_geometry.size_for(self._presence)
-        target = self.notch_geometry.size_for(presence)
+        origin = self._geometry.size_for(self._presence)
+        target = self._geometry.size_for(presence)
         self._presence = presence
 
         # stop() does not emit `finished`, so an interrupted transition never
@@ -278,12 +318,17 @@ class NotchWindow(QWidget):
         if presence.is_visible:
             self.show()
 
+        duration = round(
+            self.transition_duration_ms * remaining_fraction(self._visual_size, origin, target)
+        )
+        self._run_transition(target, duration if animated else 0)
+
+    def _run_transition(self, target: NotchSize, duration: int):
+        """Blend from the drawn size to ``target``; settle at once if no time."""
+
         self._from_size = self._visual_size
         self._to_size = target
-        duration = round(
-            self.TRANSITION_DURATION_MS * remaining_fraction(self._visual_size, origin, target)
-        )
-        if not animated or duration <= 0:
+        if duration <= 0:
             self._set_visual_size(target)
             self._settle()
             return
@@ -391,19 +436,23 @@ class NotchWindow(QWidget):
         """Recompute the window's bounds from the tracked screen."""
 
         if self._screen is None:
+            self._apply_shape()
             return
         self._window_bounds = window_bounds(
-            rect_from_qrect(self._screen.availableGeometry()), self.notch_geometry
+            rect_from_qrect(self._screen.availableGeometry()), self._geometry
         )
         bounds = self._window_bounds
-        self._eye_layout = notch_eye_layout(self.notch_geometry, bounds)
-        self.eye_painter.left, self.eye_painter.right = layout_eyes(self._eye_layout)
+        self._update_eye_layout()
         self.setFixedSize(int(bounds.width), int(bounds.height))
         self.move(int(bounds.x), int(bounds.y))
         self._apply_shape()
 
     def _on_available_geometry(self, _geometry: QRect):
         self.reposition()
+
+    def _update_eye_layout(self):
+        self._eye_layout = notch_eye_layout(self._geometry, self._window_bounds, self._eye_style)
+        self.eye_painter.left, self.eye_painter.right = layout_eyes(self._eye_layout)
 
     # --- Shape ---------------------------------------------------------------
 
