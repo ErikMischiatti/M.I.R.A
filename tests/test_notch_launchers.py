@@ -94,7 +94,8 @@ def test_mira_runs_the_application_entry_point_without_a_notch():
     text = (BIN / "mira").read_text()
 
     assert 'exec "$python_bin" -m mira.main "$@"' in text
-    assert "notch" not in text
+    commands = [line for line in text.splitlines() if not line.lstrip().startswith("#")]
+    assert not any("--notch" in line or "mira.ui.notch" in line for line in commands)
 
 
 def test_mira_notch_runs_the_same_application_entry_point_in_notch_mode():

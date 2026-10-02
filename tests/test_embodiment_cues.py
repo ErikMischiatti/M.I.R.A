@@ -333,10 +333,10 @@ def test_cues_belong_to_the_embodiment_not_to_the_notch():
 
 @pytest.mark.parametrize("mode", ["main window", "notch"])
 def test_a_notice_on_the_bus_makes_the_shared_eyes_react_on_every_surface(mode):
-    from mira.ui.desktop_shell import DesktopShell, ShellMode
+    from mira.ui.desktop_shell import DesktopShell, Surface
 
     application = build_application(scheduler=ManualScheduler())
-    shell = DesktopShell(application, mode=ShellMode(mode))
+    shell = DesktopShell(application, initial_surface=Surface(mode))
     try:
         application.event_bus.emit("notice", Notice(NoticeCategory.DEVICE, NoticeTone.INFO, "Mouse connected"))
         assert shell.controller.active_cue is None

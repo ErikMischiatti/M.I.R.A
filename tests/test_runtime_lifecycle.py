@@ -35,15 +35,35 @@ def test_application_shutdown_owns_scheduler_cleanup():
     assert called == []
 
 
-@pytest.mark.parametrize(("argv", "mode", "notch_only"), [
-    ([], "main window", []),
-    # The notch runtime is not ended by closing its (optional) main window.
-    (["--notch"], "notch", ["quit on last window closed: False"]),
-])
-def test_main_connects_application_shutdown_before_running(monkeypatch, tmp_path, argv, mode, notch_only):
-    import mira.main as main_module
+class FakePrimary:
+    """What `claim` returns to the process that becomes the runtime."""
 
-    monkeypatch.setenv("MIRA_NOTCH_CONFIG", str(tmp_path / "absent.json"))
+    def __init__(self, events, socket_path="/run/fake/runtime.sock"):
+        self.events = events
+        self.socket_path = socket_path
+
+    def release(self):
+        self.events.append("lock released")
+
+
+def fake_instance_server(events):
+    class FakeServer:
+        def __init__(self, path, handler):
+            events.append(f"server for {path}")
+            self.handler = handler
+
+        def listen(self):
+            events.append("server listening")
+
+        def close(self):
+            events.append("server closed")
+
+    return FakeServer
+
+
+@pytest.mark.parametrize(("argv", "surface"), [([], "main window"), (["--notch"], "notch")])
+def test_main_connects_every_shutdown_before_running(monkeypatch, argv, surface):
+    import mira.main as main_module
 
     events: list[str] = []
     quit_callbacks: list = []
@@ -65,17 +85,14 @@ def test_main_connects_application_shutdown_before_running(monkeypatch, tmp_path
         def __init__(self, argv):
             self.aboutToQuit = FakeSignal()
 
-        def setQuitOnLastWindowClosed(self, quits):
-            events.append(f"quit on last window closed: {quits}")
-
         def exec(self):
             for callback in quit_callbacks:
                 callback()
             return 0
 
     class FakeDesktop:
-        def __init__(self, application, *, mode, **_notch):
-            events.append(f"desktop built ({mode.value})")
+        def __init__(self, application, *, initial_surface, load_notch_session):
+            events.append(f"desktop built ({initial_surface.value})")
             assert application is runtime
 
         def start(self):
@@ -84,40 +101,85 @@ def test_main_connects_application_shutdown_before_running(monkeypatch, tmp_path
         def shutdown(self):
             events.append("desktop.shutdown")
 
-    monkeypatch.setattr(main_module, "QApplication", FakeQApplication)
     built_with = []
+    monkeypatch.setattr(main_module, "QApplication", FakeQApplication)
     monkeypatch.setattr(main_module, "build_application",
                         lambda **options: (built_with.append(sorted(options)), runtime)[1])
     monkeypatch.setattr(main_module, "DesktopShell", FakeDesktop)
+    monkeypatch.setattr(main_module, "InstanceServer", fake_instance_server(events))
     monkeypatch.setattr(main_module, "quit_on_interrupt", lambda app: events.append("interrupt handler"))
 
     with pytest.raises(SystemExit) as exit_info:
-        main_module.main(argv)
+        main_module.main(argv, claim=lambda request: (events.append(f"claim {request.show}"), FakePrimary(events))[1])
 
     assert exit_info.value.code == 0
-    # Both shutdowns are connected before anything starts, and on quit the
-    # surfaces stop before the services they present.
+    # The runtime is claimed before Qt starts; every shutdown is connected
+    # before anything starts; on quit the surfaces stop before the services,
+    # and the runtime stops answering and gives up its lock last.
     assert events == [
-        *notch_only,
-        f"desktop built ({mode})",
-        "application.start after 2 quit callbacks",
-        "desktop.start",
+        f"claim {surface}",
+        f"desktop built ({surface})",
+        "server for /run/fake/runtime.sock",
         "interrupt handler",
+        "application.start after 4 quit callbacks",
+        "desktop.start",
+        "server listening",
         "desktop.shutdown",
         "application.shutdown",
+        "server closed",
+        "lock released",
     ]
-    # Only the notch runtime watches the system.
-    assert built_with == ([["system_event_sources"]] if mode == "notch" else [[]])
+    # One runtime, one set of system watchers, whichever surface came first.
+    assert built_with == [["system_event_sources"]]
+
+
+def test_a_forwarding_launcher_exits_without_starting_qt(monkeypatch, capsys):
+    import mira.main as main_module
+    from mira.application.instance import Forwarded
+
+    def no_qt(*_args, **_kwargs):
+        raise AssertionError("a forwarding launcher must not start Qt or build a runtime")
+
+    monkeypatch.setattr(main_module, "QApplication", no_qt)
+    monkeypatch.setattr(main_module, "build_application", no_qt)
+    requests = []
+
+    with pytest.raises(SystemExit) as exit_info:
+        main_module.main(["--notch", "--config", "relative.json"],
+                         claim=lambda request: (requests.append(request), Forwarded(4242))[1])
+
+    assert exit_info.value.code == 0
+    assert requests[0].show == "notch"
+    # Absolute: the running runtime has its own working directory.
+    assert requests[0].notch_config.startswith("/") and requests[0].notch_config.endswith("relative.json")
+    assert "connected to the running M.I.R.A. (pid 4242); notch requested" in capsys.readouterr().out
+
+
+def test_an_unusable_runtime_is_an_error_not_a_second_runtime(monkeypatch, capsys):
+    import mira.main as main_module
+    from mira.application.instance import InstanceError
+
+    monkeypatch.setattr(main_module, "QApplication", lambda *a: pytest.fail("Qt started"))
+
+    def refuse(request):
+        raise InstanceError("another M.I.R.A. holds the lock but is not answering")
+
+    with pytest.raises(SystemExit) as exit_info:
+        main_module.main([], claim=refuse)
+
+    assert exit_info.value.code == 1
+    assert "not answering" in capsys.readouterr().err
 
 
 def _run_main_capturing_notch_settings(monkeypatch, argv=("--notch",)):
-    """Run `main` with fakes around it; return the settings handed to the shell.
+    """Run `main` with fakes around it; return the settings the notch got.
 
-    None when the shell was given no notch settings at all.
+    The fake shell asks for the notch configuration exactly when the real one
+    does: when the notch is built. None when no notch was requested.
     """
     import mira.main as main_module
 
-    captured = {}
+    captured = {"settings": None}
 
     class FakeSignal:
         def connect(self, callback):
@@ -126,9 +188,6 @@ def _run_main_capturing_notch_settings(monkeypatch, argv=("--notch",)):
     class FakeQApplication:
         def __init__(self, argv):
             self.aboutToQuit = FakeSignal()
-
-        def setQuitOnLastWindowClosed(self, quits):
-            pass
 
         def exec(self):
             return 0
@@ -144,12 +203,10 @@ def _run_main_capturing_notch_settings(monkeypatch, argv=("--notch",)):
             pass
 
     class FakeDesktop:
-        def __init__(self, application, *, mode, notch_settings=None, notch_session=None):
-            captured["settings"] = notch_settings
-            captured["mode"] = mode
-            # The settings window saves to the same file the settings came from.
-            if notch_session is not None:
-                assert notch_session.startup_settings == notch_settings
+        def __init__(self, application, *, initial_surface, load_notch_session):
+            if initial_surface.value == "notch":
+                session = load_notch_session(None)
+                captured["settings"] = session.startup_settings
 
         def start(self):
             pass
@@ -160,9 +217,10 @@ def _run_main_capturing_notch_settings(monkeypatch, argv=("--notch",)):
     monkeypatch.setattr(main_module, "QApplication", FakeQApplication)
     monkeypatch.setattr(main_module, "build_application", FakeRuntime)
     monkeypatch.setattr(main_module, "DesktopShell", FakeDesktop)
+    monkeypatch.setattr(main_module, "InstanceServer", fake_instance_server([]))
     monkeypatch.setattr(main_module, "quit_on_interrupt", lambda app: None)
     with pytest.raises(SystemExit):
-        main_module.main(list(argv))
+        main_module.main(list(argv), claim=lambda request: FakePrimary([]))
     return captured["settings"]
 
 

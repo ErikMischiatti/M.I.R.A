@@ -7,18 +7,20 @@ to `build_application`: it receives the built `Application`, creates the
 embodiment once and hands it to every surface that presents MIRA. `mira.main`
 creates both and ties their lifetimes to the Qt application.
 
-One runtime, two entry points (`ShellMode`):
+The shell is the one authority over surfaces (`Surface`): the main window
+and the notch. Each is built the first time it is asked for, through
+`show_surface`, and reused afterwards; building one never builds the other.
+Every request goes through that one method — the initial surface of the
+launcher that started the runtime, a second launcher's request forwarded by
+`mira.main` (single instance), the notch's double click or context menu:
 
-    MIRA         MAIN_WINDOW   the main window; no notch is built
-    MIRA-NOTCH   NOTCH         the notch; the main window is built the first
-                               time the user asks for it (double click, or
-                               the notch's context menu) and kept afterwards
+    show_surface(MAIN_WINDOW)   build once, then restore, show, raise, activate
+    show_surface(NOTCH)         load the notch configuration, build once, show
 
-Either way there is exactly one application graph, one controller and one
-animator per process, and at most one `MainWindow`: `open_main_window` builds
-it once, through this shell, and only brings it forward after that. Closing
-the window hides it; the notch runtime keeps running and the next request
-shows the same window again. Nothing ever starts a second process.
+Closing the main window hides it. While no notch exists that also ends the
+runtime, as it always has for `MIRA`; once a notch exists the runtime
+continues (the notch is a tool window, which Qt never counts as a last
+window), and the notch's Quit ends it.
 
   - one controller and one animator exist per shell, created here and owned
     here; surfaces receive the animator and only repaint on its ticks;
@@ -28,7 +30,8 @@ shows the same window again. Nothing ever starts a second process.
     machine.
 
 The notch opens with the same `NotchSettings` model `MIRA-TUNE` uses, built by
-the same `build_notch`.
+the same `build_notch`. Its configuration is read only when the notch is
+first requested.
 
 Two questions stay apart. `EmbodimentIntent` — what MIRA is doing and
 expressing — comes from the activity authority through `state_changed`.
@@ -40,15 +43,16 @@ Activity alone never expands the notch; the presenter's expansion reasons do
 (see `mira.ui.notch.presentation`). The presenter's notice timer runs on the
 application's own `Scheduler`, so the notch adds no clock of its own.
 
-Plain on purpose: no registry, no singleton. Constructing a shell has no side
-effects beyond subscribing to the bus and reading no files; `start` shows and
-starts, `shutdown` stops the clock and closes the surfaces.
+Plain on purpose: no registry, no singleton. Constructing a shell builds its
+initial surface and subscribes to the bus; `start` shows it and starts the
+clock, `shutdown` stops the clock and closes every surface.
 """
 
 from __future__ import annotations
 
 from collections.abc import Callable
 from enum import StrEnum
+from pathlib import Path
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QApplication
@@ -67,8 +71,8 @@ from mira.ui.notch.presentation import NotchAction, NotchPresenter
 from mira.ui.notch.startup import bind_presenter, build_notch, deliver_notice
 
 
-class ShellMode(StrEnum):
-    """Which surface a launcher opens; the other one is never shown first."""
+class Surface(StrEnum):
+    """A top-level surface presenting MIRA; launchers request them by name."""
 
     MAIN_WINDOW = "main window"
     NOTCH = "notch"
@@ -81,75 +85,137 @@ NOTCH_ACTIONS = frozenset({NotchAction.OPEN_MAIN_WINDOW, NotchAction.OPEN_SETTIN
 class DesktopShell:
     """Owns the shared embodiment and the top-level surfaces presenting it.
 
-    ``mode`` chooses the surface `start` shows (see `ShellMode`). In
-    MAIN_WINDOW mode the window is built here and no notch exists:
-    `notch`, `presenter` and the notch settings stay None. In NOTCH mode the
-    notch and its presenter are built here and `window` stays None until
-    `open_main_window`.
+    ``initial_surface`` is built here and shown by `start`; any other surface
+    is built by the first `show_surface` that asks for it. Until then
+    `window`, or `notch` and `presenter`, stay None.
 
-    `notch_settings` are the loaded notch settings (`config_store.load_settings`
-    in production); without them the notch uses the production defaults, so
-    building a shell never reads a file. `notch_session` is the file behind
-    them, which the notch settings window saves to and reloads from; without
-    it that window cannot persist. `controller` is an injection seam for
-    tests (a seeded `MicroMotions`, say); production passes nothing and gets the
-    packaged expression library. `quit` is what the notch's Quit entry calls,
-    by default `QApplication.quit`: in NOTCH mode no window is required to
-    stay open, so the notch is the one place left to end the runtime from.
+    The notch's settings come from ``notch_settings``/``notch_session`` when
+    given, otherwise from ``load_notch_session`` — called once, when the notch
+    is first built (`mira.main` reads the configuration file there); with
+    none of them the notch uses the production defaults, so a shell never
+    reads a file it was not told to. `notch_session` is the file the notch
+    settings window saves to and reloads from. `controller` is an injection
+    seam for tests (a seeded `MicroMotions`, say). `quit` is what the
+    notch's Quit entry calls, by default `QApplication.quit`.
     """
 
     def __init__(
         self,
         application: Application,
         *,
-        mode: ShellMode = ShellMode.MAIN_WINDOW,
+        initial_surface: Surface = Surface.MAIN_WINDOW,
         notch_settings: NotchSettings | None = None,
         notch_session: ConfigSession | None = None,
+        load_notch_session: Callable[[Path | None], ConfigSession] | None = None,
         controller: FaceController | None = None,
         quit: Callable[[], None] | None = None,
     ):
         # Held only to build the main window on demand; nothing else here
         # reaches into the graph.
         self._application = application
-        self.mode = mode
+        self.initial_surface = initial_surface
         self.controller = FaceController() if controller is None else controller
         # Unparented and held here: the clock lives exactly as long as the
         # shell, never as long as whichever surface happens to be built first.
         self.animator = FaceAnimator(self.controller)
         self._quit = QApplication.quit if quit is None else quit
+        self._notch_settings = notch_settings
+        self.notch_session = notch_session
+        self._load_notch_session = load_notch_session
 
         # Subscribed before any surface exists, so the embodiment follows the
         # application state whichever surfaces are built below.
         application.event_bus.subscribe("state_changed", self.on_state_changed)
+        # Every notice, from whichever producer (`mira.core.notice_producers`).
+        application.event_bus.subscribe("notice", self.on_notice)
 
         self.window: MainWindow | None = None
         self.notch: NotchWindow | None = None
         self.presenter: NotchPresenter | None = None
-        self.notch_session = notch_session
         # Built on first request; one window however often it is asked for.
         self.settings_window: NotchDebugWindow | None = None
+        self._activity = ActivityState.IDLE
+        self._stopped = False
 
-        if mode is ShellMode.MAIN_WINDOW:
-            self._build_main_window()
-        else:
-            settings = NotchSettings() if notch_settings is None else notch_settings
-            self.notch = build_notch(settings, animator=self.animator)
-            self.presenter = NotchPresenter(application.scheduler, settings.behaviour, actions=NOTCH_ACTIONS)
-            bind_presenter(self.notch, self.presenter)
-            self.notch.action_requested.connect(self.on_notch_action)
+        self._ensure(initial_surface)
 
-        # Every notice, from whichever producer (`mira.core.notice_producers`).
-        application.event_bus.subscribe("notice", self.on_notice)
+    # --- Surfaces -------------------------------------------------------------------
 
-    def _build_main_window(self) -> MainWindow:
-        # The one construction site: the same graph and the same animator as
-        # every other surface, never a second runtime.
-        self.window = MainWindow(self._application, self.animator)
+    def _ensure(self, surface: Surface, notch_config: Path | None = None):
+        if surface is Surface.MAIN_WINDOW:
+            return self.ensure_main_window()
+        return self.ensure_notch(notch_config)
+
+    def ensure_main_window(self) -> MainWindow:
+        """The one main window, built on first use; never shown by this."""
+        if self.window is None:
+            # The one construction site: the same graph and the same animator
+            # as every other surface, never a second runtime.
+            self.window = MainWindow(self._application, self.animator)
+            print("[mira] main window created")
         return self.window
 
+    def ensure_notch(self, notch_config: Path | None = None) -> NotchWindow:
+        """The one notch, built (and its configuration read) on first use.
+
+        ``notch_config`` names the configuration file to read when the notch
+        is built now; once a notch exists it is ignored (and reported).
+        """
+        if self.notch is not None:
+            if notch_config is not None and (self.notch_session is None or self.notch_session.path != notch_config):
+                print(f"[mira] notch already running; ignoring requested configuration {notch_config}")
+            return self.notch
+        if self._notch_settings is None and self.notch_session is None and self._load_notch_session is not None:
+            self.notch_session = self._load_notch_session(notch_config)
+        if self._notch_settings is None:
+            self._notch_settings = (
+                self.notch_session.startup_settings if self.notch_session is not None else NotchSettings()
+            )
+        settings = self._notch_settings
+        self.notch = build_notch(settings, animator=self.animator)
+        self.presenter = NotchPresenter(self._application.scheduler, settings.behaviour, actions=NOTCH_ACTIONS)
+        self.presenter.set_activity(self._activity)
+        bind_presenter(self.notch, self.presenter)
+        self.notch.action_requested.connect(self.on_notch_action)
+        # From now on the notch keeps the runtime alive: closing the main
+        # window only hides it.
+        application = QApplication.instance()
+        if application is not None:
+            application.setQuitOnLastWindowClosed(False)
+        print("[mira] notch created")
+        return self.notch
+
+    def show_surface(self, surface: Surface, *, notch_config: Path | None = None):
+        """Build ``surface`` if needed and bring it forward; the one entry point.
+
+        Ignored once the shell has shut down, so a request arriving during
+        teardown builds nothing.
+        """
+        if self._stopped:
+            return None
+        built = self.notch is None if surface is Surface.NOTCH else self.window is None
+        widget = self._ensure(surface, notch_config)
+        if not built:
+            print(f"[mira] {surface.value} reused")
+        if surface is Surface.MAIN_WINDOW:
+            _bring_forward(widget)
+        else:
+            self.presenter.show()
+        return widget
+
+    @property
+    def surfaces(self) -> frozenset[Surface]:
+        """The surfaces built so far."""
+        built = set()
+        if self.window is not None:
+            built.add(Surface.MAIN_WINDOW)
+        if self.notch is not None:
+            built.add(Surface.NOTCH)
+        return frozenset(built)
+
     def start(self) -> None:
-        """Show the mode's surface, then start the one clock that steps them."""
-        if self.mode is ShellMode.MAIN_WINDOW:
+        """Show the initial surface, then start the one clock that steps them."""
+        if self.initial_surface is Surface.MAIN_WINDOW:
             self.window.show()
         else:
             self.presenter.show()
@@ -164,6 +230,7 @@ class DesktopShell:
         notice timer is cancelled while the scheduler still accepts it, and it
         presents nothing more. Idempotent.
         """
+        self._stopped = True
         self.animator.stop()
         if self.presenter is not None:
             self.presenter.shutdown()
@@ -190,15 +257,8 @@ class DesktopShell:
             self._quit()
 
     def open_main_window(self) -> MainWindow:
-        """Bring the one main window forward, building it on first use.
-
-        Restored, shown, raised and activated. Built lazily in NOTCH mode,
-        here and nowhere else, so it shares this shell's application graph and
-        embodiment; asking again never builds another.
-        """
-        window = self.window if self.window is not None else self._build_main_window()
-        _bring_forward(window)
-        return window
+        """`show_surface(MAIN_WINDOW)`: what the notch's double click asks for."""
+        return self.show_surface(Surface.MAIN_WINDOW)
 
     def open_settings(self) -> None:
         """Open the notch settings for the running notch, or bring them forward.
@@ -228,6 +288,8 @@ class DesktopShell:
         else:
             self.controller.set_intent(embodiment)
             activity = embodiment.activity
+        # Kept for a notch built later, so it starts with the current activity.
+        self._activity = activity
         if self.presenter is not None:
             self.presenter.set_activity(activity)
 

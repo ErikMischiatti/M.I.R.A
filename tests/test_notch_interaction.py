@@ -25,7 +25,7 @@ from mira.domain.notice import Notice, NoticeCategory, NoticeTone
 from mira.domain.scheduler import ManualScheduler
 from mira.ui import main_window as main_window_module
 from mira.core.notice_producers import task_notice
-from mira.ui.desktop_shell import NOTCH_ACTIONS, DesktopShell, ShellMode
+from mira.ui.desktop_shell import NOTCH_ACTIONS, DesktopShell, Surface
 from mira.ui.notch.config_store import ConfigSession
 from mira.ui.notch.notch_window import ACTION_LABELS, NotchWindow
 from mira.ui.notch.presence import NotchPresence
@@ -44,7 +44,7 @@ def desktop(qt_application, tmp_path):
     application = build_application(scheduler=ManualScheduler())
     quits = []
     shell = DesktopShell(
-        application, mode=ShellMode.NOTCH, notch_session=ConfigSession(tmp_path / "notch.json"),
+        application, initial_surface=Surface.NOTCH, notch_session=ConfigSession(tmp_path / "notch.json"),
         quit=lambda: quits.append(True),
     )
     shell.quits = quits  # for the tests' convenience only

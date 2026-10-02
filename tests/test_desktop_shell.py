@@ -28,7 +28,7 @@ from mira.domain.embodiment import ActivityState
 from mira.domain.micro_motion import MicroMotions
 from mira.domain.notice import Notice, NoticeCategory, NoticeTone
 from mira.domain.scheduler import ManualScheduler
-from mira.ui.desktop_shell import DesktopShell, ShellMode
+from mira.ui.desktop_shell import DesktopShell, Surface
 from mira.ui.main_window import MainWindow
 from mira.ui.notch.notch_window import NotchWindow
 from mira.ui.face.face_animator import FaceAnimator
@@ -84,9 +84,9 @@ def composed(qt_application):
     """A production-shaped application and shell, torn down in owner order."""
     built: list[tuple] = []
 
-    def compose(mode=ShellMode.NOTCH, **shell_options):
+    def compose(mode=Surface.NOTCH, **shell_options):
         application = build_application(scheduler=ManualScheduler())
-        desktop = DesktopShell(application, mode=mode, **shell_options)
+        desktop = DesktopShell(application, initial_surface=mode, **shell_options)
         built.append((desktop, application))
         return desktop, application
 
@@ -192,7 +192,7 @@ def test_committed_state_changes_reach_both_surfaces(composed):
     assert desktop.controller.intent.activity is ActivityState.IDLE
 
 
-@pytest.mark.parametrize("mode", list(ShellMode))
+@pytest.mark.parametrize("mode", list(Surface))
 def test_the_window_no_longer_presents_state_itself(composed, mode):
     desktop, application = composed(mode)
     desktop.open_main_window()
@@ -333,7 +333,7 @@ def test_shutdown_stops_the_clock_and_closes_every_surface_idempotently(composed
 
 
 def test_a_main_window_shell_shuts_down_without_a_notch(composed):
-    desktop, _ = composed(ShellMode.MAIN_WINDOW)
+    desktop, _ = composed(Surface.MAIN_WINDOW)
     desktop.start()
 
     desktop.shutdown()
@@ -364,7 +364,7 @@ def visible_top_levels(kind) -> list:
 
 
 def test_mira_shows_the_main_window_and_builds_no_notch(composed):
-    desktop, application = composed(ShellMode.MAIN_WINDOW)
+    desktop, application = composed(Surface.MAIN_WINDOW)
     desktop.start()
 
     assert desktop.window.isVisible()
@@ -374,7 +374,7 @@ def test_mira_shows_the_main_window_and_builds_no_notch(composed):
 
 
 def test_mira_still_presents_state_without_a_notch(composed):
-    desktop, application = composed(ShellMode.MAIN_WINDOW)
+    desktop, application = composed(Surface.MAIN_WINDOW)
     desktop.start()
 
     application.event_bus.emit("input_focused")
@@ -387,7 +387,7 @@ def test_mira_notch_shows_only_the_notch_and_builds_no_main_window(composed, mon
     original = MainWindow.__init__
     monkeypatch.setattr(MainWindow, "__init__", lambda self, *a, **k: (built.append(self), original(self, *a, **k))[1])
 
-    desktop, _ = composed(ShellMode.NOTCH)
+    desktop, _ = composed(Surface.NOTCH)
     desktop.start()
 
     assert desktop.notch.isVisible()
@@ -402,7 +402,7 @@ def test_the_main_window_opened_from_the_notch_belongs_to_the_same_runtime(compo
         FaceController, "__init__",
         lambda self, *a, **k: (built_controllers.append(self), original_controller(self, *a, **k))[1],
     )
-    desktop, application = composed(ShellMode.NOTCH)
+    desktop, application = composed(Surface.NOTCH)
     desktop.start()
 
     window = desktop.open_main_window()
@@ -419,7 +419,7 @@ def test_opening_the_main_window_again_never_builds_another(composed, monkeypatc
     built = []
     original = MainWindow.__init__
     monkeypatch.setattr(MainWindow, "__init__", lambda self, *a, **k: (built.append(self), original(self, *a, **k))[1])
-    desktop, _ = composed(ShellMode.NOTCH)
+    desktop, _ = composed(Surface.NOTCH)
     desktop.start()
 
     first = desktop.open_main_window()
@@ -432,7 +432,7 @@ def test_opening_the_main_window_again_never_builds_another(composed, monkeypatc
 
 
 def test_a_closed_main_window_leaves_the_notch_running(composed):
-    desktop, _ = composed(ShellMode.NOTCH)
+    desktop, _ = composed(Surface.NOTCH)
     desktop.start()
     desktop.open_main_window().close()
 
@@ -440,11 +440,98 @@ def test_a_closed_main_window_leaves_the_notch_running(composed):
     assert desktop.animator.is_running()
 
 
+# --- Surface requests (one runtime) -----------------------------------------------------
+
+
+def test_a_main_window_runtime_builds_the_notch_only_when_asked(composed, tmp_path):
+    from mira.ui.notch.config_store import ConfigSession
+
+    loaded = []
+
+    def load(path):
+        loaded.append(path)
+        return ConfigSession(path or tmp_path / "default.json")
+
+    desktop, _ = composed(Surface.MAIN_WINDOW, load_notch_session=load)
+    desktop.start()
+    assert desktop.notch is None and loaded == []  # MIRA alone reads no notch configuration
+
+    requested = tmp_path / "requested.json"
+    notch = desktop.show_surface(Surface.NOTCH, notch_config=requested)
+
+    assert loaded == [requested] and desktop.notch_session.path == requested
+    assert notch is desktop.notch and notch.isVisible()
+    assert desktop.show_surface(Surface.NOTCH) is notch and loaded == [requested]
+    assert desktop.surfaces == {Surface.MAIN_WINDOW, Surface.NOTCH}
+
+
+def test_a_notch_built_later_shares_the_embodiment_and_the_current_activity(composed):
+    desktop, application = composed(Surface.MAIN_WINDOW)
+    desktop.start()
+    application.event_bus.emit("input_focused")
+
+    desktop.show_surface(Surface.NOTCH)
+
+    assert desktop.notch.animator is desktop.animator is desktop.window.face_widget.animator
+    assert desktop.presenter.presentation.activity is ActivityState.LISTENING
+
+
+def test_closing_the_main_window_ends_the_runtime_only_while_no_notch_exists(composed, qt_application):
+    qt_application.setQuitOnLastWindowClosed(True)
+    desktop, _ = composed(Surface.MAIN_WINDOW)
+    assert qt_application.quitOnLastWindowClosed()
+
+    desktop.show_surface(Surface.NOTCH)
+
+    assert not qt_application.quitOnLastWindowClosed()
+    qt_application.setQuitOnLastWindowClosed(True)
+
+
+def test_surface_requests_never_create_another_producer(qt_application):
+    class Source:
+        name = "fake"
+        starts = 0
+
+        def start(self, listener):
+            Source.starts += 1
+            return True
+
+        def shutdown(self):
+            pass
+
+    application = build_application(scheduler=ManualScheduler(), system_event_sources=[Source()])
+    desktop = DesktopShell(application, initial_surface=Surface.MAIN_WINDOW)
+    try:
+        application.start()
+        desktop.start()
+        for surface in (Surface.MAIN_WINDOW, Surface.NOTCH, Surface.MAIN_WINDOW, Surface.NOTCH):
+            desktop.show_surface(surface)
+
+        assert Source.starts == 1
+        assert len(application.system_notices.active_sources) == 1
+        assert len(application.event_bus._subscribers["action_completed"]) == 2  # producer + the one window
+    finally:
+        desktop.shutdown()
+        application.shutdown()
+        for obj in (desktop.notch, desktop.window, desktop.animator):
+            if obj is not None:
+                obj.deleteLater()
+        QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+
+
+def test_a_request_during_shutdown_builds_nothing(composed):
+    desktop, _ = composed(Surface.MAIN_WINDOW)
+    desktop.shutdown()
+
+    assert desktop.show_surface(Surface.NOTCH) is None
+    assert desktop.notch is None
+
+
 # --- Notices from the bus ---------------------------------------------------------------
 
 
 def test_a_notice_on_the_bus_reaches_the_notch_presenter(composed):
-    desktop, application = composed(ShellMode.NOTCH)
+    desktop, application = composed(Surface.NOTCH)
     desktop.start()
     notice = Notice(NoticeCategory.DEVICE, NoticeTone.INFO, "Keyboard connected")
 
@@ -455,7 +542,7 @@ def test_a_notice_on_the_bus_reaches_the_notch_presenter(composed):
 
 
 def test_a_main_window_shell_ignores_notices(composed):
-    desktop, application = composed(ShellMode.MAIN_WINDOW)
+    desktop, application = composed(Surface.MAIN_WINDOW)
     desktop.start()
 
     application.event_bus.emit("notice", Notice(NoticeCategory.ALERT, NoticeTone.ERROR))

@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
 #
-# M.I.R.A. ambient notch launcher: the application runtime with the notch as
-# its only initial surface, and the saved notch configuration.
+# M.I.R.A. ambient notch launcher: asks this user's M.I.R.A. runtime to show
+# the notch, starting the runtime if none is running.
 #
-# Double-clicking the notch opens the main window of the same runtime (never a
-# second process); bin/mira opens the main window without a notch. Runs from
-# any working directory using the repository's own virtual environment.
+# If M.I.R.A. is already running (from bin/mira or an earlier bin/mira-notch)
+# the request goes to it and this launcher exits; there is never a second
+# runtime. Double-clicking the notch opens the main window of that runtime.
+# Runs from any working directory using the repository's own virtual
+# environment.
 # Intended to be reached through a symlink on PATH, for example:
 #
 #   ln -s "$PWD/bin/mira-notch" ~/.local/bin/MIRA-NOTCH

@@ -72,3 +72,19 @@ def isolate_mira_env(monkeypatch: pytest.MonkeyPatch) -> None:
     """
     for name in MIRA_ENV_VARS:
         monkeypatch.delenv(name, raising=False)
+
+
+@pytest.fixture(autouse=True)
+def isolate_runtime_directory(monkeypatch: pytest.MonkeyPatch, tmp_path_factory) -> None:
+    """Point ``XDG_RUNTIME_DIR`` at a fresh private directory for every test.
+
+    The single-instance runtime (`mira.application.instance`) lives in
+    ``$XDG_RUNTIME_DIR/mira``. Without this, a test that runs `mira.main` — in
+    process or as a subprocess, which inherits the environment — would use
+    the developer's real runtime directory, and could forward its request to
+    the MIRA they are running. Not a MIRA_* variable, so `isolate_mira_env`
+    still only deletes.
+    """
+    directory = tmp_path_factory.mktemp("xdg-runtime")
+    directory.chmod(0o700)
+    monkeypatch.setenv("XDG_RUNTIME_DIR", str(directory))
