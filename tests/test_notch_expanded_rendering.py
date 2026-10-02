@@ -21,14 +21,28 @@ from mira.domain.notice import Notice, NoticeCategory, NoticeTone
 from mira.domain.scheduler import ManualScheduler
 from mira.ui.face.face_animator import FaceAnimator
 from mira.ui.face.face_controller import FaceController
-from mira.ui.notch.expanded_layout import content_row, reveal_fraction
+from mira.ui.notch.expanded_layout import (
+    NotchContentStyle,
+    content_problems,
+    content_row,
+    corner_inset,
+    reveal_fraction,
+)
 from mira.ui.notch.eye_layout import NotchEyeStyle
 from mira.ui.notch.notch_window import NotchWindow
 from mira.ui.notch.presence import NotchGeometry, NotchPresence, NotchSize, Rect
 from mira.ui.notch.presentation import NotchPresenter, NotchSymbol
 from mira.ui.notch.startup import bind_presenter
 from mira.ui.notch.symbol_painter import paint_symbol
-from mira.ui.notch.visual_config import NotchVisualConfig, eye_layout_for, nominal_window
+from mira.ui.notch.visual_config import (
+    InvalidVisualConfig,
+    NotchVisualConfig,
+    content_row_for,
+    eye_layout_for,
+    eye_motion_bottom,
+    nominal_window,
+    visual_config_problems,
+)
 from mira.ui.notch.eye_layout import production_envelope
 
 
@@ -47,35 +61,130 @@ def application():
 # --- Layout ----------------------------------------------------------------------
 
 
+def with_content(config: NotchVisualConfig, **content) -> NotchVisualConfig:
+    return dataclasses.replace(config, content_style=NotchContentStyle(**content))
+
+
 @pytest.mark.parametrize("config", [NotchVisualConfig(), TUNED], ids=["defaults", "tuned"])
-def test_the_content_row_lies_below_every_eye_pose_and_inside_the_expanded_notch(config):
+def test_the_content_lies_below_every_eye_pose_and_inside_the_expanded_notch(config):
+    envelope = production_envelope()
     geometry = config.geometry
     window = nominal_window(geometry)
-    row = content_row(window, geometry)
-    layout = eye_layout_for(config, production_envelope())
+    row = content_row_for(config)
+    layout = eye_layout_for(config, envelope)
 
-    assert row is not None
     for side in ("left", "right"):
-        assert layout.motion_bounds(side, production_envelope()).bottom <= row.area.y
-    assert row.area.y == geometry.compact.height
-    assert row.area.bottom == geometry.expanded.height
-    assert row.area.x >= window.width / 2.0 - geometry.expanded.width / 2.0 + geometry.expanded.corner_radius - 1e-9
-    assert row.area.right <= window.width / 2.0 + geometry.expanded.width / 2.0 - geometry.expanded.corner_radius + 1e-9
+        assert layout.motion_bounds(side, envelope).bottom <= row.area.y
+    assert row.area.y == pytest.approx(eye_motion_bottom(layout, envelope) + config.content_style.eye_gap_px)
+    assert row.area.bottom <= geometry.expanded.height - 1.0
+    assert row.area.x >= window.width / 2.0 - geometry.expanded.width / 2.0
+    assert row.area.right <= window.width / 2.0 + geometry.expanded.width / 2.0
+    assert visual_config_problems(config) == []
 
 
-def test_the_symbol_stays_small_in_a_tall_notch():
-    geometry = NotchGeometry(compact=NotchSize(200, 32, 14), expanded=NotchSize(400, 300, 24))
+def test_the_defaults_are_larger_than_the_old_fixed_layout():
+    row = content_row_for(NotchVisualConfig())
 
-    row = content_row(nominal_window(geometry), geometry)
+    # The old layout capped the symbol at 20 px and drew the label at 72 % of it.
+    assert row.symbol_px > 20.0
+    assert row.label_px > 14.4
 
-    assert row.symbol_px <= 20.0
-    assert row.label_px < row.symbol_px
+
+def test_the_style_sizes_the_content():
+    config = with_content(TUNED, symbol_px=30.0, text_px=22.0, spacing_px=14.0, eye_gap_px=4.0)
+
+    row = content_row_for(config)
+
+    assert (row.symbol_px, row.label_px, row.gap_px) == (30.0, 22.0, 14.0)
+    assert row.area.height == pytest.approx(max(30.0, 22.0 * 1.25))
 
 
-def test_no_content_row_without_room_for_a_symbol():
-    geometry = NotchGeometry(compact=NotchSize(200, 32, 14), expanded=NotchSize(360, 40, 14))
+def test_the_gap_moves_the_content_relative_to_the_eyes():
+    near = content_row_for(with_content(TUNED, eye_gap_px=0.0))
+    far = content_row_for(with_content(TUNED, eye_gap_px=20.0))
 
-    assert content_row(nominal_window(geometry), geometry) is None
+    assert far.area.y - near.area.y == pytest.approx(20.0)
+
+
+def test_moving_the_eyes_moves_the_content_with_them():
+    base = content_row_for(TUNED)
+    lowered = content_row_for(dataclasses.replace(TUNED, eye_style=dataclasses.replace(TUNED.eye_style, top_offset=-2.0)))
+
+    assert base.area.y - lowered.area.y == pytest.approx(2.0)
+
+
+def test_content_below_the_notch_is_invalid_and_never_applied(application):
+    too_low = with_content(TUNED, eye_gap_px=80.0)
+    problems = visual_config_problems(too_low)
+
+    assert any("leaves the notch bottom" in problem for problem in problems)
+    notch = NotchWindow()
+    try:
+        notch.apply_visual_config(TUNED)
+        with pytest.raises(InvalidVisualConfig):
+            notch.apply_visual_config(too_low)
+        # The last valid configuration stays.
+        assert notch.visual_config == TUNED
+    finally:
+        notch.deleteLater()
+
+
+def test_a_symbol_wider_than_the_room_between_the_corners_is_invalid():
+    geometry = NotchGeometry(compact=NotchSize(60, 32, 14), expanded=NotchSize(60, 130, 28))
+    config = with_content(NotchVisualConfig(geometry=geometry), symbol_px=60.0, text_px=10.0, eye_gap_px=0.0)
+
+    problems = content_problems(content_row_for(config), geometry)
+
+    assert any("wider than the room" in problem for problem in problems)
+
+
+def test_the_rounded_corners_narrow_the_content_near_the_bottom():
+    size = NotchSize(360.0, 96.0, 24.0)
+
+    assert corner_inset(size, 10.0, 60.0) == 0.0
+    assert corner_inset(size, 10.0, 96.0) == pytest.approx(24.0)
+    assert 0.0 < corner_inset(size, 10.0, 84.0) < 24.0
+
+
+@pytest.mark.parametrize("field, value", [
+    ("symbol_px", 4.0), ("symbol_px", 200.0), ("text_px", 2.0), ("spacing_px", -1.0),
+    ("eye_gap_px", -0.5), ("eye_gap_px", float("nan")),
+])
+def test_impossible_content_values_are_rejected(field, value):
+    with pytest.raises(ValueError):
+        NotchContentStyle(**{field: value})
+
+
+def test_larger_content_paints_more_pixels(application):
+    def lit_content(config):
+        notch = NotchWindow()
+        try:
+            notch.apply_visual_config(config)
+            presenter = NotchPresenter(ManualScheduler())
+            bind_presenter(notch, presenter)
+            presenter.show()
+            presenter.set_pinned(True)
+            notch.transition.setCurrentTime(notch.transition.duration())
+            presenter.present(Notice(NoticeCategory.ALERT, NoticeTone.WARNING, "Low battery"))
+            image = notch.grab().toImage()
+            row = notch.content_row
+            count = 0
+            for y in range(int(row.area.y), min(int(row.area.bottom) + 1, image.height())):
+                for x in range(image.width()):
+                    color = image.pixelColor(x, y)
+                    if color.alpha() > 0 and color.lightness() > 128:
+                        count += 1
+            presenter.shutdown()
+            return count
+        finally:
+            notch.hide()
+            notch.deleteLater()
+
+    small = lit_content(with_content(TUNED, symbol_px=12.0, text_px=9.0, spacing_px=6.0, eye_gap_px=10.0))
+    large = lit_content(with_content(TUNED, symbol_px=30.0, text_px=22.0, spacing_px=10.0, eye_gap_px=10.0))
+
+    assert small > 0
+    assert large > 2 * small
 
 
 def test_the_reveal_follows_the_drawn_height():

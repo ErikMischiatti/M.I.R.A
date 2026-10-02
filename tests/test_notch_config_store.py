@@ -23,11 +23,18 @@ from mira.ui.notch.config_store import (
     settings_to_dict,
 )
 from mira.domain.notice import NoticeCategory
-from mira.ui.notch.eye_layout import NotchEyeStyle
+from mira.ui.notch.expanded_layout import NotchContentStyle, legacy_content_style
+from mira.ui.notch.eye_layout import NotchEyeStyle, production_envelope
 from mira.ui.notch.presentation import NotchBehaviour
 from mira.ui.notch.presence import NotchGeometry, NotchSize
 from mira.ui.notch.screen_selection import MonitorIdentity, MonitorPreference
-from mira.ui.notch.visual_config import InvalidVisualConfig, NotchVisualConfig
+from mira.ui.notch.visual_config import (
+    InvalidVisualConfig,
+    NotchVisualConfig,
+    content_row_for,
+    eye_layout_for,
+    eye_motion_bottom,
+)
 
 
 TUNED = NotchSettings(
@@ -40,6 +47,7 @@ TUNED = NotchSettings(
         ),
         eye_style=NotchEyeStyle(height_share=0.25, top_offset=0.5, center_offset=-6.0, spacing=320.0, motion_gain=0.6),
         transition_duration_ms=260,
+        content_style=NotchContentStyle(symbol_px=30.0, text_px=20.0, spacing_px=12.0, eye_gap_px=14.0),
     ),
     monitor=MonitorPreference(MonitorIdentity("HDMI-1", "Philips Consumer Electronics Company", "Philips 298P4", "1844")),
     behaviour=NotchBehaviour(
@@ -96,6 +104,7 @@ def test_the_defaults_serialize_to_the_documented_schema():
             "automatic_expansion": {"alert": True, "device": True, "task": False},
             "notice_duration_ms": 4000,
         },
+        "content": {"symbol_px": 26.0, "text_px": 18.0, "spacing_px": 10.0, "eye_gap_px": 19.0},
     }
 
 
@@ -171,13 +180,20 @@ def structurally_broken():
 
     return {
         "not an object": [1, 2, 3],
-        "future version": changed(lambda d: d.update(version=3)),
+        "future version": changed(lambda d: d.update(version=SCHEMA_VERSION + 1)),
         "version zero": changed(lambda d: d.update(version=0)),
         "behaviour in version 1": changed(lambda d: d.update(version=1)),
         "missing behaviour": changed(lambda d: d.pop("behaviour")),
         "unknown behaviour key": changed(lambda d: d["behaviour"].update(sticky=True)),
         "unknown category": changed(lambda d: d["behaviour"]["automatic_expansion"].update(perception=True)),
-        "missing category": changed(lambda d: d["behaviour"]["automatic_expansion"].pop("task")),
+        "content in version 2": changed(lambda d: d.update(version=2)),
+        "missing content": changed(lambda d: d.pop("content")),
+        "unknown content key": changed(lambda d: d["content"].update(offset_x=2.0)),
+        "missing content key": changed(lambda d: d["content"].pop("text_px")),
+        "symbol too small": changed(lambda d: d["content"].update(symbol_px=2.0)),
+        "negative eye gap": changed(lambda d: d["content"].update(eye_gap_px=-1.0)),
+        "string text size": changed(lambda d: d["content"].update(text_px="18")),
+        "automatic expansion not an object": changed(lambda d: d["behaviour"].update(automatic_expansion=[])),
         "non-boolean switch": changed(lambda d: d["behaviour"].update(expand_on_hover=1)),
         "non-boolean category": changed(lambda d: d["behaviour"]["automatic_expansion"].update(alert="yes")),
         "notice too short": changed(lambda d: d["behaviour"].update(notice_duration_ms=10)),
@@ -370,35 +386,108 @@ def test_an_invalid_file_has_no_baseline_and_reload_keeps_the_last_good_one(path
     assert config_store.ConfigSession(path).has_unsaved_changes(NotchSettings())
 
 
-# --- Version 1 compatibility ---------------------------------------------------------------
+# --- Older versions ---------------------------------------------------------------
+
+
+def version_2(settings: NotchSettings) -> dict:
+    """``settings`` exactly as the version-2 store wrote them: no content."""
+    data = settings_to_dict(settings)
+    data.pop("content")
+    data["version"] = 2
+    return data
 
 
 def version_1(settings: NotchSettings) -> dict:
     """``settings`` exactly as the version-1 store wrote them."""
-    data = settings_to_dict(settings)
+    data = version_2(settings)
     data.pop("behaviour")
     data["version"] = 1
     return data
 
 
-def test_a_version_1_file_loads_with_the_production_behaviour(path):
-    write(path, version_1(TUNED))
+def legacy(visual: NotchVisualConfig) -> NotchContentStyle:
+    envelope = production_envelope()
+    return legacy_content_style(visual.geometry, eye_motion_bottom(eye_layout_for(visual, envelope), envelope))
+
+
+def same_except_content(loaded: NotchVisualConfig, expected: NotchVisualConfig) -> bool:
+    return (loaded.geometry, loaded.eye_style, loaded.transition_duration_ms) == (
+        expected.geometry, expected.eye_style, expected.transition_duration_ms)
+
+
+def test_a_missing_category_switch_takes_its_production_default(path):
+    data = settings_to_dict(TUNED)
+    data["behaviour"]["automatic_expansion"] = {"task": True}
+    write(path, data)
+
+    behaviour = load_settings(path).settings.behaviour
+
+    assert behaviour.expands_for(NoticeCategory.TASK)
+    for category in NoticeCategory:
+        if category is not NoticeCategory.TASK:
+            assert behaviour.expands_for(category) == NotchBehaviour().expands_for(category), category
+
+
+@pytest.mark.parametrize("version", [1, 2])
+def test_an_older_file_keeps_the_content_layout_it_had(path, version):
+    write(path, (version_1 if version == 1 else version_2)(TUNED))
     before = path.read_bytes()
 
     loaded = load_settings(path)
 
     assert loaded.source is ConfigSource.SAVED
-    assert loaded.migrated_from == 1
+    assert loaded.migrated_from == version
     assert loaded.diagnostic is None
-    assert loaded.settings.visual == TUNED.visual
+    assert same_except_content(loaded.settings.visual, TUNED.visual)
+    assert loaded.settings.visual.content_style == legacy(TUNED.visual)
     assert loaded.settings.monitor == TUNED.monitor
-    assert loaded.settings.behaviour == NotchBehaviour()
-    # Loading never writes: the file stays version 1 until Save.
+    # Loading never writes: the file stays as it was until Save.
     assert path.read_bytes() == before
 
 
-def test_a_version_1_file_is_upgraded_only_by_saving(path):
+def test_legacy_content_draws_what_the_old_layout_drew():
+    # The pre-content layout: symbol min(34 % of the band, 20 px), label
+    # 72 % and spacing 50 % of it, the group centred in the band below the
+    # compact notch.
+    for geometry in (NotchGeometry(), TUNED.visual.geometry,
+                     NotchGeometry(NotchSize(240, 75, 25), NotchSize(500, 100, 31))):
+        visual = NotchVisualConfig(geometry=geometry, eye_style=NotchEyeStyle(height_share=0.25))
+        visual = NotchVisualConfig(visual.geometry, visual.eye_style, visual.transition_duration_ms, legacy(visual))
+        row = content_row_for(visual)
+        band = geometry.expanded.height - geometry.compact.height
+        symbol = min(band * 0.34, 20.0)
+
+        assert row.symbol_px == pytest.approx(symbol)
+        assert row.label_px == pytest.approx(symbol * 0.72)
+        assert row.gap_px == pytest.approx(symbol * 0.5)
+        assert row.center_y == pytest.approx(geometry.compact.height + band / 2.0)
+
+
+def test_the_users_kind_of_version_1_file_still_loads():
+    # Tall compact notch, small revealed band: the case that made the old
+    # content tiny. It must load as it was, never fall back to the defaults.
+    data = version_1(NotchSettings(visual=NotchVisualConfig(
+        geometry=NotchGeometry(NotchSize(240, 75, 25), NotchSize(500, 100, 31), top_margin=2.0, offset_x=2.0),
+        eye_style=NotchEyeStyle(height_share=0.25, spacing=290.0, motion_gain=0.8),
+    )))
+
+    settings = settings_from_dict(data)
+
+    assert settings.visual.content_style.symbol_px == pytest.approx(8.5)
+    assert config_store.visual_config_problems(settings.visual) == []
+
+
+def test_a_version_1_file_loads_with_the_production_behaviour(path):
     write(path, version_1(TUNED))
+
+    loaded = load_settings(path)
+
+    assert loaded.settings.behaviour == NotchBehaviour()
+
+
+@pytest.mark.parametrize("version", [1, 2])
+def test_an_older_file_is_upgraded_only_by_saving(path, version):
+    write(path, (version_1 if version == 1 else version_2)(TUNED))
     session = ConfigSession(path)
 
     assert not session.has_unsaved_changes(session.startup_settings)
@@ -406,10 +495,11 @@ def test_a_version_1_file_is_upgraded_only_by_saving(path):
 
     data = json.loads(path.read_text(encoding="utf-8"))
     assert data["version"] == SCHEMA_VERSION
-    assert data["behaviour"] == settings_to_dict(NotchSettings())["behaviour"]
+    if version == 1:
+        assert data["behaviour"] == settings_to_dict(NotchSettings())["behaviour"]
     reloaded = load_settings(path)
     assert reloaded.migrated_from is None
-    assert reloaded.settings.visual == TUNED.visual
+    assert reloaded.settings == session.startup_settings
 
 
 def test_a_current_file_reports_no_migration(path):
@@ -427,3 +517,14 @@ def test_an_invalid_version_1_file_still_falls_back(path):
 
     assert loaded.source is ConfigSource.INVALID_FALLBACK
     assert loaded.migrated_from is None
+
+
+def test_content_that_does_not_fit_is_a_visually_invalid_file(path):
+    data = settings_to_dict(NotchSettings())
+    data["content"]["eye_gap_px"] = 150.0
+    write(path, data)
+
+    loaded = load_settings(path)
+
+    assert loaded.source is ConfigSource.INVALID_FALLBACK
+    assert "content" in loaded.diagnostic

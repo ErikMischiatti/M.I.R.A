@@ -256,7 +256,8 @@ def test_an_expanded_notch_whose_corners_reach_the_eyes_is_invalid():
     compact_only = NotchVisualConfig(
         geometry=NotchGeometry(compact=geometry.compact, expanded=geometry.compact), eye_style=style
     )
-    assert visual_config_problems(compact_only) == []
+    # No room below the eyes for content, but nothing about the eyes.
+    assert [problem for problem in visual_config_problems(compact_only) if "eye" in problem] == []
 
     problems = visual_config_problems(NotchVisualConfig(geometry=geometry, eye_style=style))
 

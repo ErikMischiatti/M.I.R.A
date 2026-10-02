@@ -46,6 +46,15 @@ from mira.domain.notice import Notice, NoticeCategory, NoticeTone
 from mira.ui.face.face_controller import FaceController
 from mira.ui.notch.config_store import SCHEMA_VERSION, ConfigSession, ConfigSource, NotchSettings
 from mira.ui.notch.eye_layout import NotchEyeStyle
+from mira.ui.notch.expanded_layout import (
+    MAX_EYE_GAP_PX,
+    MAX_SPACING_PX,
+    MAX_SYMBOL_PX,
+    MAX_TEXT_PX,
+    MIN_SYMBOL_PX,
+    MIN_TEXT_PX,
+    NotchContentStyle,
+)
 from mira.ui.notch.notch_window import NotchWindow
 from mira.ui.notch.presence import NotchGeometry, NotchPresence, NotchSize
 from mira.ui.notch.presentation import (
@@ -177,6 +186,7 @@ class NotchDebugWindow(QWidget):
             self.offset_x, self.top_margin,
             self.eye_height_share, self.eye_top_offset, self.eye_center_offset,
             self.eye_spacing, self.eye_motion_gain, self.duration,
+            self.content_symbol, self.content_text, self.content_spacing, self.content_eye_gap,
         ):
             box.valueChanged.connect(self._apply_visual_config)
         self.expand_on_hover.toggled.connect(self._apply_behaviour)
@@ -232,6 +242,12 @@ class NotchDebugWindow(QWidget):
         self.eye_motion_gain = number(0.05, 1.0, decimals=2, step=0.05)
         self.eye_layout_label = QLabel()
         self.eye_layout_label.setWordWrap(True)
+        self.content_symbol = number(MIN_SYMBOL_PX, MAX_SYMBOL_PX, step=1.0)
+        self.content_text = number(MIN_TEXT_PX, MAX_TEXT_PX, step=1.0)
+        self.content_spacing = number(0, MAX_SPACING_PX, step=1.0)
+        self.content_eye_gap = number(0, MAX_EYE_GAP_PX, step=1.0)
+        self.content_layout_label = QLabel()
+        self.content_layout_label.setWordWrap(True)
         return self._page(
             self._group("Compact geometry", (
                 ("Width (px)", self.compact_width),
@@ -250,6 +266,13 @@ class NotchDebugWindow(QWidget):
                 ("Spacing (face units)", self.eye_spacing),
                 ("Motion gain (offset / size scale)", self.eye_motion_gain),
                 ("Derived layout", self.eye_layout_label),
+            )),
+            self._group("Expanded content", (
+                ("Symbol size (px)", self.content_symbol),
+                ("Text size (px)", self.content_text),
+                ("Symbol–text spacing (px)", self.content_spacing),
+                ("Gap below the eyes (px)", self.content_eye_gap),
+                ("Derived layout", self.content_layout_label),
             )),
         )
 
@@ -445,7 +468,12 @@ class NotchDebugWindow(QWidget):
         """Show the values the notch really uses, without applying anything."""
 
         geometry, style = self.notch.notch_geometry, self.notch.eye_style
+        content = self.notch.content_style
         values = {
+            self.content_symbol: content.symbol_px,
+            self.content_text: content.text_px,
+            self.content_spacing: content.spacing_px,
+            self.content_eye_gap: content.eye_gap_px,
             self.compact_width: geometry.compact.width,
             self.compact_height: geometry.compact.height,
             self.compact_radius: geometry.compact.corner_radius,
@@ -572,6 +600,11 @@ class NotchDebugWindow(QWidget):
             f"scale {eyes.scale:.4f} px/unit · offsets {eyes.offset_scale:.4f} px/unit · "
             f"top {eyes.top:.2f} · centre x {eyes.center_x:.1f}"
         )
+        row = notch.content_row
+        self.content_layout_label.setText(
+            f"group {row.area.y:.1f}–{row.area.bottom:.1f} px of {notch.notch_geometry.expanded.height:g} · "
+            f"room {row.area.width:.0f} px wide"
+        )
 
     def _on_screen_selection_changed(self):
         self._rebuild_monitor_list()
@@ -601,6 +634,12 @@ class NotchDebugWindow(QWidget):
                 motion_gain=self.eye_motion_gain.value(),
             ),
             transition_duration_ms=self.duration.value(),
+            content_style=NotchContentStyle(
+                symbol_px=self.content_symbol.value(),
+                text_px=self.content_text.value(),
+                spacing_px=self.content_spacing.value(),
+                eye_gap_px=self.content_eye_gap.value(),
+            ),
         )
 
     def _apply_visual_config(self):
@@ -609,7 +648,9 @@ class NotchDebugWindow(QWidget):
         except InvalidVisualConfig as error:
             # The eyes would leave the notch: keep the last valid settings.
             self._visual_valid = False
-            self.error_label.setText("Not applied — eye motion would be clipped: " + "; ".join(error.problems))
+            eyes = any(" eye " in problem for problem in error.problems)
+            reason = "eye motion would be clipped" if eyes else "the expanded content would not fit"
+            self.error_label.setText(f"Not applied — {reason}: " + "; ".join(error.problems))
         except ValueError as error:
             self._visual_valid = False
             self.error_label.setText(f"Not applied: {error}")

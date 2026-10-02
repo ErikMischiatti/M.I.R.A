@@ -17,6 +17,13 @@ size against one fixed layout.
 
 Showing and hiding grow the notch out of, and back into, the top edge: those
 transitions cut through the eyes by design and are not covered.
+
+The expanded content (`NotchContentStyle`) is checked too, at EXPANDED: it
+must end inside the safe region and its symbol must fit between the rounded
+corners (`expanded_layout.content_problems`). It is placed below the eyes'
+whole motion envelope, so it can never overlap a reachable eye pose. Mid
+transition the content is revealed by the growing outline and faded by the
+reveal fraction, by design, so it is not checked there.
 """
 
 from __future__ import annotations
@@ -25,6 +32,7 @@ import math
 from dataclasses import dataclass, field
 
 from mira.domain.motion_envelope import PoseEnvelope
+from mira.ui.notch.expanded_layout import ContentRow, NotchContentStyle, content_problems, content_row
 from mira.ui.notch.eye_layout import NotchEyeLayout, NotchEyeStyle, notch_eye_layout, production_envelope
 from mira.ui.notch.presence import (
     NotchGeometry,
@@ -56,6 +64,7 @@ class NotchVisualConfig:
     geometry: NotchGeometry = field(default_factory=NotchGeometry)
     eye_style: NotchEyeStyle = field(default_factory=NotchEyeStyle)
     transition_duration_ms: int = DEFAULT_TRANSITION_DURATION_MS
+    content_style: NotchContentStyle = field(default_factory=NotchContentStyle)
 
     def __post_init__(self):
         duration = self.transition_duration_ms
@@ -136,6 +145,20 @@ def eye_layout_for(config: NotchVisualConfig, envelope: PoseEnvelope) -> NotchEy
     return notch_eye_layout(config.geometry, nominal_window(config.geometry), config.eye_style, envelope)
 
 
+def eye_motion_bottom(layout: NotchEyeLayout, envelope: PoseEnvelope) -> float:
+    """The lowest point either eye can reach, in the layout's window pixels."""
+    return max(layout.motion_bounds(side, envelope).bottom for side in ("left", "right"))
+
+
+def content_row_for(config: NotchVisualConfig, envelope: PoseEnvelope | None = None) -> ContentRow:
+    """Where ``config`` puts the expanded content in its nominal window."""
+
+    envelope = production_envelope() if envelope is None else envelope
+    layout = eye_layout_for(config, envelope)
+    return content_row(nominal_window(config.geometry), config.geometry, config.content_style,
+                       eye_motion_bottom(layout, envelope))
+
+
 def _checked_sizes(geometry: NotchGeometry) -> list[tuple[str, NotchSize]]:
     compact, expanded = geometry.size_for(NotchPresence.COMPACT), geometry.size_for(NotchPresence.EXPANDED)
     sizes = [("COMPACT", compact), ("EXPANDED", expanded)]
@@ -167,6 +190,8 @@ def visual_config_problems(config: NotchVisualConfig, envelope: PoseEnvelope | N
         if problems:
             # The first size that fails says enough; the rest repeat it.
             break
+    row = content_row(window, config.geometry, config.content_style, eye_motion_bottom(layout, envelope))
+    problems += content_problems(row, config.geometry)
     return problems
 
 

@@ -19,10 +19,10 @@ Saving validates first and writes atomically: the settings go to a temporary
 file in the same directory, are flushed to disk, and replace the old file in
 one rename, so a crash leaves either the old file or the new one.
 
-Schema, version 2 (every key required, no others allowed)::
+Schema, version 3 (every key required, no others allowed, except as noted)::
 
     {
-      "version": 2,
+      "version": 3,
       "compact":   {"width": 200.0, "height": 32.0, "radius": 14.0},
       "expanded":  {"width": 360.0, "height": 96.0, "radius": 24.0},
       "placement": {"offset_x": 0.0, "top_margin": 0.0},
@@ -32,18 +32,29 @@ Schema, version 2 (every key required, no others allowed)::
       "display": {"monitor": null},
       "behaviour": {"expand_on_hover": true,
                     "automatic_expansion": {"alert": true, "device": true, "task": false},
-                    "notice_duration_ms": 4000}
+                    "notice_duration_ms": 4000},
+      "content": {"symbol_px": 26.0, "text_px": 18.0, "spacing_px": 10.0,
+                  "eye_gap_px": 19.0}
     }
+
+``content`` is the expanded content's `NotchContentStyle`: symbol side,
+label size, symbol–text spacing and the gap below the eyes' motion envelope,
+all in pixels.
 
 ``behaviour`` holds the interaction preferences (`NotchBehaviour`).
 ``automatic_expansion`` has one switch per `NoticeCategory`: whether a notice
 of that category expands the notch by itself. Categories, not individual
-events, so a new kind of event normally needs no new key.
+events, so a new kind of event normally needs no new key. A category
+missing from the file takes its production default, so adding a category
+later needs no new schema version; an unknown category is still an error.
 
-Version 1 is the same without ``behaviour``. A version-1 file still loads:
-it is migrated in memory with the production behaviour defaults, reported as
-``migrated_from == 1``, and left untouched on disk until Save rewrites it as
-version 2.
+Older versions still load, migrated in memory, reported as ``migrated_from``,
+and left untouched on disk until Save rewrites them as version 3:
+
+- version 2 is version 3 without ``content``; it gets the content style that
+  reproduces the layout it had (`legacy_content_style`), so nothing moves or
+  grows until the user tunes it;
+- version 1 also lacks ``behaviour``, which gets the production defaults.
 ``display.monitor`` is null for automatic selection, or the preferred
 monitor's identity: ``{"name": ..., "manufacturer": ..., "model": ...,
 "serial": ...}``.
@@ -61,18 +72,25 @@ from pathlib import Path
 from typing import Any
 
 from mira.domain.motion_envelope import PoseEnvelope
-from mira.ui.notch.eye_layout import NotchEyeStyle
+from mira.ui.notch.eye_layout import NotchEyeStyle, production_envelope
+from mira.ui.notch.expanded_layout import NotchContentStyle, legacy_content_style
 from mira.domain.notice import NoticeCategory
 from mira.ui.notch.presence import NotchGeometry, NotchSize
 from mira.ui.notch.presentation import NotchBehaviour
 from mira.ui.notch.screen_selection import MonitorIdentity, MonitorPreference
-from mira.ui.notch.visual_config import NotchVisualConfig, validate_visual_config, visual_config_problems
+from mira.ui.notch.visual_config import (
+    NotchVisualConfig,
+    eye_layout_for,
+    eye_motion_bottom,
+    validate_visual_config,
+    visual_config_problems,
+)
 
 
 CONFIG_PATH_ENV = "MIRA_NOTCH_CONFIG"
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 # Older versions this store still reads, migrating them in memory.
-MIGRATABLE_VERSIONS = frozenset({1})
+MIGRATABLE_VERSIONS = frozenset({1, 2})
 
 
 @dataclass(frozen=True, slots=True)
@@ -137,6 +155,7 @@ def config_path_from(*, explicit: str | None, xdg_config_home: str | None, home:
 
 def settings_to_dict(settings: NotchSettings) -> dict[str, Any]:
     geometry, eyes = settings.visual.geometry, settings.visual.eye_style
+    content = settings.visual.content_style
     monitor = settings.monitor.monitor
     return {
         "version": SCHEMA_VERSION,
@@ -168,6 +187,12 @@ def settings_to_dict(settings: NotchSettings) -> dict[str, Any]:
             },
             "notice_duration_ms": settings.behaviour.notice_duration_ms,
         },
+        "content": {
+            "symbol_px": content.symbol_px,
+            "text_px": content.text_px,
+            "spacing_px": content.spacing_px,
+            "eye_gap_px": content.eye_gap_px,
+        },
     }
 
 
@@ -188,8 +213,11 @@ def schema_version(data: Any) -> int:
     return version
 
 
-def settings_from_dict(data: Any) -> NotchSettings:
-    """Parse schema version 2, or migrate version 1; `ConfigError` otherwise.
+def settings_from_dict(data: Any, envelope: PoseEnvelope | None = None) -> NotchSettings:
+    """Parse schema version 3, or migrate 1 or 2; `ConfigError` otherwise.
+
+    ``envelope`` places a migrated file's legacy content below the eyes it
+    describes, by default the packaged profiles' envelope.
 
     Value constraints (positive sizes, a radius that fits, the expanded notch
     containing the compact one, …) are reported as `ConfigError` too; the eye
@@ -200,6 +228,8 @@ def settings_from_dict(data: Any) -> NotchSettings:
     keys = {"version", "compact", "expanded", "placement", "eyes", "animation", "display"}
     if version >= 2:
         keys.add("behaviour")
+    if version >= 3:
+        keys.add("content")
     root = _section(data, "configuration", keys)
 
     compact = _section(root["compact"], "compact", {"width", "height", "radius"})
@@ -230,15 +260,37 @@ def settings_from_dict(data: Any) -> NotchSettings:
         raise
     except ValueError as error:
         raise ConfigError(str(error)) from error
+    if version >= 3:
+        content = _content(root["content"])
+    else:
+        envelope = production_envelope() if envelope is None else envelope
+        content = legacy_content_style(visual.geometry, eye_motion_bottom(eye_layout_for(visual, envelope), envelope))
+    visual = NotchVisualConfig(visual.geometry, visual.eye_style, visual.transition_duration_ms, content)
     behaviour = NotchBehaviour() if version < 2 else _behaviour(root["behaviour"])
     return NotchSettings(visual=visual, monitor=_monitor(display["monitor"]), behaviour=behaviour)
 
 
+def _content(value: Any) -> NotchContentStyle:
+    section = _section(value, "content", {"symbol_px", "text_px", "spacing_px", "eye_gap_px"})
+    try:
+        return NotchContentStyle(**{key: _number(section, key, "content") for key in section})
+    except ValueError as error:
+        if isinstance(error, ConfigError):
+            raise
+        raise ConfigError(str(error)) from error
+
+
 def _behaviour(value: Any) -> NotchBehaviour:
     section = _section(value, "behaviour", {"expand_on_hover", "automatic_expansion", "notice_duration_ms"})
-    switches = _section(
-        section["automatic_expansion"], "behaviour.automatic_expansion", {c.value for c in NoticeCategory}
-    )
+    switches = section["automatic_expansion"]
+    if not isinstance(switches, dict):
+        raise ConfigError("behaviour.automatic_expansion must be an object")
+    unknown = switches.keys() - {c.value for c in NoticeCategory}
+    if unknown:
+        raise ConfigError(f"behaviour.automatic_expansion has unknown {', '.join(sorted(unknown))}")
+    # A category the file predates takes its production default.
+    defaults = NotchBehaviour().automatic_expansion
+    switches = {c.value: switches.get(c.value, c in defaults) for c in NoticeCategory}
     for key, switch in [("expand_on_hover", section["expand_on_hover"]), *switches.items()]:
         if not isinstance(switch, bool):
             raise ConfigError(f"behaviour {key} must be true or false, got {switch!r}")
@@ -325,7 +377,7 @@ def load_settings(path: Path | None = None, envelope: PoseEnvelope | None = None
     except json.JSONDecodeError as error:
         return fallback(f"is not valid JSON ({error})")
     try:
-        settings = settings_from_dict(data)
+        settings = settings_from_dict(data, envelope)
     except ConfigError as error:
         return fallback(f"does not match the notch configuration schema ({error})")
     problems = visual_config_problems(settings.visual, envelope)

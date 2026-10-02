@@ -30,7 +30,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 #   MIRA_CAMERA_WIDTH               mira/application/camera_config.py:35
 #   MIRA_CAMERA_HEIGHT              mira/application/camera_config.py:36
 #   MIRA_CAMERA_FPS                 mira/application/camera_config.py:37
-#   MIRA_NOTCH_CONFIG               mira/ui/notch/config_store.py:114
+#   MIRA_NOTCH_CONFIG               mira/ui/notch/config_store.py:132
 # `test_each_variable_is_read_at_the_line_it_is_attributed_to` checks every one.
 MIRA_ENV_VARS = (
     "MIRA_INTENT_ENGINE",

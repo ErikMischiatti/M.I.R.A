@@ -24,7 +24,7 @@ from mira.ui.notch.eye_layout import (
     notch_eye_layout,
     production_envelope,
 )
-from mira.ui.notch.expanded_layout import ContentRow, content_row, reveal_fraction
+from mira.ui.notch.expanded_layout import ContentRow, NotchContentStyle, content_row, reveal_fraction
 from mira.ui.notch.presentation import NotchAction, NotchContent, NotchPresentation
 from mira.ui.notch.symbol_painter import paint_symbol
 from mira.ui.notch.presence import (
@@ -38,7 +38,7 @@ from mira.ui.notch.presence import (
     window_shape_for_size,
 )
 from mira.ui.notch.screen_selection import MonitorPreference, ScreenSelection
-from mira.ui.notch.visual_config import NotchVisualConfig, validate_visual_config
+from mira.ui.notch.visual_config import NotchVisualConfig, eye_motion_bottom, validate_visual_config
 from mira.ui.desktop.workspaces import WorkspacePresence, workspace_presence_for
 from mira.ui.notch.screens import (
     ScreenSelector,
@@ -252,6 +252,7 @@ class NotchWindow(QWidget):
         self._geometry = NotchGeometry() if geometry is None else geometry
         self._eye_style = NotchEyeStyle() if eye_style is None else eye_style
         self.transition_duration_ms = self.TRANSITION_DURATION_MS
+        self._content_style = NotchContentStyle()
         self.animator = animator
         # A controller without an expression library (a test double, say)
         # is bounded by the packaged profiles.
@@ -362,7 +363,7 @@ class NotchWindow(QWidget):
 
     @property
     def visual_config(self) -> NotchVisualConfig:
-        return NotchVisualConfig(self._geometry, self._eye_style, self.transition_duration_ms)
+        return NotchVisualConfig(self._geometry, self._eye_style, self.transition_duration_ms, self._content_style)
 
     def apply_visual_config(self, config: NotchVisualConfig):
         """Validate ``config`` against the motion envelope, then apply it all.
@@ -374,6 +375,7 @@ class NotchWindow(QWidget):
         validate_visual_config(config, self._envelope)
         self.transition_duration_ms = config.transition_duration_ms
         self._eye_style = config.eye_style
+        self._content_style = config.content_style
         self.set_notch_geometry(config.geometry)  # re-derives the eye layout too
 
     @property
@@ -480,9 +482,16 @@ class NotchWindow(QWidget):
         return self._presentation
 
     @property
-    def content_row(self) -> ContentRow | None:
-        """Where expanded content is drawn; see `expanded_layout`."""
-        return content_row(self._window_bounds, self._geometry)
+    def content_style(self) -> NotchContentStyle:
+        return self._content_style
+
+    @property
+    def content_row(self) -> ContentRow:
+        """Where expanded content is drawn: below the eyes; see `expanded_layout`."""
+        return content_row(
+            self._window_bounds, self._geometry, self._content_style,
+            eye_motion_bottom(self._eye_layout, self._envelope),
+        )
 
     @property
     def content_opacity(self) -> float:
@@ -710,7 +719,7 @@ class NotchWindow(QWidget):
         content = self._presentation.content
         opacity = self.content_opacity
         row = self.content_row
-        if content is not None and row is not None and opacity > 0.01:
+        if content is not None and opacity > 0.01:
             painter.setOpacity(opacity)
             self._paint_content(painter, content, row)
 
@@ -722,6 +731,7 @@ class NotchWindow(QWidget):
         metrics = QFontMetricsF(font)
         area = row.area
         label = content.label or ""
+        line = max(row.symbol_px, metrics.height())
         room = area.width - row.symbol_px - (row.gap_px if label else 0.0)
         label = metrics.elidedText(label, Qt.ElideRight, max(room, 0.0)) if label else ""
         label_width = metrics.horizontalAdvance(label) if label else 0.0
@@ -734,5 +744,5 @@ class NotchWindow(QWidget):
         if label:
             painter.setFont(font)
             painter.setPen(CONTENT_COLOR)
-            text_rect = QRectF(left + row.symbol_px + row.gap_px, top, label_width + 1.0, row.symbol_px)
+            text_rect = QRectF(left + row.symbol_px + row.gap_px, row.center_y - line / 2.0, label_width + 1.0, line)
             painter.drawText(text_rect, Qt.AlignVCenter | Qt.AlignLeft, label)

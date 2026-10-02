@@ -15,7 +15,7 @@ from PySide6.QtGui import QGuiApplication
 from mira.domain.embodiment import ActivityState, ExpressionKey
 from mira.domain.notice import NoticeCategory
 from mira.ui.notch.__main__ import build_notch_environment, build_tuning_environment
-from mira.ui.notch.config_store import ConfigSession, ConfigSource, NotchSettings, save_settings, settings_to_dict
+from mira.ui.notch.config_store import SCHEMA_VERSION, ConfigSession, ConfigSource, NotchSettings, save_settings, settings_to_dict
 from mira.ui.notch.debug_window import PREVIEW_NOTICES, NotchDebugWindow
 from mira.ui.notch.eye_layout import BASE_EYE_HEIGHT_SHARE, NotchEyeStyle
 from mira.ui.notch.notch_window import NotchWindow
@@ -705,6 +705,7 @@ def test_reset_restores_the_default_behaviour_in_memory_only(env, config_path):
 def test_a_version_1_file_is_shown_as_migrated_and_unchanged(config_path):
     data = settings_to_dict(NotchSettings())
     data.pop("behaviour")
+    data.pop("content")
     data["version"] = 1
     data["compact"]["width"] = 230.0
     config_path.parent.mkdir(parents=True)
@@ -720,8 +721,8 @@ def test_a_version_1_file_is_shown_as_migrated_and_unchanged(config_path):
         assert environment.presenter.behaviour == NotchBehaviour()
 
         debug.save_button.click()
-        assert json.loads(config_path.read_text())["version"] == 2
-        assert debug.schema_label.text() == "Version 2"
+        assert json.loads(config_path.read_text())["version"] == SCHEMA_VERSION
+        assert debug.schema_label.text() == f"Version {SCHEMA_VERSION}"
     finally:
         environment.shutdown()
         environment.notch.hide()
@@ -769,3 +770,94 @@ def test_without_a_presenter_behaviour_controls_are_disabled_and_kept(env):
         assert debug.runtime_settings.behaviour == env.session.startup_settings.behaviour
     finally:
         debug.deleteLater()
+
+
+# --- Expanded content -------------------------------------------------------------
+
+
+def content_controls(debug: NotchDebugWindow):
+    return (debug.content_symbol, debug.content_text, debug.content_spacing, debug.content_eye_gap)
+
+
+def test_the_content_controls_show_the_production_defaults(env):
+    from mira.ui.notch.expanded_layout import NotchContentStyle
+
+    defaults = NotchContentStyle()
+    assert [box.value() for box in content_controls(env.debug)] == [
+        defaults.symbol_px, defaults.text_px, defaults.spacing_px, defaults.eye_gap_px,
+    ]
+    assert env.debug.pages.widget(0).widget().findChild(type(env.debug.content_symbol)) is not None
+
+
+def test_content_controls_apply_live_and_mark_the_configuration_unsaved(env):
+    debug, notch = env.debug, env.notch
+    before = notch.content_row
+
+    debug.content_symbol.setValue(32.0)
+    debug.content_text.setValue(21.0)
+    debug.content_spacing.setValue(14.0)
+    debug.content_eye_gap.setValue(10.0)
+
+    style = notch.content_style
+    assert (style.symbol_px, style.text_px, style.spacing_px, style.eye_gap_px) == (32.0, 21.0, 14.0, 10.0)
+    assert notch.content_row.symbol_px == 32.0 and notch.content_row.area.y < before.area.y
+    assert debug.unsaved_label.text() == "Yes"
+    assert "group" in debug.content_layout_label.text()
+
+
+def test_content_that_would_not_fit_is_reported_and_not_applied(env):
+    debug, notch = env.debug, env.notch
+    valid = notch.visual_config
+
+    debug.content_eye_gap.setValue(150.0)
+
+    assert notch.visual_config == valid
+    assert "leaves the notch bottom" in debug.error_label.text()
+    assert debug.visual_label.text() == "Invalid (not applied)"
+    assert not debug.save_button.isEnabled()
+
+
+def test_content_is_saved_reloaded_and_reset(env, config_path):
+    from mira.ui.notch.expanded_layout import NotchContentStyle
+
+    debug, notch = env.debug, env.notch
+    debug.content_symbol.setValue(30.0)
+    debug.content_text.setValue(20.0)
+    debug.save_button.click()
+
+    saved = json.loads(config_path.read_text())["content"]
+    assert (saved["symbol_px"], saved["text_px"]) == (30.0, 20.0)
+    assert debug.unsaved_label.text() == "No"
+
+    debug.content_symbol.setValue(12.0)
+    debug.reload_button.click()
+    assert notch.content_style.symbol_px == 30.0 and debug.content_symbol.value() == 30.0
+
+    debug.reset_button.click()
+    assert notch.content_style == NotchContentStyle()
+    assert debug.content_symbol.value() == NotchContentStyle().symbol_px
+    # Reset writes nothing.
+    assert json.loads(config_path.read_text())["content"]["symbol_px"] == 30.0
+
+
+def test_saved_content_survives_a_restart(config_path):
+    debug_env = build_tuning_environment(ConfigSession(config_path))
+    try:
+        debug_env.debug.content_symbol.setValue(34.0)
+        debug_env.debug.save_button.click()
+    finally:
+        debug_env.shutdown()
+        debug_env.notch.hide()
+        for widget in (debug_env.debug, debug_env.notch, debug_env.animator):
+            widget.deleteLater()
+
+    restarted = build_tuning_environment(ConfigSession(config_path))
+    try:
+        assert restarted.notch.content_style.symbol_px == 34.0
+        assert restarted.debug.content_symbol.value() == 34.0
+    finally:
+        restarted.shutdown()
+        restarted.notch.hide()
+        for widget in (restarted.debug, restarted.notch, restarted.animator):
+            widget.deleteLater()
+        QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
