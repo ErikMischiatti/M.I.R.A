@@ -41,6 +41,12 @@ notch is open for another reason), but adds no expansion reason.
 
 Activity alone never expands the notch. It only chooses the content shown
 when the notch is already expanded and no notice is showing.
+
+Running tasks are persistent state, not a notice: while any runs, the content
+of an open notch is "Working" (unless a notice is showing), and nothing
+expands it — a long task must never hold the notch open. Content precedence:
+
+    notice  >  task running  >  activity
 """
 
 from __future__ import annotations
@@ -128,6 +134,9 @@ def notice_content(notice: Notice) -> NotchContent:
     return NotchContent(symbol, text if text is not None else _TONE_LABEL.get(notice.tone))
 
 
+TASK_RUNNING_CONTENT = NotchContent(NotchSymbol.TASK, "Working")
+
+
 def activity_content(activity: ActivityState) -> NotchContent | None:
     """Idle shows nothing beyond the eyes."""
     return _ACTIVITY_CONTENT.get(activity)
@@ -142,12 +151,15 @@ class NotchPresentation:
     notice: Notice | None = None
     reasons: frozenset[ExpansionReason] = frozenset()
     actions: frozenset[NotchAction] = frozenset()
+    tasks_running: bool = False
 
     @property
     def content(self) -> NotchContent | None:
-        """A showing notice wins over the activity."""
+        """A showing notice, else running work, else the activity."""
         if self.notice is not None:
             return notice_content(self.notice)
+        if self.tasks_running:
+            return TASK_RUNNING_CONTENT
         return activity_content(self.activity)
 
 
@@ -214,6 +226,7 @@ class NotchPresenter:
         self._activity = ActivityState.IDLE
         self._hovered = False
         self._pinned = False
+        self._tasks_running = False
         self._notice: Notice | None = None
         self._expiry: TimerHandle | None = None
         # Identifies the notice the pending expiry belongs to, so a callback
@@ -263,6 +276,11 @@ class NotchPresenter:
 
     def set_hovered(self, hovered: bool) -> None:
         self._hovered = bool(hovered)
+        self._publish()
+
+    def set_tasks_running(self, running: bool) -> None:
+        """Whether MIRA is executing anything; content only, never presence."""
+        self._tasks_running = bool(running)
         self._publish()
 
     def set_pinned(self, pinned: bool) -> None:
@@ -320,6 +338,7 @@ class NotchPresenter:
             notice=self._notice,
             reasons=reasons,
             actions=self._actions,
+            tasks_running=self._tasks_running,
         )
 
     def _publish(self) -> None:

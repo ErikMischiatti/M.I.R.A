@@ -11,6 +11,10 @@ from mira.domain.embodiment_frame import (
 )
 
 
+# How much of its height a fully focused eye gives up.
+FOCUS_DEPTH = 0.4
+
+
 class EyePainter:
     """Paint an `EmbodimentFrame`'s two eyes onto a face design canvas.
 
@@ -124,6 +128,13 @@ class EyePainter:
         """
 
         amount = min(max(eye_frame.shape_amount, 0.0), 1.0)
+        if eye_frame.shape is EyeShape.FOCUSED:
+            # The natural eye narrowed towards its centre line; it still
+            # blinks, so the working eyes stay alive.
+            height = rect.height() * (1.0 - FOCUS_DEPTH * amount)
+            self.draw_eye(painter, QRectF(rect.x(), rect.center().y() - height / 2.0, rect.width(), height),
+                          eye_frame, scale)
+            return
         painter.save()
         if amount < 0.5:
             height = rect.height() * (1.0 - 2.0 * amount)

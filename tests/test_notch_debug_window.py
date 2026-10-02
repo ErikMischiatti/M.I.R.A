@@ -897,3 +897,19 @@ def test_eye_cue_previews_go_through_the_controller_alone(env, cue):
     assert env.controller.active_cue is EmbodimentCue(cue)
     assert env.presenter.presentation.notice is None
     assert env.controller.intent.activity is ActivityState.IDLE
+
+
+def test_the_task_running_preview_uses_the_real_path_and_a_result_ends_it(env):
+    from mira.domain.embodiment_cue import EmbodimentCondition, EmbodimentCue
+
+    working = env.debug.preview_buttons["task running"]
+    working.click()
+    assert EmbodimentCondition.TASK_RUNNING in env.controller.conditions
+    assert env.presenter.presentation.tasks_running
+    assert env.notch.presence is C  # running work never expands
+
+    env.debug.preview_buttons["Task done"].click()
+
+    assert not working.isChecked()
+    assert EmbodimentCondition.TASK_RUNNING not in env.controller.conditions
+    assert env.controller.active_cue is EmbodimentCue.SUCCESS

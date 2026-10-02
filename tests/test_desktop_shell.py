@@ -509,7 +509,8 @@ def test_surface_requests_never_create_another_producer(qt_application):
 
         assert Source.starts == 1
         assert len(application.system_notices.active_sources) == 1
-        assert len(application.event_bus._subscribers["action_completed"]) == 2  # producer + the one window
+        # Task tracking, the notice producer and the one window: never more.
+        assert len(application.event_bus._subscribers["action_completed"]) == 3
     finally:
         desktop.shutdown()
         application.shutdown()

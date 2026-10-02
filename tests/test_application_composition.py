@@ -201,9 +201,14 @@ def test_subscribers_are_registered_exactly_once_in_a_fixed_order(graph):
     """
     assert graph["subscribers"] == {
         # Notices are produced in the graph; the shell only presents "notice".
-        "action_completed": ["TaskNoticeProducer.on_action_completed", "MainWindow.on_action_completed"],
-        "action_failed": ["TaskNoticeProducer.on_action_failed", "MainWindow.on_action_failed"],
-        "action_started": ["MainWindow.on_action_started"],
+        # A finishing task stops running before its result is announced.
+        "action_completed": [
+            "TaskActivity.on_action_ended", "TaskNoticeProducer.on_action_completed", "MainWindow.on_action_completed",
+        ],
+        "action_failed": [
+            "TaskActivity.on_action_ended", "TaskNoticeProducer.on_action_failed", "MainWindow.on_action_failed",
+        ],
+        "action_started": ["TaskActivity.on_action_started", "MainWindow.on_action_started"],
         "input_focused": [
             "InteractionManager.on_input_focused",
             "EmbodiedBehavior.on_input_focused",
@@ -224,6 +229,7 @@ def test_subscribers_are_registered_exactly_once_in_a_fixed_order(graph):
             "EmbodiedBehavior.on_response_ready",
         ],
         "state_changed": ["DesktopShell.on_state_changed"],
+        "tasks_changed": ["DesktopShell.on_tasks_changed"],
         "user_input_received": ["InteractionManager.on_user_input_received"],
     }
 

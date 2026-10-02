@@ -50,6 +50,7 @@ from mira.core.camera_capture import CameraCapture
 from mira.core.embodied_behavior import EmbodiedBehavior
 from mira.core.interaction_manager import InteractionManager
 from mira.core.notice_producers import SystemNoticeProducer, TaskNoticeProducer
+from mira.core.task_activity import TaskActivity
 from mira.core.state_manager import StateManager
 from mira.domain.camera import CameraSource
 from mira.domain.scheduler import Scheduler
@@ -84,6 +85,7 @@ class Application:
     interaction_manager: InteractionManager
     embodied_behavior: EmbodiedBehavior
     camera: CameraCapture
+    tasks: TaskActivity
     task_notices: TaskNoticeProducer
     system_notices: SystemNoticeProducer
 
@@ -157,6 +159,9 @@ def build_application(
             camera_source = OpenCVCameraSource(camera_configuration.settings)
     camera = CameraCapture(camera_source)
 
+    # Subscribed before the notice producer, so a finishing task is no
+    # longer running by the time its result is announced.
+    tasks = TaskActivity(event_bus)
     # Both only emit "notice"; how a notice looks is each embodiment's choice.
     task_notices = TaskNoticeProducer(event_bus)
     system_notices = SystemNoticeProducer(event_bus, scheduler, system_event_sources)
@@ -169,6 +174,7 @@ def build_application(
         interaction_manager=interaction_manager,
         embodied_behavior=embodied_behavior,
         camera=camera,
+        tasks=tasks,
         task_notices=task_notices,
         system_notices=system_notices,
     )

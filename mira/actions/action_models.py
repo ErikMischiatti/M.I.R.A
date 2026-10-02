@@ -15,6 +15,10 @@ class ActionRequest:
     parameters: dict[str, Any] = field(default_factory=dict)
     requires_confirmation: bool = False
     source_intent: str | None = None
+    # Set by `ActionExecutor` when it starts running the request: identifies
+    # this one execution across action_started and its result. Not part of
+    # what was asked, so not part of equality.
+    run_id: int | None = field(default=None, compare=False, kw_only=True)
 
 
 @dataclass(frozen=True)
@@ -32,3 +36,6 @@ class ActionResult:
     action_name: str
     message: str
     data: dict[str, Any] = field(default_factory=dict)
+    # The execution this result ends; None for a request refused before it
+    # started (invalid, unknown, blocked, awaiting confirmation).
+    run_id: int | None = field(default=None, compare=False, kw_only=True)

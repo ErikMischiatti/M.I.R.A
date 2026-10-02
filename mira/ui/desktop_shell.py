@@ -68,7 +68,7 @@ from mira.ui.notch.debug_window import NotchDebugWindow
 from mira.ui.notch.notch_window import NotchWindow
 from mira.ui.notch.presence import NotchPresence
 from mira.ui.notch.presentation import NotchAction, NotchPresenter
-from mira.ui.notch.startup import bind_presenter, build_notch, deliver_notice
+from mira.ui.notch.startup import bind_presenter, build_notch, deliver_notice, deliver_tasks
 
 
 class Surface(StrEnum):
@@ -128,6 +128,8 @@ class DesktopShell:
         application.event_bus.subscribe("state_changed", self.on_state_changed)
         # Every notice, from whichever producer (`mira.core.notice_producers`).
         application.event_bus.subscribe("notice", self.on_notice)
+        # Running work (`mira.core.task_activity`): persistent, not a notice.
+        application.event_bus.subscribe("tasks_changed", self.on_tasks_changed)
 
         self.window: MainWindow | None = None
         self.notch: NotchWindow | None = None
@@ -135,6 +137,7 @@ class DesktopShell:
         # Built on first request; one window however often it is asked for.
         self.settings_window: NotchDebugWindow | None = None
         self._activity = ActivityState.IDLE
+        self._tasks_running = False
         self._stopped = False
 
         self._ensure(initial_surface)
@@ -175,6 +178,7 @@ class DesktopShell:
         self.notch = build_notch(settings, animator=self.animator)
         self.presenter = NotchPresenter(self._application.scheduler, settings.behaviour, actions=NOTCH_ACTIONS)
         self.presenter.set_activity(self._activity)
+        self.presenter.set_tasks_running(self._tasks_running)
         bind_presenter(self.notch, self.presenter)
         self.notch.action_requested.connect(self.on_notch_action)
         # From now on the notch keeps the runtime alive: closing the main
@@ -247,6 +251,11 @@ class DesktopShell:
         deliver_notice(notice, presenter=self.presenter, controller=self.controller)
 
     # --- Notch actions ----------------------------------------------------------
+
+    def on_tasks_changed(self, running) -> None:
+        """MIRA works while any task runs, on every surface showing it."""
+        self._tasks_running = bool(getattr(running, "active", False))
+        deliver_tasks(self._tasks_running, presenter=self.presenter, controller=self.controller)
 
     def on_notch_action(self, action: str) -> None:
         if action == NotchAction.OPEN_MAIN_WINDOW:

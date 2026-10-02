@@ -74,7 +74,7 @@ from mira.ui.notch.presentation import (
     NotchPresenter,
 )
 from mira.ui.notch.screen_selection import MonitorPreference, SelectionMode
-from mira.ui.notch.startup import deliver_notice
+from mira.ui.notch.startup import deliver_notice, deliver_tasks
 from mira.ui.notch.screens import monitor_identity
 from mira.ui.notch.visual_config import (
     MAX_TRANSITION_DURATION_MS,
@@ -365,7 +365,16 @@ class NotchDebugWindow(QWidget):
         form.addRow("Activity", activities)
         form.addRow("Notice", notice_rows[0])
         form.addRow("", notice_rows[1])
+        self.task_running_button = QPushButton("Task running")
+        self.task_running_button.setCheckable(True)
+        self.task_running_button.setEnabled(self.presenter is not None)
+        self.task_running_button.setToolTip(
+            "Hold TASK_RUNNING as a running action would; Task done / Task failed end it first"
+        )
+        self.task_running_button.toggled.connect(self.preview_task_running)
+        self.preview_buttons["task running"] = self.task_running_button
         form.addRow("Eye cue", cues)
+        form.addRow("Work", self.task_running_button)
         form.addRow("Expression", self.expression)
         return group
 
@@ -715,9 +724,22 @@ class NotchDebugWindow(QWidget):
         self.presenter.set_activity(activity)
 
     def preview_notice(self, notice: Notice):
-        """Through `deliver_notice`, the path the running application uses."""
+        """Through `deliver_notice`, the path the running application uses.
+
+        A task result ends a running preview first, in the order a real task
+        ends: no longer running, then the result.
+        """
+        if self.presenter is None:
+            return
+        running = getattr(self, "task_running_button", None)
+        if notice.category is NoticeCategory.TASK and running is not None and running.isChecked():
+            running.setChecked(False)
+        deliver_notice(notice, presenter=self.presenter, controller=self.controller)
+
+    def preview_task_running(self, running: bool):
+        """Through `deliver_tasks`, the path the running application uses."""
         if self.presenter is not None:
-            deliver_notice(notice, presenter=self.presenter, controller=self.controller)
+            deliver_tasks(running, presenter=self.presenter, controller=self.controller)
 
     def preview_cue(self, cue: EmbodimentCue):
         if self.controller is not None:

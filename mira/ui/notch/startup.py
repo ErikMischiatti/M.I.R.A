@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import sys
 
-from mira.domain.embodiment_cue import cue_for_notice
+from mira.domain.embodiment_cue import EmbodimentCondition, cue_for_notice
 from mira.domain.notice import Notice
 from mira.ui.face.face_animator import FaceAnimator
 from mira.ui.face.face_controller import FaceController
@@ -67,3 +67,17 @@ def deliver_notice(notice: Notice, *, presenter: NotchPresenter | None, controll
     cue = cue_for_notice(notice)
     if controller is not None and cue is not None:
         controller.show_cue(cue)
+
+
+def deliver_tasks(running: bool, *, presenter: NotchPresenter | None, controller: FaceController | None) -> None:
+    """Show whether MIRA is working, the one way the desktop does it.
+
+    The shared embodiment holds TASK_RUNNING for exactly as long as work
+    runs; the notch only changes what it would show when open. Nothing
+    expands. Used by the running shell and by the tuning previews.
+    """
+
+    if controller is not None:
+        controller.set_condition(EmbodimentCondition.TASK_RUNNING, running)
+    if presenter is not None:
+        presenter.set_tasks_running(running)

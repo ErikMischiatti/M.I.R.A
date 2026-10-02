@@ -29,13 +29,26 @@ shape), hold for its treatment's ``hold_s``, ease out the same way.
 Priority is deterministic: ERROR > WARNING > SUCCESS. A cue of equal or
 higher priority replaces the one playing (the same cue just holds again); a
 lower one is dropped, not queued — once the reaction is over it would be
-stale. Nothing ongoing is a cue: a long-running task would be an activity.
+stale.
 
-Only cues with a treatment are listed.
+Ongoing states are not cues but *conditions* (`EmbodimentCondition`): true
+for as long as something lasts, with no timeout — TASK_RUNNING while any
+action is executing. A condition has its own restrained treatment
+(`CONDITION_SHAPES`), eased in and out by `ConditionPlayback`. The frame
+resolves the layers in a fixed order:
+
+    a cue that is showing      >  the strongest active condition  >  the expression
+
+so an ERROR shows over TASK_RUNNING, and when it ends the working eyes come
+back if the task still runs — or the plain expression if it ended meanwhile.
+Neither layer ever writes into the one beneath.
+
+Only cues and conditions with a treatment are listed.
 """
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from enum import StrEnum
 
@@ -58,6 +71,8 @@ class EyeShape(StrEnum):
     """An upward triangle, like a warning sign."""
     CROSS = "cross"
     """An X."""
+    FOCUSED = "focused"
+    """The natural eye, narrowed: concentrating. Blinks still apply."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -146,3 +161,76 @@ class CuePlayback:
         self._elapsed += max(dt_seconds, 0.0)
         if self._elapsed >= 2 * TRANSITION_S + CUE_TREATMENTS[self._cue].hold_s:
             self.clear()
+
+
+class EmbodimentCondition(StrEnum):
+    """An ongoing state of MIRA shown for exactly as long as it holds."""
+
+    TASK_RUNNING = "task running"
+
+
+CONDITION_SHAPES = {EmbodimentCondition.TASK_RUNNING: EyeShape.FOCUSED}
+
+# Highest first, for when several hold at once.
+CONDITION_PRIORITY = (EmbodimentCondition.TASK_RUNNING,)
+
+CONDITION_TRANSITION_S = 0.3
+# The working eyes "breathe": a slow, small swing of how narrowed they are,
+# between BREATH_LOW and 1 of the full treatment. Restrained on purpose.
+BREATH_PERIOD_S = 2.4
+BREATH_LOW = 0.8
+
+
+class ConditionPlayback:
+    """Which conditions hold, and how far the strongest one is drawn.
+
+    `set` turns a condition on or off; the treatment eases in over
+    `CONDITION_TRANSITION_S` and out the same way, then the shape is gone.
+    `amount` already includes the breathing.
+    """
+
+    def __init__(self):
+        self._active: set[EmbodimentCondition] = set()
+        self._shown: EmbodimentCondition | None = None
+        self._blend = 0.0
+        self._phase_s = 0.0
+
+    @property
+    def active(self) -> frozenset[EmbodimentCondition]:
+        return frozenset(self._active)
+
+    def set(self, condition: EmbodimentCondition, active: bool) -> None:
+        if active:
+            self._active.add(condition)
+        else:
+            self._active.discard(condition)
+
+    def _strongest(self) -> EmbodimentCondition | None:
+        return next((c for c in CONDITION_PRIORITY if c in self._active), None)
+
+    @property
+    def shape(self) -> EyeShape:
+        return EyeShape.NATURAL if self._shown is None else CONDITION_SHAPES[self._shown]
+
+    @property
+    def amount(self) -> float:
+        if self._shown is None or self._blend <= 0.0:
+            return 0.0
+        breath = 0.5 + 0.5 * math.sin(2 * math.pi * self._phase_s / BREATH_PERIOD_S)
+        return self._blend * (BREATH_LOW + (1.0 - BREATH_LOW) * breath)
+
+    def advance(self, dt_seconds: float) -> None:
+        dt = max(dt_seconds, 0.0)
+        target = self._strongest()
+        step = dt / CONDITION_TRANSITION_S
+        if target is not None and (self._shown is None or self._shown is target):
+            self._shown = target
+            self._blend = min(self._blend + step, 1.0)
+            self._phase_s += dt
+        else:
+            # Ending, or handing over to another condition: ease out first.
+            self._blend = max(self._blend - step, 0.0)
+            self._phase_s += dt
+            if self._blend == 0.0:
+                self._shown = target
+                self._phase_s = 0.0
