@@ -169,6 +169,10 @@ def main(argv: list[str] | None = None, *, claim=claim_runtime):
         load_notch_session=lambda path=None: load_notch_session(path or config),
     )
     print(f"[mira] surface: {surface.value}")
+    # The audio backend's slow first device enumeration happens here, before
+    # anything is shown, never when the user first asks MIRA to listen. The
+    # microphone is not opened.
+    application.audio.prepare()
 
     def serve(forwarded: SurfaceRequest) -> None:
         path = None if forwarded.notch_config is None else Path(forwarded.notch_config)

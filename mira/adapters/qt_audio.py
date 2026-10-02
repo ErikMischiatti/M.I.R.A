@@ -22,8 +22,11 @@ is found by a 1 Hz watchdog instead: an error state, or no data for
 `STALL_S` seconds while capturing, ends capture as lost. A muted microphone
 still delivers frames (of silence), so it is never mistaken for a stall.
 
-`QtMultimedia` is imported on first use, so a runtime that never captures
-never loads it.
+`QtMultimedia` is imported on first use. Its first device enumeration is
+slow (about 1.7 s here, while the multimedia backend starts) and runs on
+the calling thread, so `prepare` does it once when the runtime starts,
+before any surface shows, instead of when the user first asks to listen.
+Preparing enumerates devices only; the microphone is not opened.
 """
 
 from __future__ import annotations
@@ -101,18 +104,30 @@ class QtAudioCaptureBackend:
         return AudioInputInfo(self.name, self._device_name, self._rate if self._source else None,
                               self._channels if self._source else None)
 
-    def start(self, on_frame: FrameListener, on_failure: FailureListener) -> bool:
-        if self._source is not None:
-            return True
+    def prepare(self) -> bool:
+        """Start the multimedia backend and enumerate inputs; opens nothing."""
         try:
             from PySide6.QtMultimedia import QMediaDevices
         except ImportError as error:
             print(f"[audio] Qt Multimedia unavailable: {error}", file=sys.stderr)
             return False
-        self._on_frame, self._on_failure = on_frame, on_failure
         if self._devices is None:
+            started = time.monotonic()
             self._devices = QMediaDevices()
             self._devices.audioInputsChanged.connect(self._on_inputs_changed)
+            default = QMediaDevices.defaultAudioInput()
+            self._device_name = None if default.isNull() else default.description()
+            print(f"[audio] inputs ready in {time.monotonic() - started:.1f} s; default: {self._device_name or 'none'}")
+        return True
+
+    def start(self, on_frame: FrameListener, on_failure: FailureListener) -> bool:
+        if self._source is not None:
+            return True
+        if not self.prepare():
+            return False
+        from PySide6.QtMultimedia import QMediaDevices
+
+        self._on_frame, self._on_failure = on_frame, on_failure
         return self._open(QMediaDevices.defaultAudioInput())
 
     def stop(self) -> None:

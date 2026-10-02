@@ -106,6 +106,15 @@ class AudioInputService:
     def lease_purposes(self) -> list[CapturePurpose]:
         return [lease.purpose for lease in self._leases]
 
+    def prepare(self) -> None:
+        """Let the backend do its slow, one-off setup now; captures nothing.
+
+        Backends without such a step (`prepare` absent) need nothing.
+        """
+        prepare = getattr(self._backend, "prepare", None)
+        if prepare is not None and not self._stopped:
+            prepare()
+
     # --- Leases -------------------------------------------------------------------
 
     def acquire(self, purpose: CapturePurpose) -> AudioLease | None:
