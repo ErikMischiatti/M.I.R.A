@@ -1,6 +1,7 @@
 from PySide6.QtCore import Qt, QRectF, QPointF
-from PySide6.QtGui import QColor, QPainter, QBrush
+from PySide6.QtGui import QBrush, QColor, QPainter, QPen, QPolygonF
 
+from mira.domain.embodiment_cue import EyeShape
 from mira.ui.face.eye import Eye
 from mira.domain.embodiment_frame import (
     EmbodimentFrame,
@@ -72,15 +73,18 @@ class EyePainter:
         painter.setRenderHint(QPainter.Antialiasing)
         painter.setPen(Qt.NoPen)
 
-        self.draw_eye(painter, left_rect, frame.left_eye, scale)
-        self.draw_eye(painter, right_rect, frame.right_eye, scale)
+        for rect, eye_frame in ((left_rect, frame.left_eye), (right_rect, frame.right_eye)):
+            if self.is_cued(eye_frame):
+                self.draw_cue_eye(painter, rect, eye_frame, scale)
+            else:
+                self.draw_eye(painter, rect, eye_frame, scale)
 
-        if not frame.left_eye.closed:
+        if not frame.left_eye.closed and not self.is_cued(frame.left_eye):
             self.draw_tired_eyelid(painter, left_rect, "left", frame.left_eye)
             self.draw_angry_eyelid(painter, left_rect, "left", frame.left_eye)
             self.draw_happy_eyelid(painter, left_rect, frame.left_eye, scale)
 
-        if not frame.right_eye.closed:
+        if not frame.right_eye.closed and not self.is_cued(frame.right_eye):
             self.draw_tired_eyelid(painter, right_rect, "right", frame.right_eye)
             self.draw_angry_eyelid(painter, right_rect, "right", frame.right_eye)
             self.draw_happy_eyelid(painter, right_rect, frame.right_eye, scale)
@@ -104,6 +108,61 @@ class EyePainter:
             )
         else:
             painter.drawRoundedRect(rect, radius, radius)
+
+    @staticmethod
+    def is_cued(eye_frame: EyeFrame) -> bool:
+        return eye_frame.shape is not EyeShape.NATURAL and eye_frame.shape_amount > 0.0
+
+    def draw_cue_eye(self, painter: QPainter, rect: QRectF, eye_frame: EyeFrame, scale: float):
+        """A semantic cue's eye, always inside ``rect`` (see `EyeFrame`).
+
+        Up to half way the natural eye closes towards its centre line; from
+        there the shape grows from the centre to fill the rectangle. Blinks
+        and eyelids do not apply while a cue shows. Strokes are inset by half
+        their width, round caps included, so nothing is drawn outside the eye's
+        rectangle and the eye-safety envelope still bounds everything.
+        """
+
+        amount = min(max(eye_frame.shape_amount, 0.0), 1.0)
+        painter.save()
+        if amount < 0.5:
+            height = rect.height() * (1.0 - 2.0 * amount)
+            closed = QRectF(rect.x(), rect.center().y() - height / 2.0, rect.width(), height)
+            radius = min(eye_frame.corner_radius * FACE_WIDTH_UNITS * scale, height / 2.0, rect.width() / 2.0)
+            painter.setBrush(QBrush(self.eye_color))
+            painter.drawRoundedRect(closed, radius, radius)
+            painter.restore()
+            return
+
+        grow = (amount - 0.5) * 2.0
+        side = min(rect.width(), rect.height())
+        box = QRectF(0.0, 0.0, rect.width() * grow, rect.height() * grow)
+        box.moveCenter(rect.center())
+        width = {EyeShape.CROSS: 0.24, EyeShape.CHEVRON: 0.22, EyeShape.TRIANGLE: 0.12}[eye_frame.shape] * side * grow
+        inner = box.adjusted(width / 2.0, width / 2.0, -width / 2.0, -width / 2.0)
+        pen = QPen(self.eye_color, max(width, 0.01))
+        pen.setCapStyle(Qt.RoundCap)
+        pen.setJoinStyle(Qt.RoundJoin)
+        painter.setPen(pen)
+        if eye_frame.shape is EyeShape.CROSS:
+            painter.setBrush(Qt.NoBrush)
+            painter.drawLine(inner.topLeft(), inner.bottomRight())
+            painter.drawLine(inner.topRight(), inner.bottomLeft())
+        elif eye_frame.shape is EyeShape.CHEVRON:
+            painter.setBrush(Qt.NoBrush)
+            painter.drawPolyline(QPolygonF([
+                QPointF(inner.left(), inner.bottom() - inner.height() * 0.15),
+                QPointF(inner.center().x(), inner.top() + inner.height() * 0.15),
+                QPointF(inner.right(), inner.bottom() - inner.height() * 0.15),
+            ]))
+        else:
+            painter.setBrush(QBrush(self.eye_color))
+            painter.drawPolygon(QPolygonF([
+                QPointF(inner.center().x(), inner.top()),
+                inner.bottomRight(),
+                inner.bottomLeft(),
+            ]))
+        painter.restore()
 
     def draw_tired_eyelid(
         self, painter: QPainter, rect: QRectF, side: str, eye_frame: EyeFrame

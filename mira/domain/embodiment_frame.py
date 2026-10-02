@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import Mapping
 
 from mira.domain.embodiment import EmbodimentIntent, ExpressionKey, resolve_expression_key
+from mira.domain.embodiment_cue import EyeShape
 
 
 # Offsets and radii are normalized from the current face's design coordinate
@@ -16,7 +17,15 @@ FACE_HEIGHT_UNITS = 450.0
 
 @dataclass(frozen=True, slots=True)
 class EyeFrame:
-    """One eye's resolved geometry and eyelid pose at an instant."""
+    """One eye's resolved geometry and eyelid pose at an instant.
+
+    ``shape`` and ``shape_amount`` carry a semantic cue (`embodiment_cue`):
+    while ``shape_amount`` is above zero the eye is drawn by the cue's
+    treatment inside the same rectangle — the natural eye closing up to 0.5,
+    the shape opening from there — and ``closed`` and the eyelids do not
+    apply. The rectangle itself never changes, so a cue can reach no further
+    than the eye it replaces.
+    """
 
     offset_x: float = 0.0
     offset_y: float = 0.0
@@ -27,6 +36,8 @@ class EyeFrame:
     tired_lid: float = 0.0
     angry_lid: float = 0.0
     happy_lid: float = 0.0
+    shape: EyeShape = EyeShape.NATURAL
+    shape_amount: float = 0.0
 
 
 @dataclass(frozen=True, slots=True)

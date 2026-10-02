@@ -10,7 +10,10 @@ from __future__ import annotations
 
 import sys
 
+from mira.domain.embodiment_cue import cue_for_notice
+from mira.domain.notice import Notice
 from mira.ui.face.face_animator import FaceAnimator
+from mira.ui.face.face_controller import FaceController
 from mira.ui.notch.config_store import NotchSettings
 from mira.ui.notch.notch_window import NotchWindow
 from mira.ui.notch.presentation import NotchPresenter
@@ -48,3 +51,19 @@ def bind_presenter(notch: NotchWindow, presenter: NotchPresenter) -> None:
     notch.hover_changed.connect(presenter.set_hovered)
     presenter.subscribe(notch.present)
     notch.present(presenter.presentation)
+
+
+def deliver_notice(notice: Notice, *, presenter: NotchPresenter | None, controller: FaceController | None) -> None:
+    """Present ``notice`` the one way the desktop does it.
+
+    The notch's presenter shows it (and decides whether it expands); the
+    shared embodiment reacts with the notice's cue, if it has one, as an
+    overlay that ends on its own. The running shell and the tuning
+    previews both come through here, so previews exercise the real path.
+    """
+
+    if presenter is not None:
+        presenter.present(notice)
+    cue = cue_for_notice(notice)
+    if controller is not None and cue is not None:
+        controller.show_cue(cue)

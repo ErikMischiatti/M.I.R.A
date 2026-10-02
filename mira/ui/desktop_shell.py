@@ -64,7 +64,7 @@ from mira.ui.notch.debug_window import NotchDebugWindow
 from mira.ui.notch.notch_window import NotchWindow
 from mira.ui.notch.presence import NotchPresence
 from mira.ui.notch.presentation import NotchAction, NotchPresenter
-from mira.ui.notch.startup import bind_presenter, build_notch
+from mira.ui.notch.startup import bind_presenter, build_notch, deliver_notice
 
 
 class ShellMode(StrEnum):
@@ -176,8 +176,8 @@ class DesktopShell:
             self.window.close()
 
     def on_notice(self, notice: Notice) -> None:
-        if self.presenter is not None:
-            self.presenter.present(notice)
+        """The notch shows it; MIRA's eyes react, on every surface."""
+        deliver_notice(notice, presenter=self.presenter, controller=self.controller)
 
     # --- Notch actions ----------------------------------------------------------
 
