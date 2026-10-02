@@ -37,6 +37,8 @@ source.
 
 from __future__ import annotations
 
+import sys
+from collections.abc import Sequence
 from dataclasses import dataclass
 
 from mira.adapters.opencv_camera import OpenCVCameraSource
@@ -47,9 +49,11 @@ from mira.core.brain import Brain
 from mira.core.camera_capture import CameraCapture
 from mira.core.embodied_behavior import EmbodiedBehavior
 from mira.core.interaction_manager import InteractionManager
+from mira.core.notice_producers import SystemNoticeProducer, TaskNoticeProducer
 from mira.core.state_manager import StateManager
 from mira.domain.camera import CameraSource
 from mira.domain.scheduler import Scheduler
+from mira.domain.system_events import SystemEventSource
 from mira.messaging.events import EventBus
 
 
@@ -80,10 +84,13 @@ class Application:
     interaction_manager: InteractionManager
     embodied_behavior: EmbodiedBehavior
     camera: CameraCapture
+    task_notices: TaskNoticeProducer
+    system_notices: SystemNoticeProducer
 
     def start(self) -> None:
-        """Start the long-running resources: currently only camera capture."""
+        """Start the long-running resources: camera capture and system watching."""
         self.camera.start()
+        self.system_notices.start()
 
     def shutdown(self) -> None:
         """Stop the resources owned by this application graph.
@@ -92,6 +99,9 @@ class Application:
         stops; the two are independent, so the order only makes the device
         free as early as possible.
         """
+        # The system sources first: their pending timers are cancelled while
+        # the scheduler still accepts it.
+        self.system_notices.shutdown()
         self.camera.shutdown()
         self.scheduler.shutdown()
 
@@ -100,6 +110,7 @@ def build_application(
     *,
     scheduler: Scheduler | None = None,
     camera_source: CameraSource | None = None,
+    system_event_sources: Sequence[SystemEventSource] = (),
 ) -> Application:
     """Construct and wire the application graph.
 
@@ -113,6 +124,10 @@ def build_application(
     `MIRA_CAMERA*` environment decides: an `OpenCVCameraSource` when the camera
     is enabled, otherwise no source and a disabled capture. Tests pass a fake
     source, so no test needs a webcam.
+
+    `system_event_sources` are the platform adapters whose changes become
+    notices (`desktop_system_event_sources` for a Linux desktop); by default
+    none, so a test or a headless runtime watches nothing.
 
     No side effects: nothing is started, no state transition is triggered, no
     timer is armed and no device is opened. The returned graph is idle until
@@ -142,6 +157,10 @@ def build_application(
             camera_source = OpenCVCameraSource(camera_configuration.settings)
     camera = CameraCapture(camera_source)
 
+    # Both only emit "notice"; how a notice looks is each embodiment's choice.
+    task_notices = TaskNoticeProducer(event_bus)
+    system_notices = SystemNoticeProducer(event_bus, scheduler, system_event_sources)
+
     return Application(
         event_bus=event_bus,
         activity=activity,
@@ -150,4 +169,24 @@ def build_application(
         interaction_manager=interaction_manager,
         embodied_behavior=embodied_behavior,
         camera=camera,
+        task_notices=task_notices,
+        system_notices=system_notices,
     )
+
+
+def desktop_system_event_sources() -> list[SystemEventSource]:
+    """The system watchers for a Linux desktop; none elsewhere.
+
+    USB arrivals (kernel uevents), audio devices (PipeWire) and network
+    connectivity (NetworkManager). Each one that cannot run here reports
+    itself unavailable when started; none is required. Built only when asked
+    for: they need a running Qt event loop.
+    """
+
+    if not sys.platform.startswith("linux"):
+        return []
+    from mira.adapters.linux_usb import LinuxUsbDeviceSource
+    from mira.adapters.networkmanager import NetworkManagerConnectivitySource
+    from mira.adapters.pipewire_audio import PipeWireAudioSource
+
+    return [LinuxUsbDeviceSource(), PipeWireAudioSource(), NetworkManagerConnectivitySource()]

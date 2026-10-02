@@ -133,6 +133,15 @@ def _device(painter: QPainter, square: QRectF, color: QColor, phase: float) -> N
     _dot(painter, _at(square, 0.5, 0.78), square.width() * 0.05, color)
 
 
+def _network(painter: QPainter, square: QRectF, color: QColor, phase: float) -> None:
+    # Three concentric arcs over a dot: the usual wireless sign.
+    centre = _at(square, 0.5, 0.82)
+    for share in (0.22, 0.44, 0.66):
+        radius = square.width() * share
+        painter.drawArc(QRectF(centre.x() - radius, centre.y() - radius, radius * 2, radius * 2), 45 * 16, 90 * 16)
+    _dot(painter, centre, square.width() * 0.07, color)
+
+
 _DRAW: dict[NotchSymbol, Callable[[QPainter, QRectF, QColor, float], None]] = {
     NotchSymbol.LISTENING: _listening,
     NotchSymbol.THINKING: _thinking,
@@ -142,4 +151,5 @@ _DRAW: dict[NotchSymbol, Callable[[QPainter, QRectF, QColor, float], None]] = {
     NotchSymbol.ERROR: _error,
     NotchSymbol.TASK: _task,
     NotchSymbol.DEVICE: _device,
+    NotchSymbol.NETWORK: _network,
 }

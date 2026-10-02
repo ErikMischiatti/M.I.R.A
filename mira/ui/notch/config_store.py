@@ -31,7 +31,8 @@ Schema, version 3 (every key required, no others allowed, except as noted)::
       "animation": {"duration_ms": 200},
       "display": {"monitor": null},
       "behaviour": {"expand_on_hover": true,
-                    "automatic_expansion": {"alert": true, "device": true, "task": false},
+                    "automatic_expansion": {"alert": true, "device": true, "task": false,
+                                            "connectivity": true},
                     "notice_duration_ms": 4000},
       "content": {"symbol_px": 26.0, "text_px": 18.0, "spacing_px": 10.0,
                   "eye_gap_px": 19.0}

@@ -101,7 +101,7 @@ def test_the_defaults_serialize_to_the_documented_schema():
         "display": {"monitor": None},
         "behaviour": {
             "expand_on_hover": True,
-            "automatic_expansion": {"alert": True, "device": True, "task": False},
+            "automatic_expansion": {"alert": True, "device": True, "task": False, "connectivity": True},
             "notice_duration_ms": 4000,
         },
         "content": {"symbol_px": 26.0, "text_px": 18.0, "spacing_px": 10.0, "eye_gap_px": 19.0},

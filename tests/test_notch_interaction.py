@@ -24,7 +24,8 @@ from mira.domain.embodiment import ActivityState
 from mira.domain.notice import Notice, NoticeCategory, NoticeTone
 from mira.domain.scheduler import ManualScheduler
 from mira.ui import main_window as main_window_module
-from mira.ui.desktop_shell import NOTCH_ACTIONS, DesktopShell, ShellMode, task_notice
+from mira.core.notice_producers import task_notice
+from mira.ui.desktop_shell import NOTCH_ACTIONS, DesktopShell, ShellMode
 from mira.ui.notch.config_store import ConfigSession
 from mira.ui.notch.notch_window import ACTION_LABELS, NotchWindow
 from mira.ui.notch.presence import NotchPresence

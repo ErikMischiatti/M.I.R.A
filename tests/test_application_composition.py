@@ -200,8 +200,9 @@ def test_subscribers_are_registered_exactly_once_in_a_fixed_order(graph):
     alone would not catch if the order still looked right.
     """
     assert graph["subscribers"] == {
-        "action_completed": ["MainWindow.on_action_completed", "DesktopShell.on_action_completed"],
-        "action_failed": ["MainWindow.on_action_failed", "DesktopShell.on_action_failed"],
+        # Notices are produced in the graph; the shell only presents "notice".
+        "action_completed": ["TaskNoticeProducer.on_action_completed", "MainWindow.on_action_completed"],
+        "action_failed": ["TaskNoticeProducer.on_action_failed", "MainWindow.on_action_failed"],
         "action_started": ["MainWindow.on_action_started"],
         "input_focused": [
             "InteractionManager.on_input_focused",
@@ -216,6 +217,7 @@ def test_subscribers_are_registered_exactly_once_in_a_fixed_order(graph):
             "EmbodiedBehavior.on_input_unfocused",
         ],
         "intent_inferred": ["EmbodiedBehavior.on_intent_inferred"],
+        "notice": ["DesktopShell.on_notice"],
         "processing_started": ["InteractionManager.on_processing_started"],
         "response_ready": [
             "InteractionManager.on_response_ready",

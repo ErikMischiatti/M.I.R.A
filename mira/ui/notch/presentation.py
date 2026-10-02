@@ -74,6 +74,7 @@ class NotchSymbol(StrEnum):
     ERROR = "error"
     TASK = "task"
     DEVICE = "device"
+    NETWORK = "network"
 
 
 class NotchAction(StrEnum):
@@ -109,6 +110,7 @@ _CATEGORY_SYMBOL = {
     NoticeCategory.ALERT: NotchSymbol.WARNING,
     NoticeCategory.DEVICE: NotchSymbol.DEVICE,
     NoticeCategory.TASK: NotchSymbol.TASK,
+    NoticeCategory.CONNECTIVITY: NotchSymbol.NETWORK,
 }
 
 # Used when a notice brings no text of its own. A neutral device or task
@@ -153,9 +155,10 @@ MIN_NOTICE_DURATION_MS = 1000
 MAX_NOTICE_DURATION_MS = 30000
 DEFAULT_NOTICE_DURATION_MS = 4000
 
-# Conservative: problems and device changes are worth interrupting a glance
-# for; task results already appear in the main window.
-DEFAULT_AUTOMATIC_EXPANSION = frozenset({NoticeCategory.ALERT, NoticeCategory.DEVICE})
+# Conservative: problems, device and connectivity changes are worth
+# interrupting a glance for (the producers already suppress their noise);
+# task results already appear in the main window.
+DEFAULT_AUTOMATIC_EXPANSION = frozenset({NoticeCategory.ALERT, NoticeCategory.DEVICE, NoticeCategory.CONNECTIVITY})
 
 
 @dataclass(frozen=True, slots=True)

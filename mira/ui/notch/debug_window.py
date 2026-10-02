@@ -94,6 +94,7 @@ CATEGORY_LABELS = {
     NoticeCategory.ALERT: "Warnings and errors",
     NoticeCategory.DEVICE: "Device changes",
     NoticeCategory.TASK: "Task results",
+    NoticeCategory.CONNECTIVITY: "Connectivity changes",
 }
 
 # Synthetic notices for visual tuning; they exist only in this window.

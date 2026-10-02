@@ -85,7 +85,9 @@ def test_main_connects_application_shutdown_before_running(monkeypatch, tmp_path
             events.append("desktop.shutdown")
 
     monkeypatch.setattr(main_module, "QApplication", FakeQApplication)
-    monkeypatch.setattr(main_module, "build_application", lambda: runtime)
+    built_with = []
+    monkeypatch.setattr(main_module, "build_application",
+                        lambda **options: (built_with.append(sorted(options)), runtime)[1])
     monkeypatch.setattr(main_module, "DesktopShell", FakeDesktop)
     monkeypatch.setattr(main_module, "quit_on_interrupt", lambda app: events.append("interrupt handler"))
 
@@ -104,6 +106,8 @@ def test_main_connects_application_shutdown_before_running(monkeypatch, tmp_path
         "desktop.shutdown",
         "application.shutdown",
     ]
+    # Only the notch runtime watches the system.
+    assert built_with == ([["system_event_sources"]] if mode == "notch" else [[]])
 
 
 def _run_main_capturing_notch_settings(monkeypatch, argv=("--notch",)):
@@ -130,6 +134,9 @@ def _run_main_capturing_notch_settings(monkeypatch, argv=("--notch",)):
             return 0
 
     class FakeRuntime:
+        def __init__(self, **_options):
+            pass
+
         def start(self):
             pass
 

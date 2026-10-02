@@ -440,6 +440,29 @@ def test_a_closed_main_window_leaves_the_notch_running(composed):
     assert desktop.animator.is_running()
 
 
+# --- Notices from the bus ---------------------------------------------------------------
+
+
+def test_a_notice_on_the_bus_reaches_the_notch_presenter(composed):
+    desktop, application = composed(ShellMode.NOTCH)
+    desktop.start()
+    notice = Notice(NoticeCategory.DEVICE, NoticeTone.INFO, "Keyboard connected")
+
+    application.event_bus.emit("notice", notice)
+
+    assert desktop.presenter.presentation.notice == notice
+    assert desktop.notch.presence is NotchPresence.EXPANDED  # device changes expand by default
+
+
+def test_a_main_window_shell_ignores_notices(composed):
+    desktop, application = composed(ShellMode.MAIN_WINDOW)
+    desktop.start()
+
+    application.event_bus.emit("notice", Notice(NoticeCategory.ALERT, NoticeTone.ERROR))
+
+    assert desktop.notch is None
+
+
 # --- Standalone face -----------------------------------------------------------
 
 

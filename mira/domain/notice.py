@@ -40,6 +40,9 @@ class NoticeCategory(StrEnum):
     TASK = "task"
     """Something MIRA was asked to do started, finished or failed."""
 
+    CONNECTIVITY = "connectivity"
+    """The network became unavailable, limited, or available again."""
+
 
 class NoticeTone(StrEnum):
     """How the noticed thing went."""

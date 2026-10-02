@@ -24,7 +24,7 @@ from pathlib import Path
 from PySide6.QtCore import QSocketNotifier, QTimer
 from PySide6.QtWidgets import QApplication
 
-from mira.application.composition import build_application
+from mira.application.composition import build_application, desktop_system_event_sources
 from mira.ui.desktop_shell import DesktopShell, ShellMode
 from mira.ui.notch.config_store import ConfigSession
 
@@ -113,7 +113,12 @@ def main(argv: list[str] | None = None):
     # Composition runs on the Qt main thread, before any widget exists.
     # `QtScheduler` binds whichever thread builds it as the serialized context,
     # and this is the thread that runs the event loop below.
-    application = build_application()
+    # The notch is the ambient surface, so only it watches the system: the
+    # main window alone has nowhere to show a device or network change.
+    if mode is ShellMode.NOTCH:
+        application = build_application(system_event_sources=desktop_system_event_sources())
+    else:
+        application = build_application()
 
     if mode is ShellMode.NOTCH:
         # The notch is a tool window, which Qt never counts, and the main

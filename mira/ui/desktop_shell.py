@@ -34,7 +34,8 @@ Two questions stay apart. `EmbodimentIntent` — what MIRA is doing and
 expressing — comes from the activity authority through `state_changed`.
 What the notch presents — how much of it is visible, and what it shows when
 open — is decided by one `NotchPresenter`, which the shell owns and feeds:
-the committed activity, hover reported by the notch, and transient notices.
+the committed activity, hover reported by the notch, and transient notices
+(the bus event ``"notice"``, emitted by the producers in `mira.core`).
 Activity alone never expands the notch; the presenter's expansion reasons do
 (see `mira.ui.notch.presentation`). The presenter's notice timer runs on the
 application's own `Scheduler`, so the notch adds no clock of its own.
@@ -54,7 +55,7 @@ from PySide6.QtWidgets import QApplication
 
 from mira.application.composition import Application
 from mira.domain.embodiment import ActivityState
-from mira.domain.notice import Notice, NoticeCategory, NoticeTone
+from mira.domain.notice import Notice
 from mira.ui.face.face_animator import FaceAnimator
 from mira.ui.face.face_controller import FaceController
 from mira.ui.main_window import MainWindow
@@ -75,21 +76,6 @@ class ShellMode(StrEnum):
 
 # The intents the notch offers; the shell honours each of them.
 NOTCH_ACTIONS = frozenset({NotchAction.OPEN_MAIN_WINDOW, NotchAction.OPEN_SETTINGS, NotchAction.QUIT})
-
-
-def task_notice(succeeded: bool, payload) -> Notice:
-    """The notice for an action lifecycle event.
-
-    Read by attribute, as `MainWindow` does, so the UI needs no import from
-    `mira.actions`. An action held back for confirmation is a warning, not
-    an error: nothing went wrong yet.
-    """
-    if succeeded:
-        return Notice(NoticeCategory.TASK, NoticeTone.SUCCESS)
-    data = getattr(payload, "data", None) or {}
-    if data.get("requires_confirmation"):
-        return Notice(NoticeCategory.TASK, NoticeTone.WARNING, "Needs confirmation")
-    return Notice(NoticeCategory.TASK, NoticeTone.ERROR, "Failed")
 
 
 class DesktopShell:
@@ -152,8 +138,8 @@ class DesktopShell:
             bind_presenter(self.notch, self.presenter)
             self.notch.action_requested.connect(self.on_notch_action)
 
-        application.event_bus.subscribe("action_completed", self.on_action_completed)
-        application.event_bus.subscribe("action_failed", self.on_action_failed)
+        # Every notice, from whichever producer (`mira.core.notice_producers`).
+        application.event_bus.subscribe("notice", self.on_notice)
 
     def _build_main_window(self) -> MainWindow:
         # The one construction site: the same graph and the same animator as
@@ -189,13 +175,9 @@ class DesktopShell:
         if self.window is not None:
             self.window.close()
 
-    def on_action_completed(self, payload) -> None:
+    def on_notice(self, notice: Notice) -> None:
         if self.presenter is not None:
-            self.presenter.present(task_notice(True, payload))
-
-    def on_action_failed(self, payload) -> None:
-        if self.presenter is not None:
-            self.presenter.present(task_notice(False, payload))
+            self.presenter.present(notice)
 
     # --- Notch actions ----------------------------------------------------------
 

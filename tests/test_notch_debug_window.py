@@ -625,7 +625,7 @@ TUNED_BEHAVIOUR = NotchBehaviour(
 def test_the_behaviour_controls_show_the_production_defaults(env):
     assert behaviour_controls(env.debug) == {
         "hover": True,
-        "automatic": {NoticeCategory.ALERT, NoticeCategory.DEVICE},
+        "automatic": {NoticeCategory.ALERT, NoticeCategory.DEVICE, NoticeCategory.CONNECTIVITY},
         "duration": 4000,
     }
     assert set(env.debug.automatic) == set(NoticeCategory)
@@ -654,7 +654,9 @@ def test_behaviour_changes_apply_live_and_are_unsaved(env):
 
     assert env.presenter.behaviour == NotchBehaviour(
         expand_on_hover=False,
-        automatic_expansion=frozenset({NoticeCategory.ALERT, NoticeCategory.DEVICE, NoticeCategory.TASK}),
+        automatic_expansion=frozenset(
+            {NoticeCategory.ALERT, NoticeCategory.DEVICE, NoticeCategory.CONNECTIVITY, NoticeCategory.TASK}
+        ),
         notice_duration_ms=9000,
     )
     assert env.debug.unsaved_label.text() == "Yes"
