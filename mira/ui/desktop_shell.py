@@ -139,6 +139,9 @@ class DesktopShell:
         application.event_bus.subscribe("notice", self.on_notice)
         # Running work (`mira.core.task_activity`): persistent, not a notice.
         application.event_bus.subscribe("tasks_changed", self.on_tasks_changed)
+        # Voice listening (`mira.core.listening`): the notch opens and shows
+        # the real waveform; the eyes show LISTENING through the activity.
+        application.event_bus.subscribe("listening_changed", self.on_listening_changed)
 
         self.window: MainWindow | None = None
         self.notch: NotchWindow | None = None
@@ -147,6 +150,7 @@ class DesktopShell:
         self.settings_window: NotchDebugWindow | None = None
         self._activity = ActivityState.IDLE
         self._tasks_running = False
+        self._listening = (False, False)
         self._stopped = False
         self.keyboard: KeyboardActivation | None = None
         if listening_settings is not None:
@@ -195,6 +199,10 @@ class DesktopShell:
         self.presenter = NotchPresenter(self._application.scheduler, settings.behaviour, actions=NOTCH_ACTIONS)
         self.presenter.set_activity(self._activity)
         self.presenter.set_tasks_running(self._tasks_running)
+        self.presenter.set_listening(*self._listening)
+        # Real captured audio, pulled by the notch on its own repaints.
+        audio = self._application.audio
+        self.notch.set_waveform_source(lambda: audio.waveform)
         bind_presenter(self.notch, self.presenter)
         self.notch.action_requested.connect(self.on_notch_action)
         # From now on the notch keeps the runtime alive: closing the main
@@ -271,6 +279,11 @@ class DesktopShell:
         deliver_notice(notice, presenter=self.presenter, controller=self.controller)
 
     # --- Notch actions ----------------------------------------------------------
+
+    def on_listening_changed(self, status) -> None:
+        self._listening = (bool(getattr(status, "listening", False)), bool(getattr(status, "capturing", False)))
+        if self.presenter is not None:
+            self.presenter.set_listening(*self._listening)
 
     def request_listening_toggle(self) -> None:
         """A listening key was pressed: ask; the listening controller decides."""

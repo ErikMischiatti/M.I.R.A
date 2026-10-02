@@ -161,6 +161,30 @@ def control_cells(row: ContentRow, count: int) -> list[Rect]:
     return [Rect(left + index * (width + CONTROL_GAP_PX), row.area.y, width, row.area.height) for index in range(count)]
 
 
+# The listening waveform: a centred strip of bars, at most this share of the
+# row's width, each bar at least this tall so silence reads as a quiet line.
+WAVEFORM_WIDTH_SHARE = 0.7
+WAVEFORM_MIN_BAR_PX = 2.0
+
+
+def waveform_bars(row: ContentRow, buckets) -> list[Rect]:
+    """One bar per bucket (0 to 1), symmetric about the row's centre line."""
+
+    count = len(buckets)
+    if count == 0 or row.area.width <= 0:
+        return []
+    width = row.area.width * WAVEFORM_WIDTH_SHARE
+    pitch = width / count
+    bar = max(pitch * 0.6, 1.0)
+    left = row.area.x + (row.area.width - width) / 2.0 + (pitch - bar) / 2.0
+    height_max = row.area.height
+    bars = []
+    for index, value in enumerate(buckets):
+        height = max(min(max(value, 0.0), 1.0) * height_max, WAVEFORM_MIN_BAR_PX)
+        bars.append(Rect(left + index * pitch, row.center_y - height / 2.0, bar, height))
+    return bars
+
+
 def content_problems(row: ContentRow, geometry: NotchGeometry) -> list[str]:
     """Why ``row`` would not fit the expanded notch; empty when it does."""
 

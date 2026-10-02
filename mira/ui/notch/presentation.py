@@ -22,6 +22,7 @@ Presence is resolved, never set from several places. The owner chooses a
     PINNED    someone explicitly holds it open (tuning preview)
     NOTICE    a notice whose category expands automatically is showing
     CONTROLS  the user opened the notch's own controls (right click)
+    LISTENING MIRA is listening to the user (the microphone is open for it)
 
     base HIDDEN               -> HIDDEN, whatever the reasons
     base COMPACT, no reasons  -> COMPACT
@@ -54,7 +55,14 @@ Running tasks are persistent state, not a notice: while any runs, the content
 of an open notch is "Working" (unless a notice is showing), and nothing
 expands it — a long task must never hold the notch open. Content precedence:
 
-    controls  >  notice  >  task running  >  activity
+    controls  >  notice  >  listening  >  task running  >  activity
+
+Listening is the one activity that expands the notch, through its own
+LISTENING reason, because the microphone being open must never be
+invisible. While listening the content is the *real* waveform of the
+captured audio (`shows_waveform`); the window reads it from its waveform
+source on every frame. Without real samples there is no waveform: the
+content is the listening symbol instead, never a synthetic animation.
 """
 
 from __future__ import annotations
@@ -76,6 +84,7 @@ class ExpansionReason(StrEnum):
     PINNED = "pinned"
     NOTICE = "notice"
     CONTROLS = "controls"
+    LISTENING = "listening"
 
 
 class NotchSymbol(StrEnum):
@@ -144,6 +153,7 @@ def notice_content(notice: Notice) -> NotchContent:
 
 
 TASK_RUNNING_CONTENT = NotchContent(NotchSymbol.TASK, "Working")
+LISTENING_CONTENT = NotchContent(NotchSymbol.LISTENING, "Listening")
 
 # The integrated controls, in display order. Opening the main window is not
 # among them: the double click is that gesture.
@@ -172,15 +182,25 @@ class NotchPresentation:
     actions: frozenset[NotchAction] = frozenset()
     tasks_running: bool = False
     controls: tuple[NotchAction, ...] = ()
+    listening: bool = False
+    capturing: bool = False
+
+    @property
+    def shows_waveform(self) -> bool:
+        """Whether the content band shows the captured audio right now."""
+        return self.listening and self.capturing and not self.controls and self.notice is None
 
     @property
     def content(self) -> NotchContent | None:
-        """A showing notice, else running work, else the activity.
+        """A showing notice, else listening, else running work, else the activity.
 
-        Not drawn while `controls` are open; they take the content band.
+        Not drawn while `controls` are open (they take the content band), and
+        replaced by the waveform when `shows_waveform` and samples exist.
         """
         if self.notice is not None:
             return notice_content(self.notice)
+        if self.listening:
+            return LISTENING_CONTENT
         if self.tasks_running:
             return TASK_RUNNING_CONTENT
         return activity_content(self.activity)
@@ -252,6 +272,8 @@ class NotchPresenter:
         self._tasks_running = False
         self._controls_open = False
         self._controls_timer: TimerHandle | None = None
+        self._listening = False
+        self._capturing = False
         self._notice: Notice | None = None
         self._expiry: TimerHandle | None = None
         # Identifies the notice the pending expiry belongs to, so a callback
@@ -346,6 +368,12 @@ class NotchPresenter:
             self._controls_timer.cancel()
             self._controls_timer = None
 
+    def set_listening(self, listening: bool, capturing: bool = False) -> None:
+        """Whether MIRA listens, and whether real audio is arriving for it."""
+        self._listening = bool(listening)
+        self._capturing = bool(listening and capturing)
+        self._publish()
+
     def set_tasks_running(self, running: bool) -> None:
         """Whether MIRA is executing anything; content only, never presence."""
         self._tasks_running = bool(running)
@@ -395,6 +423,8 @@ class NotchPresenter:
             reasons.add(ExpansionReason.NOTICE)
         if self._controls_open:
             reasons.add(ExpansionReason.CONTROLS)
+        if self._listening:
+            reasons.add(ExpansionReason.LISTENING)
         return frozenset(reasons)
 
     def _resolve(self) -> NotchPresentation:
@@ -411,6 +441,8 @@ class NotchPresenter:
             actions=self._actions,
             tasks_running=self._tasks_running,
             controls=control_actions(self._actions) if self._controls_open else (),
+            listening=self._listening,
+            capturing=self._capturing,
         )
 
     def _publish(self) -> None:

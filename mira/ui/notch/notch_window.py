@@ -24,7 +24,14 @@ from mira.ui.notch.eye_layout import (
     notch_eye_layout,
     production_envelope,
 )
-from mira.ui.notch.expanded_layout import ContentRow, NotchContentStyle, content_row, control_cells, reveal_fraction
+from mira.ui.notch.expanded_layout import (
+    ContentRow,
+    NotchContentStyle,
+    content_row,
+    control_cells,
+    reveal_fraction,
+    waveform_bars,
+)
 from mira.ui.notch.presentation import NotchAction, NotchContent, NotchPresentation
 from mira.ui.notch.symbol_painter import paint_symbol
 from mira.ui.notch.presence import (
@@ -288,6 +295,8 @@ class NotchWindow(QWidget):
         self._presentation = NotchPresentation()
         self._hovered = False
         self._hovered_control: NotchAction | None = None
+        # Where real captured audio is read from while listening; None: none.
+        self._waveform_source = None
         # Symbol animation phase; read only while painting.
         self._clock = QElapsedTimer()
         self._clock.start()
@@ -566,6 +575,20 @@ class NotchWindow(QWidget):
         self.controls_toggle_requested.emit()
         event.accept()
 
+    def set_waveform_source(self, source) -> None:
+        """``source()`` returns the latest real `AudioWaveform`, or None.
+
+        Read on every repaint while the presentation shows the waveform; the
+        owner's animator already repaints the notch on each frame, so no
+        timer of its own is needed.
+        """
+        self._waveform_source = source
+
+    def current_waveform(self):
+        if not self._presentation.shows_waveform or self._waveform_source is None:
+            return None
+        return self._waveform_source()
+
     @property
     def control_rects(self) -> dict[NotchAction, QRectF]:
         """Where each open control is drawn and clicked, window-local."""
@@ -754,9 +777,22 @@ class NotchWindow(QWidget):
         if self._presentation.controls:
             self._paint_controls(painter)
             return
+        waveform = self.current_waveform()
+        if waveform is not None:
+            self._paint_waveform(painter, waveform)
+            return
         content = self._presentation.content
         if content is not None:
             self._paint_content(painter, content, self.content_row)
+
+    def _paint_waveform(self, painter: QPainter, waveform):
+        """The captured audio's recent bucket peaks as bars around the centre line."""
+        rects = waveform_bars(self.content_row, waveform.buckets)
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(CONTENT_COLOR)
+        for bar in rects:
+            radius = min(bar.width, bar.height) / 2.0
+            painter.drawRoundedRect(QRectF(bar.x, bar.y, bar.width, bar.height), radius, radius)
 
     def _paint_controls(self, painter: QPainter):
         """Each open control as a rounded pill with its label, in the content band."""
