@@ -117,8 +117,10 @@ intentionally.
 (`python -m mira.ui.notch`) read the notch's tuned settings from one JSON
 file: `MIRA_NOTCH_CONFIG`, else `$XDG_CONFIG_HOME/mira/notch.json`
 (`~/.config/mira/notch.json`); both also accept `--config PATH`. Each prints
-which file it used. `MIRA` (main window only) builds no notch and does not
-read the file. Only the settings window's **Save** writes it. The production
+which file it used — when the notch is first shown, so a runtime started by
+`MIRA` reads it only once `MIRA-NOTCH` asks for the notch. A `--config`
+given to a launcher that forwards to a running runtime is used if that
+runtime builds its notch for this request; an existing notch keeps its file. Only the settings window's **Save** writes it. The production
 defaults live in code and never change by saving; **Reset defaults**
 restores them at run time only.
 
@@ -177,7 +179,7 @@ still react to it; it only does not expand the notch. `notice_duration_ms`
 (1000–30000) is how long a notice stays. Defaults: alerts, devices and
 connectivity expand, task results do not.
 
-**System notices.** `MIRA-NOTCH` watches USB devices (kernel uevents), audio
+**System notices.** The runtime watches USB devices (kernel uevents), audio
 devices (PipeWire through `pw-dump`) and connectivity (NetworkManager over
 D-Bus); a facility that is missing is reported once at startup
 (`[notices] … unavailable`) and simply produces nothing. Short-lived changes

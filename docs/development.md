@@ -75,16 +75,17 @@ actions use for the `current` alias and relative paths (see
 
 ### Notch launchers
 
-`MIRA` opens the main window only. `MIRA-NOTCH` runs the same application
-runtime with the ambient notch as its only initial surface; double-clicking
-the notch opens the main window of that runtime (never a second process).
-`MIRA-TUNE` is the standalone tuning tool. All use the same `venv` and
-symlink resolution:
+`MIRA` and `MIRA-NOTCH` are two ways into one M.I.R.A. runtime per user.
+The first one started becomes the runtime; a later one asks it to show its
+surface and exits immediately (`[mira] connected to the running M.I.R.A.
+(pid …)`), so starting `MIRA-NOTCH` while `MIRA` runs adds the notch to it,
+and the other way round. `MIRA-TUNE` is the standalone tuning tool and is
+not part of that runtime. All use the same `venv` and symlink resolution:
 
 | Command | Script | Runs |
 |---|---|---|
-| `MIRA` | `bin/mira` | `python -m mira.main`: the main window; no notch, no system watching. |
-| `MIRA-NOTCH` | `bin/mira-notch` | `python -m mira.main --notch`: the notch with the saved configuration, real task, device and connectivity notices; double-click opens the main window, closing it leaves the notch running. Quit from the notch's context menu or Ctrl+C. |
+| `MIRA` | `bin/mira` | `python -m mira.main`: show the main window (starting the runtime if needed). Closing the window ends the runtime unless a notch is open. |
+| `MIRA-NOTCH` | `bin/mira-notch` | `python -m mira.main --notch`: show the notch (starting the runtime if needed), with the saved configuration and real task, device and connectivity notices; double-click opens the main window, closing it leaves the notch running. Quit from the notch's context menu or Ctrl+C. |
 | `MIRA-TUNE` | `bin/mira-tune` | `python -m mira.ui.notch --tune`: a standalone notch (no application behind it) with its tuning window, which changes it live, previews notices and eye cues, and can Save, Reload and Reset defaults. Closing the window quits. |
 
 `python -m mira.ui.notch --notch-only` still shows the standalone notch
@@ -100,7 +101,12 @@ MIRA-TUNE --config /tmp/notch-experiment.json   # any other configuration file
 The configuration file and its rules are in
 [configuration.md](configuration.md#notch).
 
-The system notices need, at run time and only for `MIRA-NOTCH`: the kernel's
+The runtime's lock and socket live in `$XDG_RUNTIME_DIR/mira` (else a
+private `/tmp/mira-<uid>`); a crash needs no cleanup. Tests point
+`XDG_RUNTIME_DIR` at a fresh directory each (`tests/conftest.py`), so they
+never reach a MIRA you are running.
+
+The system notices need, at run time: the kernel's
 uevent netlink socket (USB), `pw-dump` from PipeWire (audio devices) and
 NetworkManager on the system bus (connectivity). Each is optional. Tests use
 fakes for all of them and never need a device, an audio server, a bus or an

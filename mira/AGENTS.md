@@ -82,6 +82,8 @@ Main modules:
   - embodied behavior
   - notice producers (`mira/core/notice_producers.py`): task and system
     events → `"notice"` on the bus, with the noise policy
+  - running tasks (`mira/core/task_activity.py`): executor run ids →
+    `"tasks_changed"`; shown as the TASK_RUNNING condition
   - camera capture (`CameraCapture`): owns the capture thread, the newest
     frame and the camera status
 
@@ -102,8 +104,10 @@ Main modules:
   - desktop actions
 
 - `mira/ui`
-  - desktop shell: one runtime, `MIRA` (main window) or `MIRA-NOTCH` (notch,
-    main window built lazily on double click)
+  - desktop shell: the authority over surfaces; `show_surface` builds the
+    main window or the notch once and reuses it
+  - single instance: `mira/application/instance.py` (lock election, client)
+    and `mira/ui/instance_server.py`; one runtime per user, launchers forward
   - notch (`mira/ui/notch`) and window-system adapters (`mira/ui/desktop`)
   - main window
   - compact chat panel

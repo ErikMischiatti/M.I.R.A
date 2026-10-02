@@ -62,45 +62,77 @@ layering and Qt containment currently have zero declared exceptions.
 The production graph is explicit (`mira/application/composition.py`):
 
 ```text
-mira.main [--notch]                     MIRA: main window · MIRA-NOTCH: --notch
+mira.main [--notch]                     MIRA: main window · MIRA-NOTCH: notch
+  → claim_or_forward(runtime_directory(), SurfaceRequest)
+      another runtime answers → forward the request, exit 0 (no Qt started)
+      runtime lock taken      → this process is the runtime:
   → QApplication
-  → build_application(system_event_sources=…)
+  → build_application(system_event_sources=desktop_system_event_sources())
       → EventBus
       → StateManager → ActivityAuthority
       → QtScheduler
-      → Brain
+      → Brain (→ ActionExecutor: run ids)
       → InteractionManager
       → EmbodiedBehavior
       → CameraCapture(OpenCVCameraSource if MIRA_CAMERA is set, else none)
+      → TaskActivity                     (running actions → "tasks_changed")
       → TaskNoticeProducer               (action results → "notice")
-      → SystemNoticeProducer(sources)    (system changes → "notice"; sources only
-                                          with --notch: desktop_system_event_sources)
-  → DesktopShell(application, mode)     (mira/ui/desktop_shell.py)
+      → SystemNoticeProducer(sources)    (system changes → "notice")
+  → DesktopShell(application, initial_surface, load_notch_session)
       → FaceController → FaceAnimator   (the one embodiment and its clock)
-      MAIN_WINDOW mode:
-      → MainWindow(application, animator)
-      NOTCH mode:
-      → NotchWindow(animator, saved notch settings)   (build_notch)
-      → NotchPresenter(application.scheduler, saved behaviour)
-                                        (what the notch presents; bind_presenter)
-      → MainWindow only on the first OPEN_MAIN_WINDOW (double click / menu)
-  → aboutToQuit: desktop.shutdown(), then application.shutdown()
-  → application.start()   (camera capture if enabled; system sources)
-  → desktop.start()       (shows the mode's surface, starts the animator)
+      → the initial surface only; any other on its first show_surface:
+          MainWindow(application, animator)
+          NotchWindow + NotchPresenter   (notch configuration read here)
+  → InstanceServer(runtime.sock) → DesktopShell.show_surface
+  → aboutToQuit: desktop, application, server, lock — in that order
+  → quit_on_interrupt; application.start(); desktop.start(); server.listen()
   → Qt event loop
 ```
 
-**One runtime, two entry points.** `MIRA` opens the main window and builds
-no notch; it does not read the notch configuration and watches no system
-facility. `MIRA-NOTCH` runs the same `mira.main` with `--notch`: the notch is
-the only initial surface, and the shell builds the `MainWindow` lazily, once,
-the first time the user asks for it, sharing the same `Application`, the same
-`FaceController` and the same animator. Asking again brings that window
-forward; closing it hides it and leaves the notch running
-(`setQuitOnLastWindowClosed(False)`); the notch's context menu offers Quit.
-The notch never imports or builds `MainWindow`, and nothing starts a second
-process. Running both launchers by hand still gives two independent
-processes: there is no single-instance hand-over yet.
+### Single runtime
+
+There is one logical desktop runtime per OS user. `MIRA` and `MIRA-NOTCH`
+are requests for a surface (`main window`, `notch`), not programs of their
+own (`mira/application/instance.py`, `mira/ui/instance_server.py`):
+
+- **Election.** The runtime holds an exclusive `flock` on `runtime.lock` in
+  its runtime directory for its whole life. Taking it is atomic, so of two
+  launchers started at once exactly one wins; the kernel drops it when the
+  process ends, normally, by a crash or by SIGKILL. The fd is not inherited
+  by programs MIRA launches.
+- **Forwarding.** A launcher first tries to deliver its request on
+  `runtime.sock` (one JSON line, `{"show": …, "notch_config": …}`; one
+  `{"ok": true, "pid": …}` back once the surface is shown) and exits 0 if
+  answered — before Qt is ever created. Otherwise it tries the lock;
+  otherwise someone is still starting up, so it waits 0.1 s and tries again,
+  for at most 15 s, after which it reports the unresponsive runtime and
+  exits 1 rather than becoming a second one.
+- **Identity.** `$XDG_RUNTIME_DIR/mira` (per user, 0700, tmpfs, cleared at
+  logout and reboot), else `/tmp/mira-<uid>` created 0700 and refused unless
+  it is this user's and private. Never derived from the working directory.
+  Other users never share it.
+- **Stale state.** A crash leaves `runtime.sock` behind but not the lock.
+  Connecting to it is refused, the next launcher takes the lock and removes
+  the file before listening. Recovery needs no cleanup step and no timeout.
+- **Surfaces.** Every request — the starting launcher's, a forwarded one,
+  the notch's double click and menu — goes through
+  `DesktopShell.show_surface`, which builds a surface once and brings it
+  forward afterwards. Building one never builds the other; the notch's
+  configuration is read when the notch is first built, from the forwarded
+  `--config` if any. Both surfaces share the one `Application`,
+  `FaceController` and animator, and the notch never builds `MainWindow`.
+- **Shutdown.** Closing the main window ends the runtime only while no notch
+  exists (as `MIRA` always behaved); once a notch exists it just hides the
+  window. The notch's Quit and Ctrl+C end the whole runtime: the shell, then
+  the application (producers first), then the server (the socket file is
+  removed), then the lock. A forwarding launcher exits as soon as its
+  request is answered.
+- **SIGTERM** is not handled: the process ends without the orderly shutdown
+  and leaves the socket file, which the next launcher removes (as after a
+  crash). Use Quit or Ctrl+C.
+- **Not here:** no network listener, no generic remote control. Requests are
+  limited to showing a surface. `MIRA-TUNE` is a separate development tool,
+  not part of the runtime.
 
 `mira.application` must not import `mira.ui`, and the face's runtime is a UI
 object, so the UI has its own composition owner: `DesktopShell` creates one
@@ -348,8 +380,48 @@ EmbodimentIntent → expression → frame ──┴─▶ EmbodimentFrame
   half their width, round caps included), and that rectangle is what the
   motion envelope already bounds, so the notch's eye-safety rule and the
   content placement hold for cue shapes unchanged.
-- **Not cues:** ongoing states. A long-running task would be an activity (a
-  future `ActivityState`), not a cue; nothing produces one today.
+- **Not cues:** ongoing states. Those are *conditions*, below.
+
+### Persistent conditions and running tasks
+
+`EmbodimentCondition.TASK_RUNNING` is the persistent layer between the
+expression and transient cues. These stay distinct:
+
+| | lasts | example |
+|---|---|---|
+| activity / expression | until the activity authority changes it | THINKING |
+| condition | exactly as long as it holds, no timeout | TASK_RUNNING |
+| cue | a fixed moment | SUCCESS, WARNING, ERROR |
+| notice | `notice_duration_ms` on the notch | "Failed" |
+| presence | while an expansion reason holds | EXPANDED |
+
+- **Source.** `ActionExecutor` gives each execution that actually starts a
+  `run_id`, on `action_started` and on its result; a request refused first
+  (invalid, unknown, blocked, awaiting confirmation) has none and never
+  runs. `TaskActivity` (`mira/core/task_activity.py`) keeps the set of
+  running ids from those events alone and emits `"tasks_changed"`
+  (`RunningTasks`) on every change. Overlapping runs keep it active until the
+  last ends; unknown or never-started results change nothing.
+- **Order.** `TaskActivity` subscribes before the notice producer, so a run
+  ends (TASK_RUNNING clears) before its SUCCESS/ERROR notice; confirmation
+  never starts a run and produces only the WARNING notice.
+- **Resolution** in `FaceController.get_frame`: a showing cue, else the
+  strongest condition, else the expression. An ERROR shows over working eyes
+  and the working eyes come back when it ends if work still runs; if the
+  work ended meanwhile, the plain expression returns. No layer writes into
+  another.
+- **Treatment.** `FOCUSED`: the natural eye narrowed by up to 40 % of its
+  height, breathing slowly (2.4 s, between 80 % and 100 % of the
+  treatment), eased in and out over 0.3 s, and still blinking. Inside the
+  eye's own rectangle, so eye safety holds.
+- **Surfaces.** The condition lives in the shared controller: the main
+  window's face and the notch show it alike. The notch additionally shows
+  "Working" as its content when open (notice > running work > activity) and
+  never expands for it.
+- **Today** actions execute synchronously on the UI thread, so a real run
+  opens and closes within one call and no frame shows it. The semantics are
+  complete and become visible once any action runs longer; MIRA-TUNE's
+  "Task running" preview exercises the same path meanwhile.
 
 ## 9a. Notch presentation
 
@@ -452,10 +524,20 @@ adapters (mira/adapters)            SystemNoticeProducer       │              
   its arrival), unchanged repeats within 3 s are dropped, and connectivity is
   debounced for 3 s with the first state as baseline, so a short drop or
   flapping says nothing. Timers run on the `Scheduler` port.
-- **Who watches.** Only `MIRA-NOTCH` passes system sources: the main window
-  alone has nowhere ambient to show them. Sources start with
-  `Application.start()` and stop first in `Application.shutdown()`, which
-  terminates the `pw-dump` child and closes the socket and the bus match.
+- **Ownership.** The one runtime owns one `SystemNoticeProducer` with one
+  instance of each source, built in `build_application`, started by
+  `Application.start()` (idempotent) and stopped first by
+  `Application.shutdown()`. Surface requests never create producers.
+
+| Producer | created / started / stopped by | on failure |
+|---|---|---|
+| `TaskActivity`, `TaskNoticeProducer` | composition; live with the graph | — |
+| USB (`LinuxUsbDeviceSource`) | producer | ENOBUFS (dropped messages) is skipped; any other socket error stops USB watching with one log line, never a busy loop |
+| PipeWire (`PipeWireAudioSource`) | producer | `pw-dump` exiting or failing to start is retried after 1 s, doubling to 30 s, back to 1 s after a minute of stable running; one child at a time; the restarted monitor's first dump is reconciled by node name, so only real changes are announced; an intentional shutdown never restarts |
+| NetworkManager | producer | unavailable if NetworkManager is absent at start (not retried); a restart of NetworkManager itself relies on QtDBus following the service name (not exercised) |
+
+Exits, retries and recoveries are logged once each (`[notices] …`);
+ordinary device events are not.
 - **Filtering** stays the per-category automatic-expansion preference: one
   switch each for alerts, device changes, task results and connectivity
   changes. A disabled category still shows its notice when the notch is open
@@ -482,9 +564,9 @@ allow-list/filter policy in `mira.core` deciding which become notices.
 
 | | |
 |---|---|
-| Implemented | launcher semantics and lazy main window; all-workspace presence on X11; configurable expanded content; USB, audio-topology and connectivity notices; per-category expansion; SUCCESS/WARNING/ERROR eye cues on every surface |
-| Prepared | `SystemEventSource` port for other platforms and embodiments; `EyeShape` in `EmbodimentFrame` for other renderers; producers independent of any UI |
-| Future | desktop-notification source with a filter policy; single-instance hand-over between launchers; Wayland workspace presence; ongoing-task activity; microphone level |
+| Implemented | one runtime per user with surface requests; lazy main window and notch; all-workspace presence on X11; configurable expanded content; USB, audio-topology and connectivity notices with supervised PipeWire monitoring; per-category expansion; SUCCESS/WARNING/ERROR cues and the TASK_RUNNING condition on every surface |
+| Prepared | `SystemEventSource` port for other platforms and embodiments; `EyeShape` in `EmbodimentFrame` for other renderers; run ids and a running-task set ready for asynchronous actions; one obvious runtime owner for a future audio subsystem |
+| Future | asynchronous (long) actions; desktop-notification source with a filter policy; Wayland workspace presence; microphone level |
 
 **Input level (not implemented).** No audio subsystem exists, so there is no
 real microphone level to show. The PipeWire source reports device *topology*
@@ -570,7 +652,8 @@ views sharing one embodiment share one animator. In the application that
 animator and its controller belong to `DesktopShell`, which outlives every
 surface showing them. Each `FaceController` owns one `MicroMotions` instance (injectable for
 tests); it holds no timer and has nothing to shut down. `Application` owns the
-shared scheduler boundary, the camera capture and the system event sources
+shared scheduler boundary, the camera capture and the system event sources.
+`mira.main` owns the single-instance lock and server and releases them last
 (which it stops first: the `pw-dump` child is terminated, the netlink socket
 closed, the D-Bus match removed, and pending producer timers cancelled).
 `QApplication.aboutToQuit`
@@ -600,8 +683,8 @@ thread pool owns its runnable until it returns. Current LLM network calls use a
 configured socket/I/O timeout; this is not a wall-clock deadline for a worker.
 
 EventBus subscriptions retain application-lifetime components, including the
-single main window. There is no unsubscribe infrastructure because the current
-runtime creates one graph/window and exits when it closes. Desktop applications,
+single main window. There is no unsubscribe infrastructure because the runtime
+creates one graph, at most one main window and one notch, and exits as a whole. Desktop applications,
 URLs, directories, and notifications are fire-and-forget external effects;
 processes launched by M.I.R.A. are not retained or terminated at shutdown.
 

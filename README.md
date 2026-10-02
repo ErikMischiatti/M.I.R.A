@@ -34,8 +34,10 @@ expresses what it is doing.
 - **Ambient notch** (`MIRA-NOTCH`): MIRA's eyes in a small notch at the top
   of the screen, on every X11 workspace. It expands on hover and for real
   notices — action results, USB and audio devices, network connectivity —
-  and the eyes react to success, warnings and errors. Double-click opens the
-  main window of the same runtime. Tunable with `MIRA-TUNE`.
+  and the eyes react to success, warnings and errors, and narrow while MIRA
+  is working on a task. `MIRA` and `MIRA-NOTCH` share one runtime per user:
+  the second only asks the first to show its surface. Double-click the notch
+  to open the main window. Tunable with `MIRA-TUNE`.
 - **Debug drawer**: hidden by default. It offers live tuning of expression
   geometry, animation, and blink parameters, with save/reload of the profile
   file, and shows the camera status.
