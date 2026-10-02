@@ -80,6 +80,7 @@ from mira.ui.notch.visual_config import (
     MAX_TRANSITION_DURATION_MS,
     InvalidVisualConfig,
     NotchVisualConfig,
+    fit_expanded_to_content,
 )
 
 
@@ -682,13 +683,20 @@ class NotchDebugWindow(QWidget):
 
     def _apply_visual_config(self):
         try:
-            self.notch.apply_visual_config(self._control_config())
+            config = self._control_config()
+            self.notch.apply_visual_config(config)
         except InvalidVisualConfig as error:
-            # The eyes would leave the notch: keep the last valid settings.
+            # The eyes or the content would leave the notch: keep the last
+            # valid settings, and say what would make the content fit.
             self._visual_valid = False
             eyes = any(" eye " in problem for problem in error.problems)
             reason = "eye motion would be clipped" if eyes else "the expanded content would not fit"
-            self.error_label.setText(f"Not applied — {reason}: " + "; ".join(error.problems))
+            hint = ""
+            if not eyes:
+                fitted = fit_expanded_to_content(config, self.notch.motion_envelope).geometry.expanded
+                hint = (f" — raise Expanded geometry to at least {fitted.width:g} × {fitted.height:g} px, "
+                        "or make the content smaller")
+            self.error_label.setText(f"Not applied — {reason}: " + "; ".join(error.problems) + hint)
         except ValueError as error:
             self._visual_valid = False
             self.error_label.setText(f"Not applied: {error}")

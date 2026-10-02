@@ -131,7 +131,7 @@ def test_content_below_the_notch_is_invalid_and_never_applied(application):
 
 def test_a_symbol_wider_than_the_room_between_the_corners_is_invalid():
     geometry = NotchGeometry(compact=NotchSize(60, 32, 14), expanded=NotchSize(60, 130, 28))
-    config = with_content(NotchVisualConfig(geometry=geometry), symbol_px=60.0, text_px=10.0, eye_gap_px=0.0)
+    config = with_content(NotchVisualConfig(geometry=geometry), symbol_px=60.0, text_px=12.0, eye_gap_px=0.0)
 
     problems = content_problems(content_row_for(config), geometry)
 
@@ -147,7 +147,8 @@ def test_the_rounded_corners_narrow_the_content_near_the_bottom():
 
 
 @pytest.mark.parametrize("field, value", [
-    ("symbol_px", 4.0), ("symbol_px", 200.0), ("text_px", 2.0), ("spacing_px", -1.0),
+    ("symbol_px", 4.0), ("symbol_px", 13.0), ("symbol_px", 200.0), ("text_px", 2.0), ("text_px", 11.0),
+    ("spacing_px", -1.0),
     ("eye_gap_px", -0.5), ("eye_gap_px", float("nan")),
 ])
 def test_impossible_content_values_are_rejected(field, value):
@@ -180,7 +181,7 @@ def test_larger_content_paints_more_pixels(application):
             notch.hide()
             notch.deleteLater()
 
-    small = lit_content(with_content(TUNED, symbol_px=12.0, text_px=9.0, spacing_px=6.0, eye_gap_px=10.0))
+    small = lit_content(with_content(TUNED, symbol_px=14.0, text_px=12.0, spacing_px=6.0, eye_gap_px=10.0))
     large = lit_content(with_content(TUNED, symbol_px=30.0, text_px=22.0, spacing_px=10.0, eye_gap_px=10.0))
 
     assert small > 0

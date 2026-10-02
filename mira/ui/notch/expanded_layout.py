@@ -38,8 +38,10 @@ from dataclasses import dataclass
 from mira.ui.notch.presence import NotchGeometry, NotchSize, Rect
 
 
-MIN_SYMBOL_PX, MAX_SYMBOL_PX = 8.0, 96.0
-MIN_TEXT_PX, MAX_TEXT_PX = 6.0, 72.0
+# The readable floor: below these a notice is not comfortably legible at
+# desktop distance, so no configuration may go lower.
+MIN_SYMBOL_PX, MAX_SYMBOL_PX = 14.0, 96.0
+MIN_TEXT_PX, MAX_TEXT_PX = 12.0, 72.0
 MAX_SPACING_PX = 80.0
 MAX_EYE_GAP_PX = 200.0
 
@@ -59,14 +61,15 @@ class NotchContentStyle:
     """How large the expanded content is and where it sits below the eyes.
 
     All in pixels. The defaults are production for the default notch
-    geometry; files written before this style existed are migrated to
-    `legacy_content_style`, which reproduces their previous layout.
+    geometry: a symbol and a label that read at desktop distance, centred in
+    the band the default expanded notch reveals. Files from before the
+    readable floor are lifted to it (`lifted_to_readable`).
     """
 
-    symbol_px: float = 26.0
-    text_px: float = 18.0
-    spacing_px: float = 10.0
-    eye_gap_px: float = 19.0
+    symbol_px: float = 28.0
+    text_px: float = 20.0
+    spacing_px: float = 12.0
+    eye_gap_px: float = 22.0
 
     def __post_init__(self):
         for name, value, low, high in (
@@ -174,37 +177,18 @@ def content_problems(row: ContentRow, geometry: NotchGeometry) -> list[str]:
     return problems
 
 
-# The layout before `NotchContentStyle`: the symbol a share of the band below
-# the compact notch, capped, the label and spacing proportional to it, the
-# group centred in that band. Only migration uses it.
-_LEGACY_SYMBOL_SHARE = 0.34
-_LEGACY_MAX_SYMBOL_PX = 20.0
-_LEGACY_LABEL_SHARE = 0.72
-_LEGACY_GAP_SHARE = 0.5
+def lifted_to_readable(symbol_px: float, text_px: float, spacing_px: float, eye_gap_px: float) -> NotchContentStyle:
+    """A style from older values, with the symbol and text raised to the floor.
 
-
-def legacy_content_style(geometry: NotchGeometry, eye_bottom: float) -> NotchContentStyle:
-    """The style that draws what a pre-style configuration drew.
-
-    Used when a file older than the content settings is loaded, so its
-    content looks exactly as it did; the user can then enlarge it.
+    Spacing and gap keep their values (clamped to their ranges); nothing is
+    made smaller.
     """
 
-    band = geometry.expanded.height - geometry.compact.height
-    symbol = min(max(band * _LEGACY_SYMBOL_SHARE, MIN_SYMBOL_PX), _LEGACY_MAX_SYMBOL_PX)
-    style = NotchContentStyle(
-        symbol_px=symbol,
-        text_px=max(symbol * _LEGACY_LABEL_SHARE, MIN_TEXT_PX),
-        spacing_px=symbol * _LEGACY_GAP_SHARE,
-        eye_gap_px=0.0,
-    )
-    centre = geometry.compact.height + band / 2.0
-    gap = centre - style.group_height / 2.0 - eye_bottom
     return NotchContentStyle(
-        symbol_px=style.symbol_px,
-        text_px=style.text_px,
-        spacing_px=style.spacing_px,
-        eye_gap_px=min(max(gap, 0.0), MAX_EYE_GAP_PX),
+        symbol_px=min(max(symbol_px, MIN_SYMBOL_PX), MAX_SYMBOL_PX),
+        text_px=min(max(text_px, MIN_TEXT_PX), MAX_TEXT_PX),
+        spacing_px=min(max(spacing_px, 0.0), MAX_SPACING_PX),
+        eye_gap_px=min(max(eye_gap_px, 0.0), MAX_EYE_GAP_PX),
     )
 
 

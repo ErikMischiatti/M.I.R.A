@@ -164,7 +164,7 @@ def test_expanded_controls_update_the_expanded_notch_live(env):
     env.debug.expanded_width.setValue(420.0)
     env.debug.expanded_height.setValue(110.0)
 
-    assert env.notch.visual_size == NotchSize(420.0, 110.0, 24.0)
+    assert env.notch.visual_size == NotchSize(420.0, 110.0, NotchSettings().visual.geometry.expanded.corner_radius)
     assert (env.notch.width(), env.notch.height()) == (420, 110)
 
 
@@ -815,6 +815,7 @@ def test_content_that_would_not_fit_is_reported_and_not_applied(env):
 
     assert notch.visual_config == valid
     assert "leaves the notch bottom" in debug.error_label.text()
+    assert "raise Expanded geometry to at least" in debug.error_label.text()
     assert debug.visual_label.text() == "Invalid (not applied)"
     assert not debug.save_button.isEnabled()
 

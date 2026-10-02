@@ -187,6 +187,10 @@ from PySide6.QtWidgets import QApplication  # noqa: E402
 import mira.ui.notch.notch_window as notch_window_module  # noqa: E402
 from mira.ui.notch.notch_window import NotchWindow  # noqa: E402
 from mira.ui.notch.screens import monitor_identity  # noqa: E402
+from mira.ui.notch.presence import NotchGeometry
+
+# The window is as wide as the expanded notch, so placement follows its width.
+EXPANDED_WIDTH = int(NotchGeometry().expanded.width)
 
 
 class FakeScreen(QObject):
@@ -276,7 +280,7 @@ def test_the_reported_three_monitor_setup_selects_the_central_hdmi(desktop, made
     made.append(notch)
 
     assert notch.tracked_screen is philips
-    assert (notch.x(), notch.y()) == (1920 + (2560 - 360) // 2, 313)
+    assert (notch.x(), notch.y()) == (1920 + (2560 - EXPANDED_WIDTH) // 2, 313)
 
 
 def test_unplugging_externals_moves_to_the_laptop_and_replugging_returns_flush(desktop, made):
@@ -313,7 +317,7 @@ def test_a_preferred_monitor_is_left_when_unplugged_and_returned_to(desktop, mad
     desktop.plug(returning)
     assert notch.tracked_screen is returning
     assert notch.selection.mode is SelectionMode.PREFERRED
-    assert (notch.x(), notch.y()) == (4480 + (1080 - 360) // 2, 0)
+    assert (notch.x(), notch.y()) == (4480 + (1080 - EXPANDED_WIDTH) // 2, 0)
 
 
 def test_changing_the_preference_reselects_at_once(desktop, made):

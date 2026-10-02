@@ -195,6 +195,39 @@ def visual_config_problems(config: NotchVisualConfig, envelope: PoseEnvelope | N
     return problems
 
 
+# How tall an expanded notch may grow to make room for its content.
+MAX_FITTED_EXPANDED_HEIGHT = 600.0
+
+
+def fit_expanded_to_content(config: NotchVisualConfig, envelope: PoseEnvelope | None = None) -> NotchVisualConfig:
+    """``config`` with an expanded notch just tall (and wide) enough for its content.
+
+    Only grows, and only the expanded size: the compact notch, the eyes and
+    every other value stay as they are. Used when an older file is lifted to
+    the readable floor, so its content fits instead of making it invalid.
+    Returns ``config`` unchanged when the content already fits.
+    """
+
+    envelope = production_envelope() if envelope is None else envelope
+    geometry = config.geometry
+    expanded = geometry.expanded
+    style = config.content_style
+    width_needed = style.symbol_px + 2.0 * (expanded.corner_radius + 8.0 + 1.0)
+    width = max(expanded.width, math.ceil(width_needed))
+    height = expanded.height
+    while True:
+        candidate_size = NotchSize(width, height, min(expanded.corner_radius, width / 2.0, height / 2.0))
+        candidate = NotchVisualConfig(
+            NotchGeometry(geometry.compact, candidate_size, geometry.top_margin, geometry.offset_x),
+            config.eye_style, config.transition_duration_ms, style,
+        )
+        if not content_problems(content_row_for(candidate, envelope), candidate.geometry):
+            return candidate if candidate_size != expanded else config
+        if height >= MAX_FITTED_EXPANDED_HEIGHT:
+            return candidate
+        height = float(math.floor(height) + 1)
+
+
 def validate_visual_config(config: NotchVisualConfig, envelope: PoseEnvelope | None = None) -> NotchVisualConfig:
     """Return ``config`` if valid; raise `InvalidVisualConfig` otherwise."""
 

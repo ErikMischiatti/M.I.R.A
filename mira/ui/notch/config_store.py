@@ -19,12 +19,12 @@ Saving validates first and writes atomically: the settings go to a temporary
 file in the same directory, are flushed to disk, and replace the old file in
 one rename, so a crash leaves either the old file or the new one.
 
-Schema, version 3 (every key required, no others allowed, except as noted)::
+Schema, version 4 (every key required, no others allowed, except as noted)::
 
     {
-      "version": 3,
+      "version": 4,
       "compact":   {"width": 200.0, "height": 32.0, "radius": 14.0},
-      "expanded":  {"width": 360.0, "height": 96.0, "radius": 24.0},
+      "expanded":  {"width": 400.0, "height": 112.0, "radius": 26.0},
       "placement": {"offset_x": 0.0, "top_margin": 0.0},
       "eyes": {"height_share": 0.28, "top_offset": 0.0, "center_offset": 0.0,
                "spacing": 300.0, "motion_gain": 0.5},
@@ -34,8 +34,8 @@ Schema, version 3 (every key required, no others allowed, except as noted)::
                     "automatic_expansion": {"alert": true, "device": true, "task": false,
                                             "connectivity": true},
                     "notice_duration_ms": 4000},
-      "content": {"symbol_px": 26.0, "text_px": 18.0, "spacing_px": 10.0,
-                  "eye_gap_px": 19.0}
+      "content": {"symbol_px": 28.0, "text_px": 20.0, "spacing_px": 12.0,
+                  "eye_gap_px": 22.0}
     }
 
 ``content`` is the expanded content's `NotchContentStyle`: symbol side,
@@ -49,13 +49,14 @@ events, so a new kind of event normally needs no new key. A category
 missing from the file takes its production default, so adding a category
 later needs no new schema version; an unknown category is still an error.
 
-Older versions still load, migrated in memory, reported as ``migrated_from``,
-and left untouched on disk until Save rewrites them as version 3:
-
-- version 2 is version 3 without ``content``; it gets the content style that
-  reproduces the layout it had (`legacy_content_style`), so nothing moves or
-  grows until the user tunes it;
-- version 1 also lacks ``behaviour``, which gets the production defaults.
+Version 4 is version 3 with the readable floor (symbol ≥ 14 px, text ≥
+12 px). Older versions still load, migrated in memory, reported as
+``migrated_from``, and left untouched on disk until Save rewrites them as
+version 4. Each is made readable without tuning: its content is lifted to
+the floor (version 3) or gets the production content style (versions 1 and
+2, which had none), and its *expanded* notch grows just enough to fit it
+(`fit_expanded_to_content`); the compact notch and the eyes never change.
+Version 1 also lacks ``behaviour``, which gets the production defaults.
 ``display.monitor`` is null for automatic selection, or the preferred
 monitor's identity: ``{"name": ..., "manufacturer": ..., "model": ...,
 "serial": ...}``.
@@ -74,24 +75,23 @@ from typing import Any
 
 from mira.domain.motion_envelope import PoseEnvelope
 from mira.ui.notch.eye_layout import NotchEyeStyle, production_envelope
-from mira.ui.notch.expanded_layout import NotchContentStyle, legacy_content_style
+from mira.ui.notch.expanded_layout import NotchContentStyle, lifted_to_readable
 from mira.domain.notice import NoticeCategory
 from mira.ui.notch.presence import NotchGeometry, NotchSize
 from mira.ui.notch.presentation import NotchBehaviour
 from mira.ui.notch.screen_selection import MonitorIdentity, MonitorPreference
 from mira.ui.notch.visual_config import (
     NotchVisualConfig,
-    eye_layout_for,
-    eye_motion_bottom,
+    fit_expanded_to_content,
     validate_visual_config,
     visual_config_problems,
 )
 
 
 CONFIG_PATH_ENV = "MIRA_NOTCH_CONFIG"
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 # Older versions this store still reads, migrating them in memory.
-MIGRATABLE_VERSIONS = frozenset({1, 2})
+MIGRATABLE_VERSIONS = frozenset({1, 2, 3})
 
 
 @dataclass(frozen=True, slots=True)
@@ -261,12 +261,21 @@ def settings_from_dict(data: Any, envelope: PoseEnvelope | None = None) -> Notch
         raise
     except ValueError as error:
         raise ConfigError(str(error)) from error
-    if version >= 3:
+    if version >= 4:
         content = _content(root["content"])
+    elif version == 3:
+        values = _section(root["content"], "content", {"symbol_px", "text_px", "spacing_px", "eye_gap_px"})
+        try:
+            content = lifted_to_readable(**{key: _number(values, key, "content") for key in values})
+        except ValueError as error:
+            raise ConfigError(str(error)) from error
     else:
-        envelope = production_envelope() if envelope is None else envelope
-        content = legacy_content_style(visual.geometry, eye_motion_bottom(eye_layout_for(visual, envelope), envelope))
+        content = NotchContentStyle()
     visual = NotchVisualConfig(visual.geometry, visual.eye_style, visual.transition_duration_ms, content)
+    if version < 4:
+        # Readable without tuning: an older file's content is lifted to the
+        # readable floor and its expanded notch grows to fit it.
+        visual = fit_expanded_to_content(visual, envelope)
     behaviour = NotchBehaviour() if version < 2 else _behaviour(root["behaviour"])
     return NotchSettings(visual=visual, monitor=_monitor(display["monitor"]), behaviour=behaviour)
 

@@ -23,7 +23,7 @@ from mira.ui.notch.config_store import (
     settings_to_dict,
 )
 from mira.domain.notice import NoticeCategory
-from mira.ui.notch.expanded_layout import NotchContentStyle, legacy_content_style
+from mira.ui.notch.expanded_layout import MIN_SYMBOL_PX, MIN_TEXT_PX, NotchContentStyle
 from mira.ui.notch.eye_layout import NotchEyeStyle, production_envelope
 from mira.ui.notch.presentation import NotchBehaviour
 from mira.ui.notch.presence import NotchGeometry, NotchSize
@@ -94,7 +94,7 @@ def test_the_defaults_serialize_to_the_documented_schema():
     assert data == {
         "version": SCHEMA_VERSION,
         "compact": {"width": 200.0, "height": 32.0, "radius": 14.0},
-        "expanded": {"width": 360.0, "height": 96.0, "radius": 24.0},
+        "expanded": {"width": 400.0, "height": 112.0, "radius": 26.0},
         "placement": {"offset_x": 0.0, "top_margin": 0.0},
         "eyes": {"height_share": 0.28, "top_offset": 0.0, "center_offset": 0.0, "spacing": 300.0, "motion_gain": 0.5},
         "animation": {"duration_ms": 200},
@@ -104,7 +104,7 @@ def test_the_defaults_serialize_to_the_documented_schema():
             "automatic_expansion": {"alert": True, "device": True, "task": False, "connectivity": True},
             "notice_duration_ms": 4000,
         },
-        "content": {"symbol_px": 26.0, "text_px": 18.0, "spacing_px": 10.0, "eye_gap_px": 19.0},
+        "content": {"symbol_px": 28.0, "text_px": 20.0, "spacing_px": 12.0, "eye_gap_px": 22.0},
     }
 
 
@@ -187,10 +187,11 @@ def structurally_broken():
         "unknown behaviour key": changed(lambda d: d["behaviour"].update(sticky=True)),
         "unknown category": changed(lambda d: d["behaviour"]["automatic_expansion"].update(perception=True)),
         "content in version 2": changed(lambda d: d.update(version=2)),
+        "text below the readable floor": changed(lambda d: d["content"].update(text_px=8.0)),
         "missing content": changed(lambda d: d.pop("content")),
         "unknown content key": changed(lambda d: d["content"].update(offset_x=2.0)),
         "missing content key": changed(lambda d: d["content"].pop("text_px")),
-        "symbol too small": changed(lambda d: d["content"].update(symbol_px=2.0)),
+        "symbol too small": changed(lambda d: d["content"].update(symbol_px=10.0)),
         "negative eye gap": changed(lambda d: d["content"].update(eye_gap_px=-1.0)),
         "string text size": changed(lambda d: d["content"].update(text_px="18")),
         "automatic expansion not an object": changed(lambda d: d["behaviour"].update(automatic_expansion=[])),
@@ -389,9 +390,16 @@ def test_an_invalid_file_has_no_baseline_and_reload_keeps_the_last_good_one(path
 # --- Older versions ---------------------------------------------------------------
 
 
+def version_3(settings: NotchSettings) -> dict:
+    """``settings`` as the version-3 store wrote them: same keys, no floor."""
+    data = settings_to_dict(settings)
+    data["version"] = 3
+    return data
+
+
 def version_2(settings: NotchSettings) -> dict:
     """``settings`` exactly as the version-2 store wrote them: no content."""
-    data = settings_to_dict(settings)
+    data = version_3(settings)
     data.pop("content")
     data["version"] = 2
     return data
@@ -405,14 +413,11 @@ def version_1(settings: NotchSettings) -> dict:
     return data
 
 
-def legacy(visual: NotchVisualConfig) -> NotchContentStyle:
-    envelope = production_envelope()
-    return legacy_content_style(visual.geometry, eye_motion_bottom(eye_layout_for(visual, envelope), envelope))
-
-
-def same_except_content(loaded: NotchVisualConfig, expected: NotchVisualConfig) -> bool:
-    return (loaded.geometry, loaded.eye_style, loaded.transition_duration_ms) == (
-        expected.geometry, expected.eye_style, expected.transition_duration_ms)
+def same_except_expanded_and_content(loaded: NotchVisualConfig, expected: NotchVisualConfig) -> bool:
+    return (loaded.geometry.compact, loaded.geometry.top_margin, loaded.geometry.offset_x, loaded.eye_style,
+            loaded.transition_duration_ms) == (
+        expected.geometry.compact, expected.geometry.top_margin, expected.geometry.offset_x, expected.eye_style,
+        expected.transition_duration_ms)
 
 
 def test_a_missing_category_switch_takes_its_production_default(path):
@@ -428,53 +433,68 @@ def test_a_missing_category_switch_takes_its_production_default(path):
             assert behaviour.expands_for(category) == NotchBehaviour().expands_for(category), category
 
 
-@pytest.mark.parametrize("version", [1, 2])
-def test_an_older_file_keeps_the_content_layout_it_had(path, version):
-    write(path, (version_1 if version == 1 else version_2)(TUNED))
+OLDER = {1: version_1, 2: version_2, 3: version_3}
+
+# What the user's own tall-compact file looked like: only 25 px revealed
+# below the eyes, which made the old content tiny.
+TALL_COMPACT = NotchSettings(visual=NotchVisualConfig(
+    geometry=NotchGeometry(NotchSize(240, 75, 25), NotchSize(500, 100, 31), top_margin=2.0, offset_x=2.0),
+    eye_style=NotchEyeStyle(height_share=0.25, spacing=290.0, motion_gain=0.8),
+    content_style=NotchContentStyle(symbol_px=14.0, text_px=12.0, spacing_px=6.0, eye_gap_px=0.0),
+))
+
+
+@pytest.mark.parametrize("version", [1, 2, 3])
+def test_an_older_file_loads_readable_and_untouched(path, version):
+    write(path, OLDER[version](TUNED))
     before = path.read_bytes()
 
     loaded = load_settings(path)
 
-    assert loaded.source is ConfigSource.SAVED
-    assert loaded.migrated_from == version
+    assert loaded.source is ConfigSource.SAVED and loaded.migrated_from == version
     assert loaded.diagnostic is None
-    assert same_except_content(loaded.settings.visual, TUNED.visual)
-    assert loaded.settings.visual.content_style == legacy(TUNED.visual)
-    assert loaded.settings.monitor == TUNED.monitor
+    assert same_except_expanded_and_content(loaded.settings.visual, TUNED.visual)
+    content = loaded.settings.visual.content_style
+    assert content.symbol_px >= MIN_SYMBOL_PX and content.text_px >= MIN_TEXT_PX
+    assert config_store.visual_config_problems(loaded.settings.visual) == []
     # Loading never writes: the file stays as it was until Save.
     assert path.read_bytes() == before
 
 
-def test_legacy_content_draws_what_the_old_layout_drew():
-    # The pre-content layout: symbol min(34 % of the band, 20 px), label
-    # 72 % and spacing 50 % of it, the group centred in the band below the
-    # compact notch.
-    for geometry in (NotchGeometry(), TUNED.visual.geometry,
-                     NotchGeometry(NotchSize(240, 75, 25), NotchSize(500, 100, 31))):
-        visual = NotchVisualConfig(geometry=geometry, eye_style=NotchEyeStyle(height_share=0.25))
-        visual = NotchVisualConfig(visual.geometry, visual.eye_style, visual.transition_duration_ms, legacy(visual))
-        row = content_row_for(visual)
-        band = geometry.expanded.height - geometry.compact.height
-        symbol = min(band * 0.34, 20.0)
+@pytest.mark.parametrize("version", [1, 2, 3])
+def test_a_cramped_older_file_grows_only_its_expanded_notch(version):
+    data = OLDER[version](TALL_COMPACT)
+    if version == 3:
+        data["content"].update(symbol_px=8.5, text_px=6.12, spacing_px=4.25, eye_gap_px=9.6)
 
-        assert row.symbol_px == pytest.approx(symbol)
-        assert row.label_px == pytest.approx(symbol * 0.72)
-        assert row.gap_px == pytest.approx(symbol * 0.5)
-        assert row.center_y == pytest.approx(geometry.compact.height + band / 2.0)
+    visual = settings_from_dict(data).visual
+
+    assert visual.geometry.compact == TALL_COMPACT.visual.geometry.compact
+    assert visual.geometry.expanded.width == 500.0
+    if version < 3:
+        # The production content does not fit 25 px: only the expanded notch grows.
+        assert visual.geometry.expanded.height > 100.0
+    else:
+        # Lifted to the floor it fits as it is; nothing grows needlessly.
+        assert visual.geometry.expanded.height >= 100.0
+    assert visual.content_style.symbol_px >= MIN_SYMBOL_PX and visual.content_style.text_px >= MIN_TEXT_PX
+    assert config_store.visual_config_problems(visual) == []
+    row = content_row_for(visual)
+    assert row.area.height >= row.label_px  # a full line of readable text, not 25 px of squeeze
 
 
-def test_the_users_kind_of_version_1_file_still_loads():
-    # Tall compact notch, small revealed band: the case that made the old
-    # content tiny. It must load as it was, never fall back to the defaults.
-    data = version_1(NotchSettings(visual=NotchVisualConfig(
-        geometry=NotchGeometry(NotchSize(240, 75, 25), NotchSize(500, 100, 31), top_margin=2.0, offset_x=2.0),
-        eye_style=NotchEyeStyle(height_share=0.25, spacing=290.0, motion_gain=0.8),
-    )))
+def test_versions_1_and_2_get_the_production_content(path):
+    for version in (1, 2):
+        assert settings_from_dict(OLDER[version](TUNED)).visual.content_style == NotchContentStyle()
 
-    settings = settings_from_dict(data)
 
-    assert settings.visual.content_style.symbol_px == pytest.approx(8.5)
-    assert config_store.visual_config_problems(settings.visual) == []
+def test_a_version_3_style_is_lifted_but_never_shrunk():
+    data = version_3(TUNED)
+    data["content"].update(symbol_px=9.0, text_px=30.0, spacing_px=5.0, eye_gap_px=3.0)
+
+    content = settings_from_dict(data).visual.content_style
+
+    assert (content.symbol_px, content.text_px, content.spacing_px, content.eye_gap_px) == (MIN_SYMBOL_PX, 30.0, 5.0, 3.0)
 
 
 def test_a_version_1_file_loads_with_the_production_behaviour(path):
@@ -485,9 +505,9 @@ def test_a_version_1_file_loads_with_the_production_behaviour(path):
     assert loaded.settings.behaviour == NotchBehaviour()
 
 
-@pytest.mark.parametrize("version", [1, 2])
+@pytest.mark.parametrize("version", [1, 2, 3])
 def test_an_older_file_is_upgraded_only_by_saving(path, version):
-    write(path, (version_1 if version == 1 else version_2)(TUNED))
+    write(path, OLDER[version](TUNED))
     session = ConfigSession(path)
 
     assert not session.has_unsaved_changes(session.startup_settings)

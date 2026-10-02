@@ -110,7 +110,9 @@ class NotchGeometry:
     """
 
     compact: NotchSize = NotchSize(width=200.0, height=32.0, corner_radius=14.0)
-    expanded: NotchSize = NotchSize(width=360.0, height=96.0, corner_radius=24.0)
+    # Tall enough below the compact band for a readable notice, the
+    # listening waveform or the controls; the compact notch is unchanged.
+    expanded: NotchSize = NotchSize(width=400.0, height=112.0, corner_radius=26.0)
     top_margin: float = 0.0
     offset_x: float = 0.0
 
