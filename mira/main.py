@@ -28,7 +28,8 @@ from pathlib import Path
 from PySide6.QtCore import QSocketNotifier, QTimer
 from PySide6.QtWidgets import QApplication
 
-from mira.application.composition import build_application, desktop_audio_backend, desktop_system_event_sources
+from mira.application.audio import desktop_audio_backend
+from mira.application.composition import build_application, desktop_system_event_sources
 from mira.application.instance import (
     Forwarded,
     InstanceError,
@@ -162,6 +163,7 @@ def main(argv: list[str] | None = None, *, claim=claim_runtime):
         application,
         initial_surface=surface,
         listening_settings=listening.settings,
+        listening_session=listening,
         # Read only when a notch is first requested, by this launcher or a
         # later one; a later one may name its own file.
         load_notch_session=lambda path=None: load_notch_session(path or config),

@@ -101,7 +101,7 @@ def test_main_connects_every_shutdown_before_running(monkeypatch, argv, surface)
             return 0
 
     class FakeDesktop:
-        def __init__(self, application, *, initial_surface, load_notch_session, listening_settings):
+        def __init__(self, application, *, initial_surface, load_notch_session, listening_settings, listening_session):
             events.append(f"desktop built ({initial_surface.value})")
             assert application is runtime
 
@@ -215,7 +215,7 @@ def _run_main_capturing_notch_settings(monkeypatch, argv=("--notch",)):
             pass
 
     class FakeDesktop:
-        def __init__(self, application, *, initial_surface, load_notch_session, listening_settings):
+        def __init__(self, application, *, initial_surface, load_notch_session, listening_settings, listening_session):
             if initial_surface.value == "notch":
                 session = load_notch_session(None)
                 captured["settings"] = session.startup_settings

@@ -63,7 +63,7 @@ from mira.domain.listening import ActivationSource
 from mira.domain.notice import Notice
 from mira.ui.face.face_animator import FaceAnimator
 from mira.ui.listening_keys import KeyboardActivation
-from mira.ui.listening_settings import ListeningSettings
+from mira.ui.listening_settings import ListeningSession, ListeningSettings
 from mira.ui.face.face_controller import FaceController
 from mira.ui.main_window import MainWindow
 from mira.ui.notch.config_store import ConfigSession, NotchSettings
@@ -118,6 +118,7 @@ class DesktopShell:
         controller: FaceController | None = None,
         quit: Callable[[], None] | None = None,
         listening_settings: ListeningSettings | None = None,
+        listening_session: ListeningSession | None = None,
     ):
         # Held only to build the main window on demand; nothing else here
         # reaches into the graph.
@@ -152,13 +153,10 @@ class DesktopShell:
         self._tasks_running = False
         self._listening = (False, False)
         self._stopped = False
+        self.listening_session = listening_session
         self.keyboard: KeyboardActivation | None = None
         if listening_settings is not None:
-            self.keyboard = KeyboardActivation(
-                self.request_listening_toggle,
-                in_window_key=listening_settings.in_window_key,
-                global_shortcut=listening_settings.global_shortcut,
-            )
+            self.keyboard = self._keyboard_for(listening_settings)
 
         self._ensure(initial_surface)
 
@@ -285,6 +283,21 @@ class DesktopShell:
         if self.presenter is not None:
             self.presenter.set_listening(*self._listening)
 
+    def _keyboard_for(self, settings: ListeningSettings) -> KeyboardActivation:
+        return KeyboardActivation(
+            self.request_listening_toggle,
+            in_window_key=settings.in_window_key,
+            global_shortcut=settings.global_shortcut,
+        )
+
+    def apply_listening_settings(self, settings: ListeningSettings) -> None:
+        """New keys take effect at once: the old ones are let go first."""
+        if self.keyboard is not None:
+            self.keyboard.stop()
+        self.keyboard = self._keyboard_for(settings)
+        if not self._stopped:
+            self.keyboard.start()
+
     def request_listening_toggle(self) -> None:
         """A listening key was pressed: ask; the listening controller decides."""
         if not self._stopped:
@@ -321,7 +334,9 @@ class DesktopShell:
             return
         if self.settings_window is None:
             self.settings_window = NotchDebugWindow(
-                self.notch, None, self.notch_session, self.presenter, previews=False
+                self.notch, None, self.notch_session, self.presenter, previews=False,
+                audio=self._application.audio, listening_session=self.listening_session,
+                apply_listening=self.apply_listening_settings,
             )
         _bring_forward(self.settings_window)
 

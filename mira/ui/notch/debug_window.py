@@ -55,6 +55,7 @@ from mira.domain.system_events import (
 from mira.ui.face.face_controller import FaceController
 from mira.ui.notch.config_store import SCHEMA_VERSION, ConfigSession, ConfigSource, NotchSettings
 from mira.ui.notch.eye_layout import NotchEyeStyle
+from mira.ui.notch.listening_page import ListeningPage
 from mira.ui.notch.expanded_layout import (
     MAX_EYE_GAP_PX,
     MAX_SPACING_PX,
@@ -146,6 +147,9 @@ class NotchDebugWindow(QWidget):
         presenter: NotchPresenter | None = None,
         *,
         previews: bool = True,
+        audio=None,
+        listening_session=None,
+        apply_listening=None,
     ):
         super().__init__()
         self.setWindowTitle("M.I.R.A. notch settings")
@@ -165,6 +169,8 @@ class NotchDebugWindow(QWidget):
         self.pages.addTab(self._scrolling(self._appearance_page()), "Appearance")
         self.pages.addTab(self._scrolling(self._behaviour_page(previews)), "Behaviour")
         self.pages.addTab(self._scrolling(self._display_page()), "Display")
+        self.listening_page = ListeningPage(audio=audio, session=listening_session, apply=apply_listening)
+        self.pages.addTab(self._scrolling(self.listening_page), "Listening")
         self.pages.addTab(self._scrolling(self._diagnostics_page()), "Diagnostics")
 
         self.save_button = QPushButton("Save")
@@ -607,7 +613,8 @@ class NotchDebugWindow(QWidget):
                 else f"Version {SCHEMA_VERSION}"
             )
             self.config_path_label.setText(str(self.session.path))
-            unsaved = self.session.has_unsaved_changes(self.runtime_settings)
+            unsaved = self.session.has_unsaved_changes(self.runtime_settings) or (
+                hasattr(self, "listening_page") and self.listening_page.has_unsaved_changes)
             self.unsaved_label.setText("Yes" if unsaved else "No")
 
         selection = notch.selection
@@ -784,6 +791,7 @@ class NotchDebugWindow(QWidget):
             return
         try:
             path = self.session.save(self.runtime_settings)
+            self.listening_page.save()
         except (OSError, InvalidVisualConfig) as error:
             self.message_label.setText(f"Not saved: {error}")
         else:
@@ -795,6 +803,7 @@ class NotchDebugWindow(QWidget):
 
         if self.session is None:
             return
+        self.listening_page.reload()
         loaded = self.session.reload()
         if loaded.source is ConfigSource.INVALID_FALLBACK:
             self.message_label.setText(f"Not reloaded, runtime settings kept: {loaded.diagnostic}")
@@ -810,8 +819,17 @@ class NotchDebugWindow(QWidget):
         """Restore the production defaults at run time; nothing is written."""
 
         self.apply_settings(NotchSettings())
+        self.listening_page.reset()
         self.message_label.setText("Production defaults restored (not saved)")
 
+    def hideEvent(self, event):
+        # Whatever page is showing: a hidden window never keeps the
+        # microphone open.
+        self.listening_page.set_testing(False)
+        self.listening_page.sync_test_checkbox()
+        super().hideEvent(event)
+
     def closeEvent(self, event):
+        self.listening_page.shutdown()
         self.closed.emit()
         super().closeEvent(event)

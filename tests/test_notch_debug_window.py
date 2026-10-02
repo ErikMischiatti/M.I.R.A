@@ -402,7 +402,7 @@ def page_of(debug: NotchDebugWindow, widget) -> str:
 def test_the_settings_are_organised_in_pages(env):
     debug = env.debug
 
-    assert page_titles(debug) == ["Appearance", "Behaviour", "Display", "Diagnostics"]
+    assert page_titles(debug) == ["Appearance", "Behaviour", "Display", "Listening", "Diagnostics"]
     assert page_of(debug, debug.compact_width) == "Appearance"
     assert page_of(debug, debug.expanded_height) == "Appearance"
     assert page_of(debug, debug.eye_height_share) == "Appearance"

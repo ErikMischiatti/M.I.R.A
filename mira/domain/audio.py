@@ -201,11 +201,13 @@ class CaptureStatus(StrEnum):
 class CapturePurpose(StrEnum):
     """Why someone needs the microphone; one lease per purpose holder.
 
-    Only conversation listening exists today. A wake-word detector would
-    hold its own lease, so capture can run while MIRA is not listening.
+    Conversation listening, and an explicit microphone test in the settings.
+    A wake-word detector would hold its own lease, so capture can run while
+    MIRA is not listening.
     """
 
     CONVERSATION = "conversation"
+    DIAGNOSTICS = "microphone test"
 
 
 @dataclass(frozen=True, slots=True)

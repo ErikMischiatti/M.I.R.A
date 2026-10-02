@@ -52,9 +52,12 @@ class NotchEnvironment:
     presenter: NotchPresenter
     scheduler: Scheduler
     debug: NotchDebugWindow | None = None
+    audio: object | None = None
 
     def shutdown(self):
-        """Stop the clock and the notice timer; idempotent."""
+        """Stop the clock, the notice timer and any microphone test; idempotent."""
+        if self.audio is not None:
+            self.audio.shutdown()
         self.animator.stop()
         self.presenter.shutdown()
         self.scheduler.shutdown()
@@ -95,7 +98,12 @@ def build_notch_environment(
 
     environment = NotchEnvironment(controller, animator, notch, session, presenter, scheduler)
     if tuning:
-        environment.debug = NotchDebugWindow(notch, controller, session, presenter)
+        # MIRA-TUNE is not the runtime: its microphone test uses its own
+        # audio service, built on the same classes, and only while checked.
+        from mira.application.audio import standalone_audio_input
+
+        environment.audio = standalone_audio_input()
+        environment.debug = NotchDebugWindow(notch, controller, session, presenter, audio=environment.audio)
     return environment
 
 

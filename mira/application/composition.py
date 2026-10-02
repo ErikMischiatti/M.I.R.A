@@ -138,7 +138,7 @@ def build_application(
     source, so no test needs a webcam.
 
     `audio_backend` is how the runtime's one `AudioInputService` captures
-    (`desktop_audio_backend` on a desktop); by default none, so the service
+    (`mira.application.audio.desktop_audio_backend` on a desktop); by default none, so the service
     reports itself unavailable and no test ever opens a microphone.
 
     `system_event_sources` are the platform adapters whose changes become
@@ -198,14 +198,6 @@ def build_application(
         audio=audio,
         listening=listening,
     )
-
-
-def desktop_audio_backend() -> AudioCaptureBackend:
-    """The desktop's capture backend; opens nothing until capture starts."""
-
-    from mira.adapters.qt_audio import QtAudioCaptureBackend
-
-    return QtAudioCaptureBackend()
 
 
 def desktop_system_event_sources() -> list[SystemEventSource]:
