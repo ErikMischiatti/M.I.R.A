@@ -556,6 +556,12 @@ class NotchWindow(QWidget):
             self._request(NotchAction.OPEN_MAIN_WINDOW)
         event.accept()
 
+    def mousePressEvent(self, event):
+        # Accepted, so the window system delivers the matching release here:
+        # an ignored press loses its release, and with it every click on a
+        # control. (Synthetic test clicks deliver both regardless.)
+        event.accept()
+
     def mouseReleaseEvent(self, event):
         if event.button() == Qt.LeftButton:
             action = self.control_at(event.position())

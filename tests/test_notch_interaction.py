@@ -270,6 +270,22 @@ def test_hover_keeps_the_notch_open_after_the_controls_close(desktop):
     assert desktop.notch.presence is NotchPresence.EXPANDED
 
 
+def test_the_notch_accepts_presses_so_real_clicks_reach_their_release(desktop):
+    from PySide6.QtCore import QPointF
+    from PySide6.QtGui import QMouseEvent
+
+    rects = open_controls(desktop.notch)
+    centre = rects[NotchAction.QUIT].center()
+    press = QMouseEvent(QEvent.MouseButtonPress, QPointF(centre), desktop.notch.mapToGlobal(QPointF(centre)),
+                        Qt.LeftButton, Qt.LeftButton, Qt.NoModifier)
+    press.ignore()
+
+    QCoreApplication.sendEvent(desktop.notch, press)
+
+    # An ignored press would never get its release from the window system.
+    assert press.isAccepted()
+
+
 def test_a_click_beside_the_controls_does_nothing(desktop):
     requested = []
     desktop.notch.action_requested.connect(requested.append)
