@@ -346,3 +346,54 @@ def test_the_application_starts_and_stops_its_sources():
     application.shutdown()
 
     assert (Source.started, Source.stopped) == (1, 1)
+
+
+class BrokenSocket:
+    """recv fails the same way forever, as a socket in a bad state would."""
+
+    def __init__(self, error):
+        self.error, self.reads, self.closed = error, 0, False
+
+    def recv(self, size):
+        self.reads += 1
+        if self.reads > 100:
+            raise AssertionError("kept reading a broken socket")
+        raise self.error
+
+    def fileno(self):
+        return -1
+
+    def close(self):
+        self.closed = True
+
+
+def test_a_persistent_socket_error_stops_watching_instead_of_spinning(tmp_path, capsys):
+    import errno
+
+    broken = BrokenSocket(OSError(errno.EBADF, "Bad file descriptor"))
+    source = LinuxUsbDeviceSource(sysfs=tmp_path, open_socket=lambda: broken)
+    source._socket, source._listener = broken, lambda event: None  # as `start` leaves it
+
+    source.on_readable()
+
+    assert broken.reads == 1 and broken.closed and not source.watching
+    assert "USB notices stop" in capsys.readouterr().err
+
+
+def test_dropped_kernel_messages_are_skipped_not_fatal(tmp_path):
+    import errno
+
+    class Overflowing(BrokenSocket):
+        def recv(self, size):
+            self.reads += 1
+            if self.reads == 1:
+                raise OSError(errno.ENOBUFS, "No buffer space available")
+            raise BlockingIOError
+
+    sock = Overflowing(None)
+    source = LinuxUsbDeviceSource(sysfs=tmp_path, open_socket=lambda: sock)
+    source._socket, source._listener = sock, lambda event: None
+
+    source.on_readable()
+
+    assert sock.reads == 2 and source.watching

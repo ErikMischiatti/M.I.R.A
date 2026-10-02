@@ -19,7 +19,9 @@ NUL-separated ``KEY=value`` strings.
 
 from __future__ import annotations
 
+import errno
 import socket
+import sys
 from collections.abc import Callable
 from pathlib import Path
 
@@ -145,9 +147,14 @@ class LinuxUsbDeviceSource:
                 message = self._socket.recv(65536)
             except (BlockingIOError, InterruptedError):
                 return
-            except OSError:
-                # ENOBUFS: the kernel dropped messages; carry on with the next.
-                continue
+            except OSError as error:
+                if error.errno == errno.ENOBUFS:
+                    continue  # the kernel dropped messages; carry on with the next
+                # Anything else will not go away by reading again: stop
+                # watching rather than spin on a readable but broken socket.
+                print(f"[notices] USB uevent socket failed ({error}); USB notices stop", file=sys.stderr)
+                self.shutdown()
+                return
             event = self.event_for(parse_uevent(message))
             if event is not None and self._listener is not None:
                 self._listener(event)
