@@ -222,6 +222,10 @@ def test_subscribers_are_registered_exactly_once_in_a_fixed_order(graph):
             "EmbodiedBehavior.on_input_unfocused",
         ],
         "intent_inferred": ["EmbodiedBehavior.on_intent_inferred"],
+        # Voice listening is engagement, arbitrated like typing.
+        "listening_changed": ["InteractionManager.on_listening_changed", "EmbodiedBehavior.on_listening_changed"],
+        "listening_toggle_requested": ["ListeningController.on_toggle_requested"],
+        "audio_status_changed": ["ListeningController.on_audio_status"],
         "notice": ["DesktopShell.on_notice"],
         "processing_started": ["InteractionManager.on_processing_started"],
         "response_ready": [

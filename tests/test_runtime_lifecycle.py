@@ -35,6 +35,16 @@ def test_application_shutdown_owns_scheduler_cleanup():
     assert called == []
 
 
+class FakeListeningSession:
+    """Stands in for the user's listening.json: defaults, nothing read."""
+
+    def __init__(self):
+        from mira.ui.listening_settings import ListeningSettings
+
+        self.settings = ListeningSettings()
+        self.diagnostic = None
+
+
 class FakePrimary:
     """What `claim` returns to the process that becomes the runtime."""
 
@@ -91,7 +101,7 @@ def test_main_connects_every_shutdown_before_running(monkeypatch, argv, surface)
             return 0
 
     class FakeDesktop:
-        def __init__(self, application, *, initial_surface, load_notch_session):
+        def __init__(self, application, *, initial_surface, load_notch_session, listening_settings):
             events.append(f"desktop built ({initial_surface.value})")
             assert application is runtime
 
@@ -107,6 +117,7 @@ def test_main_connects_every_shutdown_before_running(monkeypatch, argv, surface)
                         lambda **options: (built_with.append(sorted(options)), runtime)[1])
     monkeypatch.setattr(main_module, "DesktopShell", FakeDesktop)
     monkeypatch.setattr(main_module, "InstanceServer", fake_instance_server(events))
+    monkeypatch.setattr(main_module, "ListeningSession", FakeListeningSession)
     monkeypatch.setattr(main_module, "quit_on_interrupt", lambda app: events.append("interrupt handler"))
 
     with pytest.raises(SystemExit) as exit_info:
@@ -204,7 +215,7 @@ def _run_main_capturing_notch_settings(monkeypatch, argv=("--notch",)):
             pass
 
     class FakeDesktop:
-        def __init__(self, application, *, initial_surface, load_notch_session):
+        def __init__(self, application, *, initial_surface, load_notch_session, listening_settings):
             if initial_surface.value == "notch":
                 session = load_notch_session(None)
                 captured["settings"] = session.startup_settings
@@ -219,6 +230,7 @@ def _run_main_capturing_notch_settings(monkeypatch, argv=("--notch",)):
     monkeypatch.setattr(main_module, "build_application", FakeRuntime)
     monkeypatch.setattr(main_module, "DesktopShell", FakeDesktop)
     monkeypatch.setattr(main_module, "InstanceServer", fake_instance_server([]))
+    monkeypatch.setattr(main_module, "ListeningSession", FakeListeningSession)
     monkeypatch.setattr(main_module, "quit_on_interrupt", lambda app: None)
     with pytest.raises(SystemExit):
         main_module.main(list(argv), claim=lambda request: FakePrimary([]))

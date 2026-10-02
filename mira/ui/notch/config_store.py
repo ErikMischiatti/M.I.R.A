@@ -407,7 +407,12 @@ def save_settings(settings: NotchSettings, path: Path | None = None, envelope: P
 
     path = default_config_path() if path is None else path
     validate_visual_config(settings.visual, envelope)
-    text = json.dumps(settings_to_dict(settings), indent=2) + "\n"
+    write_atomically(path, json.dumps(settings_to_dict(settings), indent=2) + "\n")
+    return path
+
+
+def write_atomically(path: Path, text: str) -> None:
+    """Replace ``path`` with ``text`` in one rename, or leave it as it was."""
 
     path.parent.mkdir(parents=True, exist_ok=True)
     descriptor, temporary = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp")
@@ -424,7 +429,6 @@ def save_settings(settings: NotchSettings, path: Path | None = None, envelope: P
             pass
         raise
     _sync_directory(path.parent)
-    return path
 
 
 def _sync_directory(directory: Path) -> None:

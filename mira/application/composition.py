@@ -49,6 +49,7 @@ from mira.core.brain import Brain
 from mira.core.camera_capture import CameraCapture
 from mira.core.embodied_behavior import EmbodiedBehavior
 from mira.core.interaction_manager import InteractionManager
+from mira.core.listening import ListeningController
 from mira.core.audio_input import AudioInputService
 from mira.core.notice_producers import SystemNoticeProducer, TaskNoticeProducer
 from mira.core.task_activity import TaskActivity
@@ -91,6 +92,7 @@ class Application:
     task_notices: TaskNoticeProducer
     system_notices: SystemNoticeProducer
     audio: AudioInputService
+    listening: ListeningController
 
     def start(self) -> None:
         """Start the long-running resources: camera capture and system watching."""
@@ -104,7 +106,9 @@ class Application:
         stops; the two are independent, so the order only makes the device
         free as early as possible.
         """
-        # Audio first: the microphone is released before anything else.
+        # Audio first: listening lets go of the microphone, which is then
+        # released before anything else.
+        self.listening.shutdown()
         self.audio.shutdown()
         # The system sources next: their pending timers are cancelled while
         # the scheduler still accepts it.
@@ -177,6 +181,8 @@ def build_application(
     system_notices = SystemNoticeProducer(event_bus, scheduler, system_event_sources)
     # The runtime's one owner of the microphone; idle until someone leases it.
     audio = AudioInputService(event_bus, audio_backend)
+    # The one decision whether MIRA listens; activation sources only ask.
+    listening = ListeningController(event_bus, audio)
 
     return Application(
         event_bus=event_bus,
@@ -190,6 +196,7 @@ def build_application(
         task_notices=task_notices,
         system_notices=system_notices,
         audio=audio,
+        listening=listening,
     )
 
 

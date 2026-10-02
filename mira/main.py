@@ -39,6 +39,7 @@ from mira.application.instance import (
 )
 from mira.ui.desktop_shell import DesktopShell, Surface
 from mira.ui.instance_server import InstanceServer
+from mira.ui.listening_settings import ListeningSession
 from mira.ui.notch.config_store import ConfigSession
 
 
@@ -152,9 +153,15 @@ def main(argv: list[str] | None = None, *, claim=claim_runtime):
         system_event_sources=desktop_system_event_sources(), audio_backend=desktop_audio_backend()
     )
 
+    # The runtime's own preferences (not the notch's): how listening starts.
+    listening = ListeningSession()
+    if listening.diagnostic:
+        print(f"[listening] {listening.diagnostic}", file=sys.stderr)
+
     desktop = DesktopShell(
         application,
         initial_surface=surface,
+        listening_settings=listening.settings,
         # Read only when a notch is first requested, by this launcher or a
         # later one; a later one may name its own file.
         load_notch_session=lambda path=None: load_notch_session(path or config),

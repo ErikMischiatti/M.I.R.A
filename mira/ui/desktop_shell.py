@@ -59,8 +59,11 @@ from PySide6.QtWidgets import QApplication
 
 from mira.application.composition import Application
 from mira.domain.embodiment import ActivityState
+from mira.domain.listening import ActivationSource
 from mira.domain.notice import Notice
 from mira.ui.face.face_animator import FaceAnimator
+from mira.ui.listening_keys import KeyboardActivation
+from mira.ui.listening_settings import ListeningSettings
 from mira.ui.face.face_controller import FaceController
 from mira.ui.main_window import MainWindow
 from mira.ui.notch.config_store import ConfigSession, NotchSettings
@@ -97,6 +100,11 @@ class DesktopShell:
     settings window saves to and reloads from. `controller` is an injection
     seam for tests (a seeded `MicroMotions`, say). `quit` is what the
     notch's Quit entry calls, by default `QApplication.quit`.
+
+    ``listening_settings`` turns on keyboard activation of listening
+    (`mira.ui.listening_keys`): the in-window key and the global shortcut
+    only *ask* for a toggle on the bus. Without it no key is watched, which is
+    what tests want.
     """
 
     def __init__(
@@ -109,6 +117,7 @@ class DesktopShell:
         load_notch_session: Callable[[Path | None], ConfigSession] | None = None,
         controller: FaceController | None = None,
         quit: Callable[[], None] | None = None,
+        listening_settings: ListeningSettings | None = None,
     ):
         # Held only to build the main window on demand; nothing else here
         # reaches into the graph.
@@ -139,6 +148,13 @@ class DesktopShell:
         self._activity = ActivityState.IDLE
         self._tasks_running = False
         self._stopped = False
+        self.keyboard: KeyboardActivation | None = None
+        if listening_settings is not None:
+            self.keyboard = KeyboardActivation(
+                self.request_listening_toggle,
+                in_window_key=listening_settings.in_window_key,
+                global_shortcut=listening_settings.global_shortcut,
+            )
 
         self._ensure(initial_surface)
 
@@ -223,6 +239,8 @@ class DesktopShell:
             self.window.show()
         else:
             self.presenter.show()
+        if self.keyboard is not None:
+            self.keyboard.start()
         self.animator.start()
 
     def shutdown(self) -> None:
@@ -235,6 +253,8 @@ class DesktopShell:
         presents nothing more. Idempotent.
         """
         self._stopped = True
+        if self.keyboard is not None:
+            self.keyboard.stop()
         self.animator.stop()
         if self.presenter is not None:
             self.presenter.shutdown()
@@ -251,6 +271,11 @@ class DesktopShell:
         deliver_notice(notice, presenter=self.presenter, controller=self.controller)
 
     # --- Notch actions ----------------------------------------------------------
+
+    def request_listening_toggle(self) -> None:
+        """A listening key was pressed: ask; the listening controller decides."""
+        if not self._stopped:
+            self._application.event_bus.emit("listening_toggle_requested", ActivationSource.KEYBOARD)
 
     def on_tasks_changed(self, running) -> None:
         """MIRA works while any task runs, on every surface showing it."""
