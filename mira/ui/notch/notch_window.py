@@ -39,6 +39,7 @@ from mira.ui.notch.presence import (
 )
 from mira.ui.notch.screen_selection import MonitorPreference, ScreenSelection
 from mira.ui.notch.visual_config import NotchVisualConfig, validate_visual_config
+from mira.ui.desktop.workspaces import WorkspacePresence, workspace_presence_for
 from mira.ui.notch.screens import (
     ScreenSelector,
     application_screens,
@@ -190,6 +191,12 @@ class NotchWindow(QWidget):
 
     The window never takes keyboard focus and shows without activating.
 
+    It asks to be present on every virtual workspace, through
+    ``workspace_presence`` (by default the adapter for the running Qt
+    platform, `mira.ui.desktop.workspaces`): before every map, since a window
+    manager forgets the request when a window is withdrawn. Where the
+    platform offers no such request the notch stays on one workspace.
+
     What the notch presents is decided elsewhere (`NotchPresenter`). The window
     reports the pointer entering and leaving the drawn notch through
     `hover_changed` — plain Qt enter/leave events, so the input mask decides
@@ -223,6 +230,7 @@ class NotchWindow(QWidget):
         screen_selector: ScreenSelector | None = None,
         eye_style: NotchEyeStyle | None = None,
         monitor_preference: MonitorPreference | None = None,
+        workspace_presence: WorkspacePresence | None = None,
     ):
         super().__init__(None)
 
@@ -236,6 +244,10 @@ class NotchWindow(QWidget):
         self.setAttribute(Qt.WA_ShowWithoutActivating)
         self.setFocusPolicy(Qt.NoFocus)
         self.setWindowTitle("M.I.R.A. notch")
+        self.workspace_presence = (
+            workspace_presence_for(QGuiApplication.platformName()) if workspace_presence is None else workspace_presence
+        )
+        self.all_workspaces_requested = False
 
         self._geometry = NotchGeometry() if geometry is None else geometry
         self._eye_style = NotchEyeStyle() if eye_style is None else eye_style
@@ -533,6 +545,14 @@ class NotchWindow(QWidget):
     def _request(self, action: NotchAction):
         if action in self._presentation.actions:
             self.action_requested.emit(action.value)
+
+    def showEvent(self, event):
+        # Delivered before the window is mapped, so the window manager reads
+        # the request when it starts managing the window. A spontaneous show
+        # comes from the window system for a window already mapped.
+        if not event.spontaneous():
+            self.all_workspaces_requested = self.workspace_presence.prepare_to_show(int(self.winId()))
+        super().showEvent(event)
 
     def hideEvent(self, event):
         # A hidden window receives no leave event; the pointer is gone anyway.
