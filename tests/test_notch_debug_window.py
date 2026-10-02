@@ -863,3 +863,37 @@ def test_saved_content_survives_a_restart(config_path):
         for widget in (restarted.debug, restarted.notch, restarted.animator):
             widget.deleteLater()
         QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+
+
+# --- Previews of this tranche -----------------------------------------------------------
+
+
+def test_the_system_previews_use_the_producers_own_wording():
+    from mira.domain.system_events import Connectivity, connectivity_notice
+
+    assert PREVIEW_NOTICES["Device connected"].text == "USB keyboard connected"
+    assert PREVIEW_NOTICES["Device disconnected"].category is NoticeCategory.DEVICE
+    assert PREVIEW_NOTICES["Network lost"] == connectivity_notice(Connectivity.OFFLINE)
+    assert PREVIEW_NOTICES["Back online"].category is NoticeCategory.CONNECTIVITY
+
+
+def test_a_preview_notice_makes_the_real_eyes_react(env):
+    from mira.domain.embodiment_cue import EmbodimentCue
+
+    env.debug.preview_buttons["Task failed"].click()
+    assert env.controller.active_cue is EmbodimentCue.ERROR
+
+    env.controller.clear_cue()
+    env.debug.preview_buttons["Device connected"].click()
+    assert env.controller.active_cue is None  # information gets no cue
+
+
+@pytest.mark.parametrize("cue", ["success", "warning", "error"])
+def test_eye_cue_previews_go_through_the_controller_alone(env, cue):
+    from mira.domain.embodiment_cue import EmbodimentCue
+
+    env.debug.preview_buttons[f"cue {cue}"].click()
+
+    assert env.controller.active_cue is EmbodimentCue(cue)
+    assert env.presenter.presentation.notice is None
+    assert env.controller.intent.activity is ActivityState.IDLE

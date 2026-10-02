@@ -44,6 +44,8 @@ from mira.domain.system_events import (
     DeviceKind,
     SystemEvent,
     SystemEventSource,
+    connectivity_notice,
+    device_notice,
 )
 from mira.messaging.events import EventBus
 
@@ -87,35 +89,6 @@ class TaskNoticeProducer:
 
 
 # --- System ---------------------------------------------------------------------------
-
-_DEVICE_NOUN = {
-    DeviceKind.AUDIO_OUTPUT: "Output",
-    DeviceKind.AUDIO_INPUT: "Microphone",
-    DeviceKind.USB: "USB",
-}
-
-
-def device_notice(event: DeviceEvent) -> Notice:
-    name = event.name.strip() or f"{_DEVICE_NOUN[event.kind]} device"
-    if event.change is DeviceChange.CONNECTED:
-        text = f"{name} connected"
-    elif event.change is DeviceChange.DISCONNECTED:
-        text = f"{name} disconnected"
-    else:
-        text = f"{_DEVICE_NOUN[event.kind]}: {name}"
-    return Notice(NoticeCategory.DEVICE, NoticeTone.INFO, text)
-
-
-_CONNECTIVITY_NOTICE = {
-    Connectivity.OFFLINE: Notice(NoticeCategory.CONNECTIVITY, NoticeTone.WARNING, "Network lost"),
-    Connectivity.LIMITED: Notice(NoticeCategory.CONNECTIVITY, NoticeTone.WARNING, "Limited connectivity"),
-    Connectivity.ONLINE: Notice(NoticeCategory.CONNECTIVITY, NoticeTone.SUCCESS, "Back online"),
-}
-
-
-def connectivity_notice(state: Connectivity) -> Notice:
-    return _CONNECTIVITY_NOTICE[state]
-
 
 class SystemNoticeProducer:
     """Owns the system event sources and announces their meaningful changes.

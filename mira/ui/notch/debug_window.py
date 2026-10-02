@@ -42,7 +42,16 @@ from PySide6.QtWidgets import (
 )
 
 from mira.domain.embodiment import ActivityState, EmbodimentIntent, ExpressionKey
+from mira.domain.embodiment_cue import EmbodimentCue
 from mira.domain.notice import Notice, NoticeCategory, NoticeTone
+from mira.domain.system_events import (
+    Connectivity,
+    DeviceChange,
+    DeviceEvent,
+    DeviceKind,
+    connectivity_notice,
+    device_notice,
+)
 from mira.ui.face.face_controller import FaceController
 from mira.ui.notch.config_store import SCHEMA_VERSION, ConfigSession, ConfigSource, NotchSettings
 from mira.ui.notch.eye_layout import NotchEyeStyle
@@ -65,6 +74,7 @@ from mira.ui.notch.presentation import (
     NotchPresenter,
 )
 from mira.ui.notch.screen_selection import MonitorPreference, SelectionMode
+from mira.ui.notch.startup import deliver_notice
 from mira.ui.notch.screens import monitor_identity
 from mira.ui.notch.visual_config import (
     MAX_TRANSITION_DURATION_MS,
@@ -97,12 +107,19 @@ CATEGORY_LABELS = {
     NoticeCategory.CONNECTIVITY: "Connectivity changes",
 }
 
-# Synthetic notices for visual tuning; they exist only in this window.
+# Synthetic notices for visual tuning; they exist only in this window and
+# never reach an application. System ones come from sample semantic events
+# through the producers' own conversion, so they look exactly like real ones.
+_PREVIEW_DEVICE = dict(kind=DeviceKind.USB, name="USB keyboard", key="preview")
 PREVIEW_NOTICES = {
-    "Success": Notice(NoticeCategory.TASK, NoticeTone.SUCCESS),
+    "Task done": Notice(NoticeCategory.TASK, NoticeTone.SUCCESS),
+    "Task failed": Notice(NoticeCategory.TASK, NoticeTone.ERROR, "Failed"),
     "Warning": Notice(NoticeCategory.ALERT, NoticeTone.WARNING, "Low battery"),
     "Error": Notice(NoticeCategory.ALERT, NoticeTone.ERROR, "Something failed"),
-    "Device": Notice(NoticeCategory.DEVICE, NoticeTone.INFO, "Device connected"),
+    "Device connected": device_notice(DeviceEvent(change=DeviceChange.CONNECTED, **_PREVIEW_DEVICE)),
+    "Device disconnected": device_notice(DeviceEvent(change=DeviceChange.DISCONNECTED, **_PREVIEW_DEVICE)),
+    "Network lost": connectivity_notice(Connectivity.OFFLINE),
+    "Back online": connectivity_notice(Connectivity.ONLINE),
 }
 
 
@@ -329,15 +346,26 @@ class NotchDebugWindow(QWidget):
             button.clicked.connect(lambda _=False, a=activity: self.preview_activity(a))
             self.preview_buttons[activity.value] = button
             activities.addWidget(button)
-        notices = QHBoxLayout()
-        for name, notice in PREVIEW_NOTICES.items():
+        notice_rows = [QHBoxLayout(), QHBoxLayout()]
+        for index, (name, notice) in enumerate(PREVIEW_NOTICES.items()):
             button = QPushButton(name)
             button.setEnabled(self.presenter is not None)
+            button.setToolTip("Presented and answered by the eyes exactly as a real notice")
             button.clicked.connect(lambda _=False, n=notice: self.preview_notice(n))
             self.preview_buttons[name] = button
-            notices.addWidget(button)
+            notice_rows[index // 4].addWidget(button)
+        cues = QHBoxLayout()
+        for cue in EmbodimentCue:
+            button = QPushButton(cue.value.capitalize())
+            button.setEnabled(self.controller is not None)
+            button.setToolTip("The eyes' cue alone, without a notice")
+            button.clicked.connect(lambda _=False, c=cue: self.preview_cue(c))
+            self.preview_buttons[f"cue {cue.value}"] = button
+            cues.addWidget(button)
         form.addRow("Activity", activities)
-        form.addRow("Notice", notices)
+        form.addRow("Notice", notice_rows[0])
+        form.addRow("", notice_rows[1])
+        form.addRow("Eye cue", cues)
         form.addRow("Expression", self.expression)
         return group
 
@@ -687,8 +715,13 @@ class NotchDebugWindow(QWidget):
         self.presenter.set_activity(activity)
 
     def preview_notice(self, notice: Notice):
+        """Through `deliver_notice`, the path the running application uses."""
         if self.presenter is not None:
-            self.presenter.present(notice)
+            deliver_notice(notice, presenter=self.presenter, controller=self.controller)
+
+    def preview_cue(self, cue: EmbodimentCue):
+        if self.controller is not None:
+            self.controller.show_cue(cue)
 
     def _apply_monitor(self, index: int):
         if 0 <= index < len(self._monitor_choices):
