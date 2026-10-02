@@ -340,7 +340,7 @@ def test_pinning_is_its_own_reason(presenter, scheduler):
     presenter.set_pinned(True)
     presenter.present(WARNING)
     presenter.set_hovered(True)
-    assert presenter.presentation.reasons == set(ExpansionReason)
+    assert presenter.presentation.reasons == {ExpansionReason.PINNED, ExpansionReason.NOTICE, ExpansionReason.HOVER}
 
     presenter.set_hovered(False)
     scheduler.advance(DURATION)
@@ -441,3 +441,61 @@ def test_the_presentation_model_imports_no_toolkit_or_service(module):
 
     forbidden = ("PySide6", "mira.adapters", "mira.core", "mira.cognition", "mira.actions", "mira.application")
     assert not [name for name in imported if name.startswith(forbidden)]
+
+
+# --- Integrated controls ---------------------------------------------------------------
+
+
+def controls_presenter():
+    from mira.ui.notch.presentation import NotchAction
+
+    scheduler = ManualScheduler()
+    presenter = NotchPresenter(scheduler, actions=frozenset(NotchAction))
+    presenter.show()
+    return presenter, scheduler
+
+
+def test_controls_are_settings_and_quit_never_the_main_window():
+    from mira.ui.notch.presentation import ExpansionReason, NotchAction
+
+    presenter, _ = controls_presenter()
+    presenter.toggle_controls()
+
+    assert presenter.presentation.controls == (NotchAction.OPEN_SETTINGS, NotchAction.QUIT)
+    assert ExpansionReason.CONTROLS in presenter.presentation.reasons
+
+
+def test_a_notch_without_control_actions_opens_no_controls():
+    from mira.ui.notch.presentation import NotchAction
+
+    presenter = NotchPresenter(ManualScheduler(), actions=frozenset({NotchAction.OPEN_MAIN_WINDOW}))
+    presenter.show()
+    presenter.open_controls()
+
+    assert presenter.presentation.controls == () and not presenter.controls_open
+
+
+def test_controls_sit_over_a_notice_and_hiding_closes_them():
+    from mira.domain.notice import Notice, NoticeCategory, NoticeTone
+
+    presenter, _ = controls_presenter()
+    presenter.present(Notice(NoticeCategory.ALERT, NoticeTone.WARNING, "Low battery"))
+    presenter.open_controls()
+    assert presenter.presentation.controls and presenter.presentation.notice is not None
+
+    presenter.hide()
+    presenter.show()
+
+    assert presenter.presentation.controls == ()
+
+
+def test_the_linger_timer_is_cancelled_by_shutdown():
+    presenter, scheduler = controls_presenter()
+    presenter.set_hovered(True)
+    presenter.open_controls()
+    presenter.set_hovered(False)
+    assert scheduler.pending_timers() == 1
+
+    presenter.shutdown()
+
+    assert scheduler.pending_timers() == 0

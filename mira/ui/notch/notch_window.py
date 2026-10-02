@@ -10,7 +10,7 @@ from PySide6.QtGui import (
     QRegion,
     QScreen,
 )
-from PySide6.QtWidgets import QMenu, QWidget
+from PySide6.QtWidgets import QWidget
 
 from mira.domain.embodiment_frame import FACE_HEIGHT_UNITS, FACE_WIDTH_UNITS
 from mira.ui.face.eye import Eye
@@ -24,7 +24,7 @@ from mira.ui.notch.eye_layout import (
     notch_eye_layout,
     production_envelope,
 )
-from mira.ui.notch.expanded_layout import ContentRow, NotchContentStyle, content_row, reveal_fraction
+from mira.ui.notch.expanded_layout import ContentRow, NotchContentStyle, content_row, control_cells, reveal_fraction
 from mira.ui.notch.presentation import NotchAction, NotchContent, NotchPresentation
 from mira.ui.notch.symbol_painter import paint_symbol
 from mira.ui.notch.presence import (
@@ -132,12 +132,15 @@ def layout_eyes(layout: NotchEyeLayout) -> tuple[Eye, Eye]:
     return eye("left"), eye("right")
 
 
-# What the context menu calls each action, in menu order.
+# What the integrated controls call each action.
 ACTION_LABELS = {
-    NotchAction.OPEN_MAIN_WINDOW: "Open M.I.R.A.",
-    NotchAction.OPEN_SETTINGS: "Notch settings…",
+    NotchAction.OPEN_SETTINGS: "Settings",
     NotchAction.QUIT: "Quit M.I.R.A.",
 }
+
+# The controls' pill: a quiet outline, filled under the pointer.
+CONTROL_COLOR = QColor(245, 245, 245, 40)
+CONTROL_HOVER_COLOR = QColor(245, 245, 245, 70)
 
 
 class NotchWindow(QWidget):
@@ -205,9 +208,12 @@ class NotchWindow(QWidget):
 
     User intents leave the window as `action_requested`, carrying a
     `NotchAction` value, and only for the actions the presentation offers: a
-    double click asks for the main window, and a context menu (right click)
-    lists every offered action. The window never knows who honours them. A
-    single click does nothing.
+    double click asks for the main window. A right click asks the presenter
+    to toggle the notch's integrated controls (`controls_toggle_requested`);
+    no native menu is shown. While the presentation shows controls they are
+    drawn as pills in the content band, and a click on one requests its
+    action. The window never knows who honours them. Any other single click
+    does nothing.
     """
 
     TRANSITION_DURATION_MS = 200
@@ -220,6 +226,9 @@ class NotchWindow(QWidget):
 
     # A `NotchAction` value the user asked for.
     action_requested = Signal(str)
+
+    # The user asked to open or close the integrated controls (right click).
+    controls_toggle_requested = Signal()
 
     def __init__(
         self,
@@ -243,6 +252,9 @@ class NotchWindow(QWidget):
         self.setAttribute(Qt.WA_TranslucentBackground)
         self.setAttribute(Qt.WA_ShowWithoutActivating)
         self.setFocusPolicy(Qt.NoFocus)
+        # Move events without a button pressed, to highlight the control under
+        # the pointer.
+        self.setMouseTracking(True)
         self.setWindowTitle("M.I.R.A. notch")
         self.workspace_presence = (
             workspace_presence_for(QGuiApplication.platformName()) if workspace_presence is None else workspace_presence
@@ -275,6 +287,7 @@ class NotchWindow(QWidget):
         self._presence = NotchPresence.HIDDEN
         self._presentation = NotchPresentation()
         self._hovered = False
+        self._hovered_control: NotchAction | None = None
         # Symbol animation phase; read only while painting.
         self._clock = QElapsedTimer()
         self._clock.start()
@@ -500,7 +513,7 @@ class NotchWindow(QWidget):
         It follows the drawn height, so content fades in as the notch grows
         and out as it collapses, never popping at either end.
         """
-        if self._presentation.content is None:
+        if self._presentation.content is None and not self._presentation.controls:
             return 0.0
         reveal = reveal_fraction(self._visual_size, self._geometry)
         return reveal * reveal
@@ -530,26 +543,44 @@ class NotchWindow(QWidget):
         super().leaveEvent(event)
 
     def mouseDoubleClickEvent(self, event):
-        if event.button() == Qt.LeftButton:
+        if event.button() == Qt.LeftButton and self.control_at(event.position()) is None:
             self._request(NotchAction.OPEN_MAIN_WINDOW)
         event.accept()
 
-    def contextMenuEvent(self, event):
-        offered = [action for action in ACTION_LABELS if action in self._presentation.actions]
-        if not offered:
-            event.ignore()
-            return
-        menu = QMenu(self)
-        for action in offered:
-            menu.addAction(ACTION_LABELS[action]).setData(action.value)
-        chosen = self.exec_menu(menu, event.globalPos())
-        if chosen is not None:
-            self._request(NotchAction(chosen.data()))
+    def mouseReleaseEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            action = self.control_at(event.position())
+            if action is not None:
+                self._request(action)
         event.accept()
 
-    def exec_menu(self, menu: QMenu, position):
-        """Run ``menu`` modally; a seam so tests can choose an entry."""
-        return menu.exec(position)
+    def mouseMoveEvent(self, event):
+        hovered = self.control_at(event.position())
+        if hovered is not self._hovered_control:
+            self._hovered_control = hovered
+            self.update()
+        super().mouseMoveEvent(event)
+
+    def contextMenuEvent(self, event):
+        # The notch's own controls, never a native popup menu.
+        self.controls_toggle_requested.emit()
+        event.accept()
+
+    @property
+    def control_rects(self) -> dict[NotchAction, QRectF]:
+        """Where each open control is drawn and clicked, window-local."""
+        controls = self._presentation.controls
+        cells = control_cells(self.content_row, len(controls))
+        return {action: QRectF(cell.x, cell.y, cell.width, cell.height) for action, cell in zip(controls, cells)}
+
+    def control_at(self, position) -> NotchAction | None:
+        """The open control under ``position``, once the notch has grown enough to show it."""
+        if not self._presentation.controls or self.content_opacity < 0.5:
+            return None
+        for action, rect in self.control_rects.items():
+            if rect.contains(position):
+                return action
+        return None
 
     def _request(self, action: NotchAction):
         if action in self._presentation.actions:
@@ -716,12 +747,32 @@ class NotchWindow(QWidget):
         if self.animator is not None:
             self.eye_painter.paint(painter, self.eye_canvas, self.animator.controller.get_frame())
 
-        content = self._presentation.content
         opacity = self.content_opacity
+        if opacity <= 0.01:
+            return
+        painter.setOpacity(opacity)
+        if self._presentation.controls:
+            self._paint_controls(painter)
+            return
+        content = self._presentation.content
+        if content is not None:
+            self._paint_content(painter, content, self.content_row)
+
+    def _paint_controls(self, painter: QPainter):
+        """Each open control as a rounded pill with its label, in the content band."""
+        font = QFont(self.font())
         row = self.content_row
-        if content is not None and opacity > 0.01:
-            painter.setOpacity(opacity)
-            self._paint_content(painter, content, row)
+        font.setPixelSize(max(round(row.label_px * 0.85), 1))
+        metrics = QFontMetricsF(font)
+        painter.setFont(font)
+        for action, rect in self.control_rects.items():
+            radius = rect.height() / 2.0
+            painter.setPen(Qt.NoPen)
+            painter.setBrush(CONTROL_HOVER_COLOR if action is self._hovered_control else CONTROL_COLOR)
+            painter.drawRoundedRect(rect, radius, radius)
+            label = metrics.elidedText(ACTION_LABELS[action], Qt.ElideRight, max(rect.width() - radius, 0.0))
+            painter.setPen(CONTENT_COLOR)
+            painter.drawText(rect, Qt.AlignCenter, label)
 
     def _paint_content(self, painter: QPainter, content: NotchContent, row: ContentRow):
         """Symbol, then the label if any, centred as one group in the row."""

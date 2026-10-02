@@ -258,6 +258,9 @@ class DesktopShell:
         deliver_tasks(self._tasks_running, presenter=self.presenter, controller=self.controller)
 
     def on_notch_action(self, action: str) -> None:
+        # A used control has done its job: the controls close.
+        if self.presenter is not None and action in (NotchAction.OPEN_SETTINGS, NotchAction.QUIT):
+            self.presenter.close_controls()
         if action == NotchAction.OPEN_MAIN_WINDOW:
             self.open_main_window()
         elif action == NotchAction.OPEN_SETTINGS:

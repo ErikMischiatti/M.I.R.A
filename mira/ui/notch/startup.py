@@ -49,6 +49,7 @@ def bind_presenter(notch: NotchWindow, presenter: NotchPresenter) -> None:
     """
 
     notch.hover_changed.connect(presenter.set_hovered)
+    notch.controls_toggle_requested.connect(presenter.toggle_controls)
     presenter.subscribe(notch.present)
     notch.present(presenter.presentation)
 

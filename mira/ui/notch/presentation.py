@@ -18,9 +18,10 @@ Presence is resolved, never set from several places. The owner chooses a
 *base* presence — hidden or shown — and the notch expands while at least one
 `ExpansionReason` is active:
 
-    HOVER   the pointer is over the notch (if `expand_on_hover`)
-    PINNED  someone explicitly holds it open (tuning preview)
-    NOTICE  a notice whose category expands automatically is showing
+    HOVER     the pointer is over the notch (if `expand_on_hover`)
+    PINNED    someone explicitly holds it open (tuning preview)
+    NOTICE    a notice whose category expands automatically is showing
+    CONTROLS  the user opened the notch's own controls (right click)
 
     base HIDDEN               -> HIDDEN, whatever the reasons
     base COMPACT, no reasons  -> COMPACT
@@ -42,11 +43,18 @@ notch is open for another reason), but adds no expansion reason.
 Activity alone never expands the notch. It only chooses the content shown
 when the notch is already expanded and no notice is showing.
 
+Controls are not a notice either: right click opens the notch's integrated
+controls (`control_actions`: the offered actions except opening the main
+window, which is the double click), drawn inside the notch instead of a
+native menu. They close when one is used, on another right click, or
+`CONTROLS_LINGER_MS` after the pointer leaves (re-entering in time keeps
+them), timed on the injected `Scheduler`.
+
 Running tasks are persistent state, not a notice: while any runs, the content
 of an open notch is "Working" (unless a notice is showing), and nothing
 expands it — a long task must never hold the notch open. Content precedence:
 
-    notice  >  task running  >  activity
+    controls  >  notice  >  task running  >  activity
 """
 
 from __future__ import annotations
@@ -67,6 +75,7 @@ class ExpansionReason(StrEnum):
     HOVER = "hover"
     PINNED = "pinned"
     NOTICE = "notice"
+    CONTROLS = "controls"
 
 
 class NotchSymbol(StrEnum):
@@ -136,6 +145,16 @@ def notice_content(notice: Notice) -> NotchContent:
 
 TASK_RUNNING_CONTENT = NotchContent(NotchSymbol.TASK, "Working")
 
+# The integrated controls, in display order. Opening the main window is not
+# among them: the double click is that gesture.
+CONTROL_ORDER = (NotchAction.OPEN_SETTINGS, NotchAction.QUIT)
+
+CONTROLS_LINGER_MS = 1500
+
+
+def control_actions(actions: frozenset[NotchAction]) -> tuple[NotchAction, ...]:
+    return tuple(action for action in CONTROL_ORDER if action in actions)
+
 
 def activity_content(activity: ActivityState) -> NotchContent | None:
     """Idle shows nothing beyond the eyes."""
@@ -152,10 +171,14 @@ class NotchPresentation:
     reasons: frozenset[ExpansionReason] = frozenset()
     actions: frozenset[NotchAction] = frozenset()
     tasks_running: bool = False
+    controls: tuple[NotchAction, ...] = ()
 
     @property
     def content(self) -> NotchContent | None:
-        """A showing notice, else running work, else the activity."""
+        """A showing notice, else running work, else the activity.
+
+        Not drawn while `controls` are open; they take the content band.
+        """
         if self.notice is not None:
             return notice_content(self.notice)
         if self.tasks_running:
@@ -227,6 +250,8 @@ class NotchPresenter:
         self._hovered = False
         self._pinned = False
         self._tasks_running = False
+        self._controls_open = False
+        self._controls_timer: TimerHandle | None = None
         self._notice: Notice | None = None
         self._expiry: TimerHandle | None = None
         # Identifies the notice the pending expiry belongs to, so a callback
@@ -265,9 +290,11 @@ class NotchPresenter:
 
     def hide(self) -> None:
         # A hidden notch cannot be under the pointer; never carry a stale
-        # hover into the next show.
+        # hover or open controls into the next show.
         self._base = NotchPresence.HIDDEN
         self._hovered = False
+        self._controls_open = False
+        self._cancel_controls_timer()
         self._publish()
 
     def set_activity(self, activity: ActivityState) -> None:
@@ -276,7 +303,48 @@ class NotchPresenter:
 
     def set_hovered(self, hovered: bool) -> None:
         self._hovered = bool(hovered)
+        if self._controls_open:
+            if self._hovered:
+                self._cancel_controls_timer()
+            elif self._controls_timer is None and not self._stopped:
+                self._controls_timer = self._scheduler.call_later(CONTROLS_LINGER_MS, self._controls_lingered)
         self._publish()
+
+    # --- Controls ---------------------------------------------------------
+
+    @property
+    def controls_open(self) -> bool:
+        return self._controls_open
+
+    def open_controls(self) -> None:
+        """Show the integrated controls, if this notch offers any."""
+        if self._stopped or self._base is NotchPresence.HIDDEN or not control_actions(self._actions):
+            return
+        self._controls_open = True
+        self._cancel_controls_timer()
+        self._publish()
+
+    def close_controls(self) -> None:
+        self._controls_open = False
+        self._cancel_controls_timer()
+        self._publish()
+
+    def toggle_controls(self) -> None:
+        """The right-click gesture."""
+        if self._controls_open:
+            self.close_controls()
+        else:
+            self.open_controls()
+
+    def _controls_lingered(self) -> None:
+        self._controls_timer = None
+        if not self._hovered:
+            self.close_controls()
+
+    def _cancel_controls_timer(self) -> None:
+        if self._controls_timer is not None:
+            self._controls_timer.cancel()
+            self._controls_timer = None
 
     def set_tasks_running(self, running: bool) -> None:
         """Whether MIRA is executing anything; content only, never presence."""
@@ -312,6 +380,7 @@ class NotchPresenter:
 
     def shutdown(self) -> None:
         self._cancel_expiry()
+        self._cancel_controls_timer()
         self._stopped = True
 
     # --- Resolution ----------------------------------------------------------
@@ -324,6 +393,8 @@ class NotchPresenter:
             reasons.add(ExpansionReason.PINNED)
         if self._notice is not None and self._behaviour.expands_for(self._notice.category):
             reasons.add(ExpansionReason.NOTICE)
+        if self._controls_open:
+            reasons.add(ExpansionReason.CONTROLS)
         return frozenset(reasons)
 
     def _resolve(self) -> NotchPresentation:
@@ -339,6 +410,7 @@ class NotchPresenter:
             reasons=reasons,
             actions=self._actions,
             tasks_running=self._tasks_running,
+            controls=control_actions(self._actions) if self._controls_open else (),
         )
 
     def _publish(self) -> None:

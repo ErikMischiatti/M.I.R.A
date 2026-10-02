@@ -137,6 +137,27 @@ def content_row(window: Rect, geometry: NotchGeometry, style: NotchContentStyle,
     )
 
 
+# The integrated controls are pills laid out across the content group's band.
+CONTROL_MAX_WIDTH_PX = 150.0
+CONTROL_GAP_PX = 12.0
+
+
+def control_cells(row: ContentRow, count: int) -> list[Rect]:
+    """Where each of ``count`` controls goes: equal pills, centred in the row.
+
+    Each is as tall as the row and at most `CONTROL_MAX_WIDTH_PX` wide, so
+    the targets are large enough to click on a notch of any width.
+    """
+
+    if count <= 0 or row.area.width <= 0:
+        return []
+    gaps = CONTROL_GAP_PX * (count - 1)
+    width = min(CONTROL_MAX_WIDTH_PX, max((row.area.width - gaps) / count, 0.0))
+    total = width * count + gaps
+    left = row.area.x + (row.area.width - total) / 2.0
+    return [Rect(left + index * (width + CONTROL_GAP_PX), row.area.y, width, row.area.height) for index in range(count)]
+
+
 def content_problems(row: ContentRow, geometry: NotchGeometry) -> list[str]:
     """Why ``row`` would not fit the expanded notch; empty when it does."""
 
