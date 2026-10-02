@@ -49,9 +49,11 @@ from mira.core.brain import Brain
 from mira.core.camera_capture import CameraCapture
 from mira.core.embodied_behavior import EmbodiedBehavior
 from mira.core.interaction_manager import InteractionManager
+from mira.core.audio_input import AudioInputService
 from mira.core.notice_producers import SystemNoticeProducer, TaskNoticeProducer
 from mira.core.task_activity import TaskActivity
 from mira.core.state_manager import StateManager
+from mira.domain.audio import AudioCaptureBackend
 from mira.domain.camera import CameraSource
 from mira.domain.scheduler import Scheduler
 from mira.domain.system_events import SystemEventSource
@@ -88,6 +90,7 @@ class Application:
     tasks: TaskActivity
     task_notices: TaskNoticeProducer
     system_notices: SystemNoticeProducer
+    audio: AudioInputService
 
     def start(self) -> None:
         """Start the long-running resources: camera capture and system watching."""
@@ -101,7 +104,9 @@ class Application:
         stops; the two are independent, so the order only makes the device
         free as early as possible.
         """
-        # The system sources first: their pending timers are cancelled while
+        # Audio first: the microphone is released before anything else.
+        self.audio.shutdown()
+        # The system sources next: their pending timers are cancelled while
         # the scheduler still accepts it.
         self.system_notices.shutdown()
         self.camera.shutdown()
@@ -113,6 +118,7 @@ def build_application(
     scheduler: Scheduler | None = None,
     camera_source: CameraSource | None = None,
     system_event_sources: Sequence[SystemEventSource] = (),
+    audio_backend: AudioCaptureBackend | None = None,
 ) -> Application:
     """Construct and wire the application graph.
 
@@ -126,6 +132,10 @@ def build_application(
     `MIRA_CAMERA*` environment decides: an `OpenCVCameraSource` when the camera
     is enabled, otherwise no source and a disabled capture. Tests pass a fake
     source, so no test needs a webcam.
+
+    `audio_backend` is how the runtime's one `AudioInputService` captures
+    (`desktop_audio_backend` on a desktop); by default none, so the service
+    reports itself unavailable and no test ever opens a microphone.
 
     `system_event_sources` are the platform adapters whose changes become
     notices (`desktop_system_event_sources` for a Linux desktop); by default
@@ -165,6 +175,8 @@ def build_application(
     # Both only emit "notice"; how a notice looks is each embodiment's choice.
     task_notices = TaskNoticeProducer(event_bus)
     system_notices = SystemNoticeProducer(event_bus, scheduler, system_event_sources)
+    # The runtime's one owner of the microphone; idle until someone leases it.
+    audio = AudioInputService(event_bus, audio_backend)
 
     return Application(
         event_bus=event_bus,
@@ -177,7 +189,16 @@ def build_application(
         tasks=tasks,
         task_notices=task_notices,
         system_notices=system_notices,
+        audio=audio,
     )
+
+
+def desktop_audio_backend() -> AudioCaptureBackend:
+    """The desktop's capture backend; opens nothing until capture starts."""
+
+    from mira.adapters.qt_audio import QtAudioCaptureBackend
+
+    return QtAudioCaptureBackend()
 
 
 def desktop_system_event_sources() -> list[SystemEventSource]:

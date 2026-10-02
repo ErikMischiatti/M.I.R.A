@@ -28,7 +28,7 @@ from pathlib import Path
 from PySide6.QtCore import QSocketNotifier, QTimer
 from PySide6.QtWidgets import QApplication
 
-from mira.application.composition import build_application, desktop_system_event_sources
+from mira.application.composition import build_application, desktop_audio_backend, desktop_system_event_sources
 from mira.application.instance import (
     Forwarded,
     InstanceError,
@@ -148,7 +148,9 @@ def main(argv: list[str] | None = None, *, claim=claim_runtime):
     # `QtScheduler` binds whichever thread builds it as the serialized context,
     # and this is the thread that runs the event loop below. One runtime, so
     # one set of system watchers, whichever surfaces it shows.
-    application = build_application(system_event_sources=desktop_system_event_sources())
+    application = build_application(
+        system_event_sources=desktop_system_event_sources(), audio_backend=desktop_audio_backend()
+    )
 
     desktop = DesktopShell(
         application,
