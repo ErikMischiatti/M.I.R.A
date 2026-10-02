@@ -62,9 +62,9 @@ layering and Qt containment currently have zero declared exceptions.
 The production graph is explicit (`mira/application/composition.py`):
 
 ```text
-mira.main
+mira.main [--notch]                     MIRA: main window · MIRA-NOTCH: --notch
   → QApplication
-  → build_application()
+  → build_application(system_event_sources=…)
       → EventBus
       → StateManager → ActivityAuthority
       → QtScheduler
@@ -72,23 +72,41 @@ mira.main
       → InteractionManager
       → EmbodiedBehavior
       → CameraCapture(OpenCVCameraSource if MIRA_CAMERA is set, else none)
-  → DesktopShell(application)          (mira/ui/desktop_shell.py)
+      → TaskNoticeProducer               (action results → "notice")
+      → SystemNoticeProducer(sources)    (system changes → "notice"; sources only
+                                          with --notch: desktop_system_event_sources)
+  → DesktopShell(application, mode)     (mira/ui/desktop_shell.py)
       → FaceController → FaceAnimator   (the one embodiment and its clock)
+      MAIN_WINDOW mode:
       → MainWindow(application, animator)
+      NOTCH mode:
       → NotchWindow(animator, saved notch settings)   (build_notch)
       → NotchPresenter(application.scheduler, saved behaviour)
                                         (what the notch presents; bind_presenter)
+      → MainWindow only on the first OPEN_MAIN_WINDOW (double click / menu)
   → aboutToQuit: desktop.shutdown(), then application.shutdown()
-  → application.start()   (starts camera capture, if enabled)
-  → desktop.start()       (shows the window, starts the animator)
+  → application.start()   (camera capture if enabled; system sources)
+  → desktop.start()       (shows the mode's surface, starts the animator)
   → Qt event loop
 ```
+
+**One runtime, two entry points.** `MIRA` opens the main window and builds
+no notch; it does not read the notch configuration and watches no system
+facility. `MIRA-NOTCH` runs the same `mira.main` with `--notch`: the notch is
+the only initial surface, and the shell builds the `MainWindow` lazily, once,
+the first time the user asks for it, sharing the same `Application`, the same
+`FaceController` and the same animator. Asking again brings that window
+forward; closing it hides it and leaves the notch running
+(`setQuitOnLastWindowClosed(False)`); the notch's context menu offers Quit.
+The notch never imports or builds `MainWindow`, and nothing starts a second
+process. Running both launchers by hand still gives two independent
+processes: there is no single-instance hand-over yet.
 
 `mira.application` must not import `mira.ui`, and the face's runtime is a UI
 object, so the UI has its own composition owner: `DesktopShell` creates one
 `FaceController` stepped by one `FaceAnimator`, renders `state_changed` onto
-it, and hands the animator to every surface that shows MIRA — the main window and
-the notch. Surfaces only repaint on its ticks; none creates, steps or drives
+it, and hands the animator to every surface that shows MIRA — the main window,
+the notch, or both once the notch has opened the window. Surfaces only repaint on its ticks; none creates, steps or drives
 the embodiment.
 
 `EmbodimentIntent` (what MIRA is doing) and `NotchPresence` (how much notch is
@@ -287,6 +305,52 @@ came from a mouse.
 reactions to `greeting`/`unknown` intents and a delayed decay from the response
 expression back to idle or listening.
 
+### Semantic cues
+
+A cue (`EmbodimentCue`: SUCCESS, WARNING, ERROR — `mira/domain/embodiment_cue.py`)
+is MIRA itself reacting to a result or condition for a moment. Five concepts
+stay distinct: *activity* (what MIRA does), *expression* (the face resolved
+from activity and affect), *notice* (something worth a glance, with a
+`NoticeTone`), *presence* (how much of the notch shows) and *cue*.
+
+```text
+Notice ── cue_for_notice (tone) ──▶ EmbodimentCue
+                                         │  FaceController.show_cue
+                                         ▼
+                CuePlayback (frame time: ease in · hold · ease out)
+                                         │
+EmbodimentIntent → expression → frame ──┴─▶ EmbodimentFrame
+                                          EyeFrame.shape / shape_amount
+                                                   ▼
+                                     EyePainter: chevron · triangle · cross
+                              (notch, main-window face, any future renderer)
+```
+
+- **Overlay, not expression.** A cue never changes the intent, the expression
+  or the micro-motions. While it plays, each `EyeFrame` carries `shape`
+  (`CHEVRON` ^ for success, `TRIANGLE` for warning, `CROSS` X for error) and
+  `shape_amount`: up to 0.5 the natural eye closes, from 0.5 the shape opens.
+  When it ends the frame is the current expression again — THINKING, a
+  WARNING cue, then THINKING; an expression change during the cue is what
+  returns.
+- **Lifetime** is counted in the controller's frame time (`update(dt)`), so it
+  needs no timer: 0.2 s in, hold (success 0.9 s, warning 1.6 s, error 2.2 s),
+  0.2 s out. Nothing loops or flashes.
+- **Priority** is deterministic: ERROR > WARNING > SUCCESS. Equal or higher
+  replaces (the same cue just holds again; a different one continues from the
+  shut eye), lower is dropped, never queued.
+- **Shared.** The cue lives in the one controller, so every surface showing
+  MIRA shows it; the notch's symbol row is surface decoration, not a cue. The
+  notch never owns cue state.
+- **Blinks and eyelids** do not apply to a cued eye; offsets (gaze, wander)
+  still move it.
+- **Safety.** A cue is drawn inside the eye's own rectangle (strokes inset by
+  half their width, round caps included), and that rectangle is what the
+  motion envelope already bounds, so the notch's eye-safety rule and the
+  content placement hold for cue shapes unchanged.
+- **Not cues:** ongoing states. A long-running task would be an activity (a
+  future `ActivityState`), not a cue; nothing produces one today.
+
 ## 9a. Notch presentation
 
 The notch is ambient presence and glanceable, transient information; the
@@ -310,50 +374,122 @@ NotchWindow ── hover_changed ───────┤
 ```
 
 - **Notices** (`mira/domain/notice.py`) are UI-independent: a `NoticeCategory`
-  (why it matters — alert, device, task; what preferences are keyed on), a
-  `NoticeTone` (info, success, warning, error) and optional short text. A
-  producer never says how a notice is shown. Today's only producer is the
-  shell mapping action results to TASK notices.
+  (why it matters — alert, device, task, connectivity; what preferences are
+  keyed on), a `NoticeTone` (info, success, warning, error) and optional short
+  text. A producer never says how a notice is shown. Every notice travels as
+  the bus event `"notice"`; the shell hands it to `deliver_notice`, which
+  gives it to the presenter and lets the shared eyes react with its cue.
 - **Presence** is resolved, never set from several places. The owner picks a
   base (hidden or shown); the notch is EXPANDED while any `ExpansionReason`
   holds — HOVER (if `expand_on_hover`), PINNED (tuning preview), NOTICE (a
   notice whose category expands automatically) — and COMPACT otherwise.
   Activity alone never expands; it only chooses the content shown while open.
+  A notice of a category that does not expand still becomes the content (seen
+  on hover) and still makes the eyes react.
 - **Lifetime and replacement.** A notice shows for `notice_duration_ms`, on one
   timer from the injected `Scheduler` (the application's own in production).
   The latest notice replaces the showing one and gets the full duration; there
-  is no queue. A notice whose category does not expand still becomes the
-  content for its lifetime.
+  is no queue.
 - **Rendering.** COMPACT shows only the eyes. EXPANDED keeps the eyes where
-  the compact notch places them and uses the revealed row beneath them for a
-  vector symbol (`symbol_painter`, Qt primitives only) and an optional short,
-  elided label (`expanded_layout`). Valid configurations keep every eye pose
-  inside the compact notch, so the row can never overlap the eyes.
+  the compact notch places them and draws a vector symbol (`symbol_painter`,
+  Qt primitives only) and an optional elided label below them, laid out by
+  `NotchContentStyle` (`expanded_layout`): symbol size, text size,
+  symbol–text spacing and a gap measured from the bottom of the eyes' whole
+  motion envelope. The group is centred between the rounded corners. Content
+  that would leave the expanded notch, or whose symbol does not fit between
+  the corners, makes the configuration invalid like clipping eyes do, so the
+  notch keeps its last valid configuration. Mid-transition the content is
+  revealed by the outline and faded with the reveal, by design.
 - **Actions.** The window emits `NotchAction` values (double click:
-  OPEN_MAIN_WINDOW; context menu: every offered action) and only those its
-  presentation offers. `DesktopShell` honours them; the notch never holds
-  `MainWindow`. The standalone tools offer none.
+  OPEN_MAIN_WINDOW; context menu: every offered action — open M.I.R.A.,
+  notch settings, quit) and only those its presentation offers.
+  `DesktopShell` honours them; the notch never holds `MainWindow`. The
+  standalone tools offer none.
+- **Workspaces.** The notch is present on every virtual workspace. Before
+  every map, `NotchWindow.showEvent` asks its `WorkspacePresence` adapter
+  (`mira/ui/desktop/workspaces.py`); on X11 that sets the EWMH
+  `_NET_WM_DESKTOP` property to `0xFFFFFFFF` ("all desktops") through a
+  short-lived, synchronised libX11 connection (ctypes; no new dependency).
+  Mutter honours it and adds `_NET_WM_STATE_STICKY` itself. The request is
+  repeated on every show because a window manager drops it on withdraw; no
+  workspace is polled and the window is never moved or recreated. Other
+  platforms (Wayland, offscreen) get a no-op: the window stays where the
+  compositor puts it, and Wayland offers clients no equivalent.
 
-**Embodiment independence.** Nothing in the presenter assumes a microphone,
-camera, text or pointer: notices are categories, content may lack a label,
-the set of actions is presented per embodiment, and hover is just one
-expansion reason. The desktop-specific adapter boundary is `NotchWindow`
-plus the shell's mapping of bus events to presenter input; another
-embodiment would supply its own renderer for `NotchPresentation` or its own
-presenter for the same notices.
+### Notice producers
 
-**Semantic eye treatments (not implemented).** Eyes are drawn from
-`FaceController`'s `EmbodimentFrame` by `EyePainter`. A future WARNING/ERROR/
-SUCCESS eye treatment has two possible homes, and the choice is per
-treatment: one shared by every embodiment belongs in the embodiment path
-(`EmbodimentIntent` → `ExpressionKey`/frame, through the one controller); a
-notch-only treatment belongs at paint time, derived from
-`NotchPresentation.content`/`notice` and applied by the notch's own painter,
-so `FaceWidget` never sees it. Either must keep the motion-envelope safety
-rule (`visual_config`) true for the new shapes. Deferred to a later tranche.
+```text
+action_completed/failed ──▶ TaskNoticeProducer ───────────────┐
+                                                               ├─▶ "notice" ─▶ DesktopShell
+adapters (mira/adapters)            SystemNoticeProducer       │               └▶ deliver_notice
+  LinuxUsbDeviceSource   ─┐  Device/  (mira/core)              │                  ├▶ NotchPresenter
+  PipeWireAudioSource    ─┼▶ Connectivity ─▶ settle · repeat ──┘                  └▶ eye cue
+  NetworkManagerConn.…   ─┘  Event         · debounce
+```
+
+| Notice source | Real or preview | Category / tone |
+|---|---|---|
+| action completed | real | task / success |
+| action failed | real | task / error, "Failed" |
+| action needs confirmation | real | task / warning |
+| USB device connected / disconnected | real (kernel uevents) | device / info |
+| audio output or input connected / disconnected | real (PipeWire) | device / info |
+| default audio input or output changed | real (PipeWire) | device / info |
+| network lost / limited / back online | real (NetworkManager) | connectivity / warning, success |
+| "Low battery", "Something failed" | preview only (MIRA-TUNE) | alert |
+
+- **Adapters** (`mira/adapters`) translate one facility into semantic events
+  (`mira/domain/system_events.py`) and know nothing about notices. All are
+  event-driven on the Qt loop: the kernel's `NETLINK_KOBJECT_UEVENT` socket
+  under a `QSocketNotifier` (whole USB devices only, never hubs, named from
+  sysfs); one `pw-dump --monitor` child process (audio nodes and the
+  effective defaults; the first dump is the baseline); NetworkManager's
+  `Connectivity` property over QtDBus. A missing facility makes the source
+  report itself unavailable at start; none is required.
+- **Producers** (`mira/core/notice_producers.py`) own the noise policy:
+  device changes settle for 800 ms per device (a connect and disconnect that
+  cancel announce nothing; a new device becoming the default announces only
+  its arrival), unchanged repeats within 3 s are dropped, and connectivity is
+  debounced for 3 s with the first state as baseline, so a short drop or
+  flapping says nothing. Timers run on the `Scheduler` port.
+- **Who watches.** Only `MIRA-NOTCH` passes system sources: the main window
+  alone has nowhere ambient to show them. Sources start with
+  `Application.start()` and stop first in `Application.shutdown()`, which
+  terminates the `pw-dump` child and closes the socket and the bus match.
+- **Filtering** stays the per-category automatic-expansion preference: one
+  switch each for alerts, device changes, task results and connectivity
+  changes. A disabled category still shows its notice when the notch is open
+  and still makes the eyes react; it only does not expand the notch.
+- **Embodiment independence.** Nothing in the producers or the presenter
+  assumes a Linux desktop, a microphone, a camera, a pointer or a network:
+  another runtime passes other sources or none, and renders `NotchPresentation`
+  and cues its own way.
+
+**Desktop application notifications (investigated, not implemented).**
+GNOME's notification server (gnome-shell, `org.freedesktop.Notifications` on
+the session bus) can be observed passively: a D-Bus monitor connection
+(`BecomeMonitor`, what `dbus-monitor` uses) sees every `Notify` call with the
+application name, summary and body, without replacing the daemon — verified
+on this system. It is deliberately not built yet: such a connection reads
+*every* application's notifications, including private message content;
+GTK applications using `GNotification`/the portal reach the shell through
+`org.gtk.Notifications` instead, so coverage would be partial; and mirroring
+without a policy would be noise. When built it fits as one more
+`SystemEventSource` producing an application-notification event, with an
+allow-list/filter policy in `mira.core` deciding which become notices.
+
+**Implemented, prepared, future.**
+
+| | |
+|---|---|
+| Implemented | launcher semantics and lazy main window; all-workspace presence on X11; configurable expanded content; USB, audio-topology and connectivity notices; per-category expansion; SUCCESS/WARNING/ERROR eye cues on every surface |
+| Prepared | `SystemEventSource` port for other platforms and embodiments; `EyeShape` in `EmbodimentFrame` for other renderers; producers independent of any UI |
+| Future | desktop-notification source with a filter policy; single-instance hand-over between launchers; Wayland workspace presence; ongoing-task activity; microphone level |
 
 **Input level (not implemented).** No audio subsystem exists, so there is no
-real microphone level to show. The intended interface is a domain value such
+real microphone level to show. The PipeWire source reports device *topology*
+only — which inputs exist and which is the default — never samples or
+levels; a present microphone says nothing about what it hears. The intended interface is a domain value such
 as `AudioInputLevel(amplitude: float in [0, 1], timestamp_ms: int)`, produced
 by a future audio adapter and fed to the presenter like activity (pulled or
 pushed on the UI thread), never a synthetic waveform. LISTENING's symbol is
@@ -434,7 +570,10 @@ views sharing one embodiment share one animator. In the application that
 animator and its controller belong to `DesktopShell`, which outlives every
 surface showing them. Each `FaceController` owns one `MicroMotions` instance (injectable for
 tests); it holds no timer and has nothing to shut down. `Application` owns the
-shared scheduler boundary and the camera capture. `QApplication.aboutToQuit`
+shared scheduler boundary, the camera capture and the system event sources
+(which it stops first: the `pw-dump` child is terminated, the netlink socket
+closed, the D-Bus match removed, and pending producer timers cancelled).
+`QApplication.aboutToQuit`
 first calls `DesktopShell.shutdown()`, which stops the animator and then
 closes the surfaces, and then `Application.shutdown()`, which first shuts down the camera (stopping
 capture, joining the capture thread for up to two seconds, and releasing the
@@ -447,14 +586,11 @@ Ctrl+C takes the same path. `mira.main` installs a SIGINT handler that asks
 the event loop to quit and watches the signal's wakeup fd, so the handler runs
 promptly from inside the Qt loop instead of raising `KeyboardInterrupt` in
 whichever slot happens to run next; `aboutToQuit` then shuts everything down
-in the order above. A second Ctrl+C falls back to the default action.
-
-Ctrl+C takes the same path. `mira.main` installs a SIGINT handler that asks Qt
-to quit, and watches the signal's wakeup fd from the event loop so the handler
-runs at once; without it Python raised `KeyboardInterrupt` inside whichever
-slot ran next (the animator tick), PySide swallowed it, and the application
-kept running. A second Ctrl+C restores the default action, for a shutdown that
-hangs. Signal handling lives only at that entry point.
+in the order above, in both launch modes. A second Ctrl+C falls back to the
+default action. (Without the handler, Python raised `KeyboardInterrupt` inside
+whichever slot ran next, PySide swallowed it, and the application kept
+running.) `MIRA-TUNE` is a development tool and simply restores the default
+SIGINT action, so Ctrl+C ends it without the orderly shutdown.
 
 `QtScheduler` owns delayed timers and completion receivers on its construction
 thread. Shutdown is idempotent: it cancels pending timers, detaches completion
@@ -524,7 +660,11 @@ The following are extension directions, not existing APIs:
   exists yet. Relation perception (object detection feeding a RelateAnything
   adapter) is a further direction with no code.
 - Voice input may enter the existing input/cognition pipeline, and voice output
-  may consume responses; no audio subsystem exists.
+  may consume responses; no audio subsystem exists. The audio-device source
+  knows topology only; a microphone level (`AudioInputLevel(amplitude,
+  timestamp)`) needs a capture adapter first.
+- Desktop application notifications may become notices through a filtered
+  `SystemEventSource` (section 9a); investigated, not built.
 - Persistent memory may replace or complement `SessionMemory` behind an explicit
   persistence boundary; current memory is session-only.
 - A physical renderer or actuator may consume renderer-independent

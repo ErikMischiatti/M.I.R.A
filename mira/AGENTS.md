@@ -41,6 +41,11 @@ Main modules:
     `CameraSettings`, `CameraStatus` (`mira/domain/camera.py`); no OpenCV or
     numpy types
   - `UserInput`, `IntentResult`, `BrainResponse` (`mira/domain/models.py`)
+  - notices: `Notice`, `NoticeCategory`, `NoticeTone` (`mira/domain/notice.py`)
+  - system changes: `DeviceEvent`, `ConnectivityEvent`, the
+    `SystemEventSource` port (`mira/domain/system_events.py`)
+  - semantic eye cues: `EmbodimentCue`, `EyeShape`, `CuePlayback`
+    (`mira/domain/embodiment_cue.py`); an overlay, never an expression
   - depends on nothing else in `mira`; must never import PySide6
 
 - `mira/adapters`
@@ -49,6 +54,9 @@ Main modules:
     adapter; the only place that knows the turn lifecycle runs on a Qt event loop
   - `OpenCVCameraSource` (`mira/adapters/opencv_camera.py`): the only module
     that imports `cv2`, lazily; OpenCV is the optional `camera` extra
+  - Linux system sources, all event-driven on the Qt loop and optional:
+    `LinuxUsbDeviceSource` (kernel uevents), `PipeWireAudioSource`
+    (`pw-dump --monitor`), `NetworkManagerConnectivitySource` (QtDBus)
   - may import `mira.domain`; never imported by the domain
 
 - `mira/application`
@@ -72,6 +80,8 @@ Main modules:
   - brain orchestration
   - interaction manager
   - embodied behavior
+  - notice producers (`mira/core/notice_producers.py`): task and system
+    events → `"notice"` on the bus, with the noise policy
   - camera capture (`CameraCapture`): owns the capture thread, the newest
     frame and the camera status
 
@@ -92,6 +102,9 @@ Main modules:
   - desktop actions
 
 - `mira/ui`
+  - desktop shell: one runtime, `MIRA` (main window) or `MIRA-NOTCH` (notch,
+    main window built lazily on double click)
+  - notch (`mira/ui/notch`) and window-system adapters (`mira/ui/desktop`)
   - main window
   - compact chat panel
   - debug drawer

@@ -75,14 +75,21 @@ actions use for the `current` alias and relative paths (see
 
 ### Notch launchers
 
-`MIRA` shows the notch as part of the application, compact, with the saved
-notch configuration. Two more launchers run it standalone, without the
-application, with the same `venv` and symlink resolution:
+`MIRA` opens the main window only. `MIRA-NOTCH` runs the same application
+runtime with the ambient notch as its only initial surface; double-clicking
+the notch opens the main window of that runtime (never a second process).
+`MIRA-TUNE` is the standalone tuning tool. All use the same `venv` and
+symlink resolution:
 
 | Command | Script | Runs |
 |---|---|---|
-| `MIRA-NOTCH` | `bin/mira-notch` | `python -m mira.ui.notch --notch-only`: the notch alone, with the saved notch configuration and no tuning window. Ctrl+C quits. |
-| `MIRA-TUNE` | `bin/mira-tune` | `python -m mira.ui.notch --tune`: the notch with its tuning window, which changes it live and can Save, Reload and Reset defaults. Closing the window quits. |
+| `MIRA` | `bin/mira` | `python -m mira.main`: the main window; no notch, no system watching. |
+| `MIRA-NOTCH` | `bin/mira-notch` | `python -m mira.main --notch`: the notch with the saved configuration, real task, device and connectivity notices; double-click opens the main window, closing it leaves the notch running. Quit from the notch's context menu or Ctrl+C. |
+| `MIRA-TUNE` | `bin/mira-tune` | `python -m mira.ui.notch --tune`: a standalone notch (no application behind it) with its tuning window, which changes it live, previews notices and eye cues, and can Save, Reload and Reset defaults. Closing the window quits. |
+
+`python -m mira.ui.notch --notch-only` still shows the standalone notch
+without the tuning window, for development; it has no application and so no
+real notices.
 
 ```bash
 ln -s "$PWD/bin/mira-notch" ~/.local/bin/MIRA-NOTCH
@@ -92,6 +99,12 @@ MIRA-TUNE --config /tmp/notch-experiment.json   # any other configuration file
 
 The configuration file and its rules are in
 [configuration.md](configuration.md#notch).
+
+The system notices need, at run time and only for `MIRA-NOTCH`: the kernel's
+uevent netlink socket (USB), `pw-dump` from PipeWire (audio devices) and
+NetworkManager on the system bus (connectivity). Each is optional. Tests use
+fakes for all of them and never need a device, an audio server, a bus or an
+X server.
 
 ## Repository layout
 
@@ -108,7 +121,7 @@ mira/
 ├── ui/           # Qt window, chat panel, debug drawer, face/ rendering
 ├── config/       # packaged expression profiles
 └── main.py       # process entry point
-bin/mira          # launcher script; bin/mira-notch, bin/mira-tune for the notch
+bin/mira          # launcher script; bin/mira-notch (ambient notch), bin/mira-tune (tuning)
 scripts/          # architecture checkers
 tests/            # pytest suite
 docs/             # technical documentation

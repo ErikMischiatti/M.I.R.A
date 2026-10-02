@@ -113,17 +113,18 @@ intentionally.
 
 ## Notch
 
-`MIRA`, `MIRA-NOTCH` and `MIRA-TUNE` (`python -m mira.ui.notch`) read the
-notch's tuned settings from one JSON file: `MIRA_NOTCH_CONFIG`, else
-`$XDG_CONFIG_HOME/mira/notch.json` (`~/.config/mira/notch.json`); the notch
-tools also accept `--config PATH`. `MIRA` reads it at startup and
-prints which file it used. Only the settings window's **Save** writes it. The production defaults live in code
-and never change by saving; the tuning window's **Reset defaults** restores
-them at run time only.
+`MIRA-NOTCH` (`python -m mira.main --notch`) and `MIRA-TUNE`
+(`python -m mira.ui.notch`) read the notch's tuned settings from one JSON
+file: `MIRA_NOTCH_CONFIG`, else `$XDG_CONFIG_HOME/mira/notch.json`
+(`~/.config/mira/notch.json`); both also accept `--config PATH`. Each prints
+which file it used. `MIRA` (main window only) builds no notch and does not
+read the file. Only the settings window's **Save** writes it. The production
+defaults live in code and never change by saving; **Reset defaults**
+restores them at run time only.
 
 ```json
 {
-  "version": 2,
+  "version": 3,
   "compact":   {"width": 200.0, "height": 32.0, "radius": 14.0},
   "expanded":  {"width": 360.0, "height": 96.0, "radius": 24.0},
   "placement": {"offset_x": 0.0, "top_margin": 0.0},
@@ -132,52 +133,87 @@ them at run time only.
   "animation": {"duration_ms": 200},
   "display": {"monitor": null},
   "behaviour": {"expand_on_hover": true,
-                "automatic_expansion": {"alert": true, "device": true, "task": false},
-                "notice_duration_ms": 4000}
+                "automatic_expansion": {"alert": true, "device": true,
+                                        "task": false, "connectivity": true},
+                "notice_duration_ms": 4000},
+  "content": {"symbol_px": 26.0, "text_px": 18.0, "spacing_px": 10.0,
+              "eye_gap_px": 19.0}
 }
 ```
 
-Every key is required and no others are accepted. `display.monitor` is
-`null` for automatic selection, or `{"name", "manufacturer", "model",
-"serial"}` as Qt reports them (connector name plus EDID data; never an
-enumeration index).
+Every key is required and no others are accepted, with one exception: an
+`automatic_expansion` category missing from the file takes its production
+default (an unknown one is still an error), so adding a category never needs
+a new schema version. `display.monitor` is `null` for automatic selection,
+or `{"name", "manufacturer", "model", "serial"}` as Qt reports them
+(connector name plus EDID data; never an enumeration index).
 
 A missing file means the defaults. A file that cannot be read, is not JSON,
-does not match the schema, or would clip the eyes is ignored with a
-diagnostic, the notch starts with the defaults, and the file is left
+does not match the schema, or would clip the eyes or the content is ignored
+with a diagnostic, the notch starts with the defaults, and the file is left
 untouched. Saving is atomic: a temporary file in the same directory replaces
 the old one in a single rename.
 
+**Expanded content.** `content` sizes and places the symbol and label shown
+when the notch is expanded, all in pixels: `symbol_px` (8–96), `text_px`
+(6–72), `spacing_px` between symbol and label (0–80), and `eye_gap_px`
+(0–200), the gap between the lowest point the eyes can reach (their whole
+motion envelope, not just the resting eye) and the top of the content. The
+content therefore never overlaps an eye pose and moves with the eyes when
+they are tuned. It is centred between the rounded corners; a long label is
+elided. A combination whose content would leave the expanded notch, or whose
+symbol does not fit between the corners, is invalid: the tuning window shows
+it, does not apply it and will not save it. To make content larger, raise
+the expanded height as well (Appearance → Expanded geometry); the tuning
+window's *Derived layout* line shows where the content ends.
+
 **Behaviour.** `expand_on_hover` expands the notch while the pointer is over
 it. `automatic_expansion` has one switch per notice category — `alert`
-(warnings and errors), `device` (device changes), `task` (results of actions
-MIRA ran) — saying whether such a notice expands the notch by itself; a
-notice of a disabled category still shows if the notch is open anyway.
-`notice_duration_ms` (1000–30000) is how long a notice stays. Defaults are
-conservative: alerts and device changes expand, task results do not. Only
-task notices have a producer today.
+(warnings and errors), `device` (USB and audio devices), `task` (results of
+actions MIRA ran), `connectivity` (network lost, limited, back online) —
+saying whether such a notice expands the notch by itself. A notice of a
+disabled category still becomes the content (visible on hover) and MIRA's eyes
+still react to it; it only does not expand the notch. `notice_duration_ms`
+(1000–30000) is how long a notice stays. Defaults: alerts, devices and
+connectivity expand, task results do not.
 
-**Version 1.** Files written before behaviour existed (`"version": 1`, no
-`behaviour` section) still load, with the default behaviour; the file is not
-touched until **Save**, which rewrites it as version 2. Diagnostics shows the
-schema version. Code older than this change cannot read version 2.
+**System notices.** `MIRA-NOTCH` watches USB devices (kernel uevents), audio
+devices (PipeWire through `pw-dump`) and connectivity (NetworkManager over
+D-Bus); a facility that is missing is reported once at startup
+(`[notices] … unavailable`) and simply produces nothing. Short-lived changes
+are suppressed: a device that bounces, a repeated announcement, or a network
+drop shorter than three seconds says nothing.
+
+**Older versions.** Version 2 files (no `content`) and version 1 files (no
+`behaviour` either) still load: `content` becomes the layout those files had
+before it existed — the symbol at 34 % of the band below the compact notch,
+at most 20 px, centred in it — so nothing grows or moves until tuned, and
+`behaviour` gets the production defaults. The file is not touched until
+**Save**, which rewrites it as version 3. Diagnostics shows the schema
+version. Code older than this change cannot read version 3.
 
 **Settings while running.** Right-click the notch → *Notch settings…* opens
 the same paged settings window as `MIRA-TUNE` for the running notch (without
-the development previews); double-click the notch to bring the main window
-forward.
+the development previews); double-click it, or *Open M.I.R.A.*, opens the
+main window of the same runtime; *Quit M.I.R.A.* ends it.
 
 **Placement.** `top_margin` 0 puts the notch's top edge on the selected
 screen's top edge — the screen geometry, not the desktop work area below a
-panel. Both offsets apply once, after centring on that screen.
+panel. Both offsets apply once, after centring on that screen. GNOME's
+window manager may still keep the window below its top bar.
+
+**Workspaces.** On X11 the notch asks the window manager to show it on every
+virtual workspace (EWMH `_NET_WM_DESKTOP` = all desktops); nothing needs to
+be configured. On Wayland or other platforms the request is skipped and the
+notch stays on one workspace.
 
 **Eye bounds.** A configuration is valid only if each eye's whole motion
 envelope — every pose the expression profiles' wander, drift, gaze, pulse,
 deformation and asymmetry can reach — stays at least 1 px inside the notch
 outline at COMPACT, EXPANDED and every size between. `height_share` sets
 the eye size from the compact height and `motion_gain` how far motion moves
-the eyes relative to that size. The tuning window shows an invalid
-combination, does not apply it and will not save it.
+the eyes relative to that size. Semantic eye cues (success, warning, error)
+are drawn inside each eye's own rectangle, so the same bound covers them.
 
 **Monitor.** A connected preferred monitor is used. Otherwise, or in
 automatic mode: one screen is used as is; of two, the primary (then a built-in
