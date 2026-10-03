@@ -14,3 +14,8 @@ shiboken6==6.11.1
 # resolution the camera adapter was validated against on Python 3.12/Linux.
 numpy==2.5.3
 opencv-python-headless==4.14.0.94
+# Optional `voice` extra. Not installed by requirements.txt or CI; this is the
+# resolution the wake-word and VAD adapters were validated against.
+sentencepiece==0.2.2
+sherpa-onnx==1.13.8
+sherpa-onnx-core==1.13.8

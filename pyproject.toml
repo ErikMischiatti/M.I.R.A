@@ -47,6 +47,14 @@ dev = ["pytest>=9,<10"]
 # The headless build matters: the regular `opencv-python` wheel bundles its own
 # Qt plugins, which conflict with PySide6 in the same process.
 camera = ["opencv-python-headless>=4.10,<5"]
+# Local voice activation through `mira.adapters.sherpa_voice`: a keyword
+# spotter for the wake word and the Silero voice activity detector, both
+# ONNX models run offline by sherpa-onnx (Apache-2.0, which bundles its own
+# ONNX runtime); sentencepiece turns the configured wake phrase into the
+# model's tokens. Optional: without it keyboard activation works and speech
+# is detected by the built-in energy detector. The model files are not on
+# PyPI; docs/configuration.md#voice says where they go.
+voice = ["sherpa-onnx>=1.13,<2", "sentencepiece>=0.2,<1"]
 
 [tool.setuptools.packages.find]
 # `mira.actions` and `mira.cognition` carry no `__init__.py`, so they are
