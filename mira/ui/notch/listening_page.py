@@ -2,16 +2,21 @@
 
 Two halves:
 
-- **Listening** — how listening is activated (`ListeningSettings`). Only
-  keyboard activation exists; wake word is listed as coming later and
-  cannot be chosen. The in-window key and the desktop-wide shortcut take
-  effect at once through ``apply`` (the runtime re-registers its keys) and
-  are written by the window's Save.
+- **Listening** — how listening is activated (`ListeningSettings`):
+  keyboard, or wake word where its engine and model are installed (else it
+  is listed as not installed and cannot be chosen); the wake phrase and its
+  sensitivity; when speech ends and how long a session waits for it. Changes
+  apply at once through ``apply`` (the runtime re-registers its keys and
+  reconfigures listening) and are written by the window's Save.
 - **Audio input** — what the runtime's one `AudioInputService` is doing:
   backend, device, format, status, what it captures for, and the live RMS,
   peak and level. "Test microphone" takes a DIAGNOSTICS lease on that same
   service, so it never opens a second capture and never puts MIRA in
   LISTENING; it ends when unchecked or when the window hides.
+- **Voice** — the listening controller's live state: activation mode, wake
+  engine and whether it is monitoring, detections, the speech detector, the
+  session's state and duration, speech activity, and the last utterance's
+  length and source. Metadata only: no audio is shown or kept.
 
 The readout refreshes five times a second, only while the page is visible.
 """
@@ -24,6 +29,7 @@ from PySide6.QtCore import QTimer
 from PySide6.QtGui import QKeySequence, QStandardItemModel
 from PySide6.QtWidgets import (
     QCheckBox,
+    QDoubleSpinBox,
     QComboBox,
     QFormLayout,
     QGroupBox,
@@ -37,6 +43,7 @@ from PySide6.QtWidgets import (
 
 from mira.domain.audio import CapturePurpose
 from mira.domain.listening import IMPLEMENTED_MODES, ListeningActivationMode
+from mira.domain.voice import WakeWordConfig
 from mira.ui.listening_settings import ListeningConfigError, ListeningSession, ListeningSettings
 
 REFRESH_MS = 200
@@ -50,9 +57,11 @@ _UNAVAILABLE = " — not installed"
 
 class ListeningPage(QWidget):
     def __init__(self, *, audio=None, session: ListeningSession | None = None,
-                 apply: Callable[[ListeningSettings], None] | None = None, wake_available: bool = False):
+                 apply: Callable[[ListeningSettings], None] | None = None, wake_available: bool = False,
+                 listening=None):
         super().__init__()
         self.audio = audio
+        self.listening = listening
         self.session = session
         self._apply = apply
         self._lease = None
@@ -77,8 +86,29 @@ class ListeningPage(QWidget):
         self.listening_error = QLabel()
         self.listening_error.setStyleSheet("color: #c0392b;")
         self.listening_error.setWordWrap(True)
+        self.wake_phrase = QLineEdit()
+        self.wake_phrase.setMaxLength(32)
+        self.wake_phrase.setToolTip("Any name or short phrase; letters only. Detected locally, on this computer.")
+        self.wake_sensitivity = QDoubleSpinBox()
+        self.wake_sensitivity.setRange(0.0, 1.0)
+        self.wake_sensitivity.setSingleStep(0.05)
+        self.wake_sensitivity.setDecimals(2)
+        self.wake_sensitivity.setToolTip("Higher wakes more readily, and falsely more often")
+        self.speech_end = QDoubleSpinBox()
+        self.speech_end.setRange(0.4, 2.0)
+        self.speech_end.setSingleStep(0.1)
+        self.speech_end.setSuffix(" s")
+        self.speech_end.setToolTip("Silence that ends what you say; pauses between words are shorter")
+        self.wait_timeout = QDoubleSpinBox()
+        self.wait_timeout.setRange(3.0, 20.0)
+        self.wait_timeout.setSingleStep(1.0)
+        self.wait_timeout.setSuffix(" s")
+        self.wait_timeout.setToolTip("How long MIRA waits for you to start speaking")
+        for box in (self.wake_sensitivity, self.speech_end, self.wait_timeout):
+            box.setKeyboardTracking(False)
         editable = session is not None
-        for control in (self.activation, self.in_window_key, self.global_shortcut, self.global_enabled):
+        for control in (self.activation, self.in_window_key, self.global_shortcut, self.global_enabled,
+                        self.wake_phrase, self.wake_sensitivity, self.speech_end, self.wait_timeout):
             control.setEnabled(editable)
 
         listening = QGroupBox("Listening")
@@ -86,6 +116,10 @@ class ListeningPage(QWidget):
         form.addRow("Activation", self.activation)
         form.addRow("Key in M.I.R.A.'s windows", self.in_window_key)
         form.addRow(self.global_enabled, self.global_shortcut)
+        form.addRow("Wake phrase", self.wake_phrase)
+        form.addRow("Wake sensitivity", self.wake_sensitivity)
+        form.addRow("Speech ends after", self.speech_end)
+        form.addRow("Wait for speech", self.wait_timeout)
         note = QLabel("" if editable else "Listening settings belong to the running M.I.R.A.; open them from its notch.")
         note.setWordWrap(True)
         form.addRow(note)
@@ -110,9 +144,19 @@ class ListeningPage(QWidget):
             audio_form.addRow(label, widget)
         audio_form.addRow(self.test_microphone)
 
+        self.voice_labels = {name: QLabel() for name in (
+            "Activation", "Wake engine", "Wake monitoring", "Wake detections", "Speech detection",
+            "Session", "Speech", "Last utterance", "Last session ended", "Dropped frames")}
+        voice_group = QGroupBox("Voice (local; no audio is kept)")
+        voice_form = QFormLayout(voice_group)
+        for name, label in self.voice_labels.items():
+            label.setWordWrap(True)
+            voice_form.addRow(name, label)
+
         layout = QVBoxLayout(self)
         layout.addWidget(listening)
         layout.addWidget(audio_group)
+        layout.addWidget(voice_group)
         layout.addStretch()
 
         self._timer = QTimer(self)
@@ -121,6 +165,9 @@ class ListeningPage(QWidget):
         self.sync()
         self.activation.currentIndexChanged.connect(self._edited)
         self.in_window_key.textEdited.connect(self._edited)
+        self.wake_phrase.editingFinished.connect(self._edited)
+        for box in (self.wake_sensitivity, self.speech_end, self.wait_timeout):
+            box.valueChanged.connect(self._edited)
         self.global_shortcut.keySequenceChanged.connect(self._edited)
         self.global_enabled.toggled.connect(self._edited)
         self.test_microphone.toggled.connect(self.set_testing)
@@ -138,17 +185,29 @@ class ListeningPage(QWidget):
     def sync(self):
         """Show the settings in use, without applying anything."""
         settings = self._settings
-        for control in (self.activation, self.in_window_key, self.global_shortcut, self.global_enabled):
+        controls = (self.activation, self.in_window_key, self.global_shortcut, self.global_enabled,
+                    self.wake_phrase, self.wake_sensitivity, self.speech_end, self.wait_timeout)
+        for control in controls:
             control.blockSignals(True)
         self.activation.setCurrentIndex(self.activation.findData(settings.activation.value))
+        self.wake_phrase.setText(settings.wake_word.phrase)
+        self.wake_sensitivity.setValue(settings.wake_word.sensitivity)
+        self.speech_end.setValue(settings.speech_end_s)
+        self.wait_timeout.setValue(settings.wait_timeout_s)
         self.in_window_key.setText(settings.in_window_key)
         self.global_enabled.setChecked(settings.global_shortcut is not None)
         self.global_shortcut.setKeySequence(QKeySequence(settings.global_shortcut or ""))
         self.global_shortcut.setEnabled(self.session is not None and settings.global_shortcut is not None)
-        for control in (self.activation, self.in_window_key, self.global_shortcut, self.global_enabled):
+        self._enable_wake_controls()
+        for control in controls:
             control.blockSignals(False)
         self.listening_error.clear()
         self.refresh()
+
+    def _enable_wake_controls(self):
+        wake = ListeningActivationMode(self.activation.currentData()) is ListeningActivationMode.WAKE_WORD
+        for control in (self.wake_phrase, self.wake_sensitivity):
+            control.setEnabled(self.session is not None and self.wake_available and wake)
 
     def _from_controls(self) -> ListeningSettings:
         shortcut = self.global_shortcut.keySequence().toString(QKeySequence.SequenceFormat.PortableText)
@@ -156,10 +215,15 @@ class ListeningPage(QWidget):
             activation=ListeningActivationMode(self.activation.currentData()),
             in_window_key=self.in_window_key.text().upper() or self._settings.in_window_key,
             global_shortcut=(shortcut or None) if self.global_enabled.isChecked() else None,
+            wake_word=WakeWordConfig(self.wake_phrase.text() or self._settings.wake_word.phrase,
+                                     round(self.wake_sensitivity.value(), 2)),
+            speech_end_s=round(self.speech_end.value(), 2),
+            wait_timeout_s=round(self.wait_timeout.value(), 2),
         )
 
     def _edited(self, *_):
         self.global_shortcut.setEnabled(self.global_enabled.isChecked())
+        self._enable_wake_controls()
         try:
             settings = self._from_controls()
         except (ListeningConfigError, ValueError) as error:
@@ -212,6 +276,7 @@ class ListeningPage(QWidget):
                           self.purposes_label, self.rms_label, self.peak_label, self.waveform_label):
                 label.setText("-")
             self.level_bar.setValue(0)
+            self._refresh_voice()
             return
         snapshot = audio.snapshot
         info = snapshot.info
@@ -229,6 +294,30 @@ class ListeningPage(QWidget):
         self.level_bar.setValue(round(audio.level * 100))
         waveform = audio.waveform
         self.waveform_label.setText(f"{len(waveform.buckets)} buckets (real samples)" if waveform else "none")
+        self._refresh_voice()
+
+    def _refresh_voice(self):
+        labels, listening = self.voice_labels, self.listening
+        if listening is None:
+            for label in labels.values():
+                label.setText("-")
+            return
+        detector = listening.detector
+        labels["Activation"].setText(listening.mode.value)
+        labels["Wake engine"].setText(detector.name if detector is not None else "none")
+        labels["Wake monitoring"].setText(
+            "on — MIRA stays idle until it hears the phrase" if listening.monitoring
+            else "off" + (f" — {listening.monitoring_problem}" if listening.monitoring_problem else ""))
+        labels["Wake detections"].setText(str(listening.detections))
+        labels["Speech detection"].setText(listening.vad.name)
+        state = listening.session_state
+        labels["Session"].setText(state.value + (f", {listening.session_elapsed_s:.1f} s" if listening.listening else ""))
+        labels["Speech"].setText("active" if listening.status.speech_active else "-")
+        last = listening.last_utterance
+        labels["Last utterance"].setText(
+            f"#{last.id}: {last.duration_s:.2f} s ({last.activation.value})" if last is not None else "none yet")
+        labels["Last session ended"].setText(listening.last_end.value if listening.last_end else "-")
+        labels["Dropped frames"].setText(str(listening.processor.dropped))
 
     def showEvent(self, event):
         self._timer.start()

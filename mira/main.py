@@ -29,6 +29,7 @@ from PySide6.QtCore import QSocketNotifier, QTimer
 from PySide6.QtWidgets import QApplication
 
 from mira.application.audio import desktop_audio_backend
+from mira.application.voice import configure_listening
 from mira.application.composition import build_application, desktop_system_event_sources
 from mira.application.instance import (
     Forwarded,
@@ -173,6 +174,13 @@ def main(argv: list[str] | None = None, *, claim=claim_runtime):
     # anything is shown, never when the user first asks MIRA to listen. The
     # microphone is not opened.
     application.audio.prepare()
+    # Wake monitoring (if chosen) starts here, before anything is shown; it
+    # captures, but MIRA stays idle until the wake word is heard.
+    settings = listening.settings
+    voice = configure_listening(application.listening, settings.activation, settings.wake_word, settings.policy)
+    print(f"[voice] activation: {voice.mode.value}; speech detection: {voice.vad}"
+          + (f"; wake word {settings.wake_word.phrase!r} via {voice.detector}" if voice.detector else "")
+          + (f"; wake word unavailable: {voice.detector_problem}" if voice.detector_problem else ""))
 
     def serve(forwarded: SurfaceRequest) -> None:
         path = None if forwarded.notch_config is None else Path(forwarded.notch_config)

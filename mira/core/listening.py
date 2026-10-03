@@ -139,6 +139,11 @@ class ListeningController:
         WAKE_WORD without a detector cannot monitor: it is reported in
         `monitoring_problem` and keyboard activation keeps working.
         """
+        engines_change = vad is not None and vad is not self._processor.vad
+        if self._session is not None and (engines_change or (policy is not None and policy != self.policy)):
+            # A session is measured with one detector and one policy from
+            # start to end: new ones apply to the next session.
+            self._end(SessionEnded(SessionEnd.CANCELLED), None, detail="listening settings changed")
         if policy is not None:
             self.policy = policy
         if replace_detector or detector is not None:

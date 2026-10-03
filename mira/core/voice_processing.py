@@ -117,23 +117,26 @@ class VoiceProcessor:
         batch = list(self._pending)
         self._pending.clear()
         self._busy = True
-        self._scheduler.submit(lambda: self._run(batch), self._done)
+        # The engines are bound now: replacing one later (new settings)
+        # affects the next batch, never one the worker is running.
+        detector, vad = self.detector, self.vad
+        self._scheduler.submit(lambda: self._run(batch, detector, vad), self._done)
 
-    def _run(self, jobs: list[VoiceJob]) -> VoiceBatch:
+    def _run(self, jobs: list[VoiceJob], detector, vad) -> VoiceBatch:
         """On the worker: the engines, in order. Touches nothing else."""
         results, errors = [], []
         for job in jobs:
             detections, windows = [], []
             if job.reset_vad:
-                self.vad.reset()
-            if job.detect and self.detector is not None:
+                vad.reset()
+            if job.detect and detector is not None:
                 try:
-                    detections = self.detector.process(job.frame)
+                    detections = detector.process(job.frame)
                 except Exception as error:  # an engine bug must not stop audio
                     errors.append(f"wake-word detector: {error}")
             if job.segment:
                 try:
-                    windows = self.vad.process(job.frame)
+                    windows = vad.process(job.frame)
                 except Exception as error:
                     errors.append(f"voice activity detector: {error}")
             results.append(VoiceResult(job, detections, windows))

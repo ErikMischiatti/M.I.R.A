@@ -150,6 +150,8 @@ class NotchDebugWindow(QWidget):
         audio=None,
         listening_session=None,
         apply_listening=None,
+        listening=None,
+        wake_available: bool = False,
     ):
         super().__init__()
         self.setWindowTitle("M.I.R.A. notch settings")
@@ -169,7 +171,8 @@ class NotchDebugWindow(QWidget):
         self.pages.addTab(self._scrolling(self._appearance_page()), "Appearance")
         self.pages.addTab(self._scrolling(self._behaviour_page(previews)), "Behaviour")
         self.pages.addTab(self._scrolling(self._display_page()), "Display")
-        self.listening_page = ListeningPage(audio=audio, session=listening_session, apply=apply_listening)
+        self.listening_page = ListeningPage(audio=audio, session=listening_session, apply=apply_listening,
+                                            listening=listening, wake_available=wake_available)
         self.pages.addTab(self._scrolling(self.listening_page), "Listening")
         self.pages.addTab(self._scrolling(self._diagnostics_page()), "Diagnostics")
 

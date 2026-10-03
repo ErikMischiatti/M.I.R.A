@@ -58,6 +58,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QApplication
 
 from mira.application.composition import Application
+from mira.application.voice import configure_listening, wake_word_available
 from mira.domain.embodiment import ActivityState
 from mira.domain.listening import ActivationSource
 from mira.domain.notice import Notice
@@ -291,12 +292,15 @@ class DesktopShell:
         )
 
     def apply_listening_settings(self, settings: ListeningSettings) -> None:
-        """New keys take effect at once: the old ones are let go first."""
+        """New settings take effect at once: keys re-registered (the old ones
+        let go first), the activation mode, wake word and timing applied to
+        the runtime's listening controller."""
         if self.keyboard is not None:
             self.keyboard.stop()
         self.keyboard = self._keyboard_for(settings)
         if not self._stopped:
             self.keyboard.start()
+            configure_listening(self._application.listening, settings.activation, settings.wake_word, settings.policy)
 
     def request_listening_toggle(self) -> None:
         """A listening key was pressed: ask; the listening controller decides."""
@@ -337,6 +341,7 @@ class DesktopShell:
                 self.notch, None, self.notch_session, self.presenter, previews=False,
                 audio=self._application.audio, listening_session=self.listening_session,
                 apply_listening=self.apply_listening_settings,
+                listening=self._application.listening, wake_available=wake_word_available()[0],
             )
         _bring_forward(self.settings_window)
 

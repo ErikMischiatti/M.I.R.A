@@ -45,6 +45,16 @@ class FakeListeningSession:
         self.diagnostic = None
 
 
+def fake_configure_listening(events):
+    from mira.application.voice import VoiceSetup
+
+    def configure(listening, mode, wake_word, policy):
+        events.append(f"voice configured ({mode.value})")
+        return VoiceSetup(mode, None, "energy (built-in)", None, None)
+
+    return configure
+
+
 class FakePrimary:
     """What `claim` returns to the process that becomes the runtime."""
 
@@ -88,6 +98,7 @@ def test_main_connects_every_shutdown_before_running(monkeypatch, argv, surface)
 
     class FakeApplicationRuntime:
         audio = FakeAudio()
+        listening = None
 
         def start(self):
             events.append(f"application.start after {len(quit_callbacks)} quit callbacks")
@@ -124,6 +135,7 @@ def test_main_connects_every_shutdown_before_running(monkeypatch, argv, surface)
     monkeypatch.setattr(main_module, "DesktopShell", FakeDesktop)
     monkeypatch.setattr(main_module, "InstanceServer", fake_instance_server(events))
     monkeypatch.setattr(main_module, "ListeningSession", FakeListeningSession)
+    monkeypatch.setattr(main_module, "configure_listening", fake_configure_listening(events))
     monkeypatch.setattr(main_module, "quit_on_interrupt", lambda app: events.append("interrupt handler"))
 
     with pytest.raises(SystemExit) as exit_info:
@@ -138,6 +150,8 @@ def test_main_connects_every_shutdown_before_running(monkeypatch, argv, surface)
         f"desktop built ({surface})",
         # Before anything shows: the slow device enumeration, no capture.
         "audio prepared",
+        # Wake monitoring, if chosen, starts before anything is shown.
+        "voice configured (keyboard)",
         "server for /run/fake/runtime.sock",
         "interrupt handler",
         "application.start after 4 quit callbacks",
@@ -215,6 +229,7 @@ def _run_main_capturing_notch_settings(monkeypatch, argv=("--notch",)):
     class FakeRuntime:
         def __init__(self, **_options):
             self.audio = type("Audio", (), {"prepare": lambda self: None})()
+            self.listening = None
 
         def start(self):
             pass
@@ -239,6 +254,7 @@ def _run_main_capturing_notch_settings(monkeypatch, argv=("--notch",)):
     monkeypatch.setattr(main_module, "DesktopShell", FakeDesktop)
     monkeypatch.setattr(main_module, "InstanceServer", fake_instance_server([]))
     monkeypatch.setattr(main_module, "ListeningSession", FakeListeningSession)
+    monkeypatch.setattr(main_module, "configure_listening", fake_configure_listening([]))
     monkeypatch.setattr(main_module, "quit_on_interrupt", lambda app: None)
     with pytest.raises(SystemExit):
         main_module.main(list(argv), claim=lambda request: FakePrimary([]))
