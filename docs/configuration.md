@@ -126,9 +126,9 @@ restores them at run time only.
 
 ```json
 {
-  "version": 3,
+  "version": 4,
   "compact":   {"width": 200.0, "height": 32.0, "radius": 14.0},
-  "expanded":  {"width": 360.0, "height": 96.0, "radius": 24.0},
+  "expanded":  {"width": 400.0, "height": 112.0, "radius": 26.0},
   "placement": {"offset_x": 0.0, "top_margin": 0.0},
   "eyes": {"height_share": 0.28, "top_offset": 0.0, "center_offset": 0.0,
            "spacing": 300.0, "motion_gain": 0.5},
@@ -138,8 +138,8 @@ restores them at run time only.
                 "automatic_expansion": {"alert": true, "device": true,
                                         "task": false, "connectivity": true},
                 "notice_duration_ms": 4000},
-  "content": {"symbol_px": 26.0, "text_px": 18.0, "spacing_px": 10.0,
-              "eye_gap_px": 19.0}
+  "content": {"symbol_px": 28.0, "text_px": 20.0, "spacing_px": 12.0,
+              "eye_gap_px": 22.0}
 }
 ```
 
@@ -157,17 +157,20 @@ untouched. Saving is atomic: a temporary file in the same directory replaces
 the old one in a single rename.
 
 **Expanded content.** `content` sizes and places the symbol and label shown
-when the notch is expanded, all in pixels: `symbol_px` (8–96), `text_px`
-(6–72), `spacing_px` between symbol and label (0–80), and `eye_gap_px`
+when the notch is expanded, all in pixels: `symbol_px` (14–96), `text_px`
+(12–72; below 12 px a notice is not comfortably legible, so no configuration
+goes lower), `spacing_px` between symbol and label (0–80), and `eye_gap_px`
 (0–200), the gap between the lowest point the eyes can reach (their whole
 motion envelope, not just the resting eye) and the top of the content. The
 content therefore never overlaps an eye pose and moves with the eyes when
 they are tuned. It is centred between the rounded corners; a long label is
 elided. A combination whose content would leave the expanded notch, or whose
 symbol does not fit between the corners, is invalid: the tuning window shows
-it, does not apply it and will not save it. To make content larger, raise
-the expanded height as well (Appearance → Expanded geometry); the tuning
-window's *Derived layout* line shows where the content ends.
+it, does not apply it, will not save it, and names the expanded size it
+would need. The defaults read at desktop distance without tuning; to make
+content larger, raise the expanded height as well (Appearance → Expanded
+geometry). The same band shows the integrated controls and, while MIRA
+listens, the waveform.
 
 **Behaviour.** `expand_on_hover` expands the notch while the pointer is over
 it. `automatic_expansion` has one switch per notice category — `alert`
@@ -186,18 +189,52 @@ D-Bus); a facility that is missing is reported once at startup
 are suppressed: a device that bounces, a repeated announcement, or a network
 drop shorter than three seconds says nothing.
 
-**Older versions.** Version 2 files (no `content`) and version 1 files (no
-`behaviour` either) still load: `content` becomes the layout those files had
-before it existed — the symbol at 34 % of the band below the compact notch,
-at most 20 px, centred in it — so nothing grows or moves until tuned, and
-`behaviour` gets the production defaults. The file is not touched until
-**Save**, which rewrites it as version 3. Diagnostics shows the schema
-version. Code older than this change cannot read version 3.
+**Older versions.** Version 4 is version 3 with the readable floor above.
+Older files still load, in memory, and are made readable without tuning;
+the file itself is not touched until **Save**, which rewrites it as
+version 4. Version 3 content is lifted to the floor; versions 2 and 1, which
+had no content settings, get the production content; and only the
+*expanded* notch grows, just enough to fit it — the compact notch and the
+eyes never change. Version 1 files also get the production behaviour.
+Diagnostics shows the schema version. Code older than this change cannot
+read version 4.
 
-**Settings while running.** Right-click the notch → *Notch settings…* opens
-the same paged settings window as `MIRA-TUNE` for the running notch (without
-the development previews); double-click it, or *Open M.I.R.A.*, opens the
-main window of the same runtime; *Quit M.I.R.A.* ends it.
+**Settings while running.** Right-click the notch to open its own
+controls, drawn inside the notch (no menu pops up): *Settings* opens the
+same paged settings window as `MIRA-TUNE` for the running notch (without the
+development previews, with a Listening page), *Quit M.I.R.A.* ends the
+runtime. The controls close when one is used, on another right click, or
+1.5 s after the pointer leaves the notch. Double-click the notch to open the
+main window.
+
+## Listening
+
+`~/.config/mira/listening.json` (`$XDG_CONFIG_HOME/mira/`) holds how
+listening is activated. It belongs to the runtime, not to the notch, so a
+runtime started by `MIRA` uses it too:
+
+```json
+{"version": 1, "activation": "keyboard",
+ "in_window_key": "M", "global_shortcut": "Ctrl+Alt+M"}
+```
+
+- `in_window_key` toggles listening in M.I.R.A.'s own windows, never while
+  the key goes to an editable text field (typing "MIRA" in the chat types
+  it).
+- `global_shortcut` toggles listening from anywhere on the desktop (X11),
+  and must include Ctrl, Alt or Super (`Super+…` and `Meta+…` are the same);
+  `null` turns it off. Ctrl+Alt+M is not bound in GNOME by default. A
+  combination another X client already grabbed is reported and left off;
+  GNOME's own shortcuts are not detected that way, so avoid them.
+- `activation` is `"keyboard"`. `"wake word"` is reserved: such a file loads
+  with keyboard activation and a diagnostic, because wake-word detection
+  does not exist yet.
+
+A missing or unusable file means the defaults; loading never writes. The
+settings window's Listening page edits these (applied at once, written by
+Save) and shows the audio input: backend, device, format, status, live RMS
+and peak, and a *Test microphone* switch that captures without MIRA
+listening. Captured audio is processed in memory and never saved.
 
 **Placement.** `top_margin` 0 puts the notch's top edge on the selected
 screen's top edge — the screen geometry, not the desktop work area below a

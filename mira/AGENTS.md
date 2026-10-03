@@ -54,6 +54,8 @@ Main modules:
     adapter; the only place that knows the turn lifecycle runs on a Qt event loop
   - `OpenCVCameraSource` (`mira/adapters/opencv_camera.py`): the only module
     that imports `cv2`, lazily; OpenCV is the optional `camera` extra
+  - `QtAudioCaptureBackend` (`mira/adapters/qt_audio.py`): microphone
+    capture through Qt Multimedia's `QAudioSource`, default input
   - Linux system sources, all event-driven on the Qt loop and optional:
     `LinuxUsbDeviceSource` (kernel uevents), `PipeWireAudioSource`
     (`pw-dump --monitor`), `NetworkManagerConnectivitySource` (QtDBus)
@@ -84,6 +86,10 @@ Main modules:
     events → `"notice"` on the bus, with the noise policy
   - running tasks (`mira/core/task_activity.py`): executor run ids →
     `"tasks_changed"`; shown as the TASK_RUNNING condition
+  - audio input (`mira/core/audio_input.py`): the runtime's one
+    `AudioInputService`, capture by leases, pulled level and waveform
+  - listening (`mira/core/listening.py`): activation requests → capture
+    lease → `"listening_changed"`; LISTENING stays the activity authority's
   - camera capture (`CameraCapture`): owns the capture thread, the newest
     frame and the camera status
 

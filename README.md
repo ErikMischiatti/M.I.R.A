@@ -35,7 +35,9 @@ expresses what it is doing.
   of the screen, on every X11 workspace. It expands on hover and for real
   notices — action results, USB and audio devices, network connectivity —
   and the eyes react to success, warnings and errors, and narrow while MIRA
-  is working on a task. `MIRA` and `MIRA-NOTCH` share one runtime per user:
+  is working on a task. Press `Ctrl+Alt+M` (or `M` in its window) and MIRA
+  listens: the notch opens and shows the microphone's real waveform. There
+  is no speech recognition yet. `MIRA` and `MIRA-NOTCH` share one runtime per user:
   the second only asks the first to show its surface. Double-click the notch
   to open the main window. Tunable with `MIRA-TUNE`.
 - **Debug drawer**: hidden by default. It offers live tuning of expression

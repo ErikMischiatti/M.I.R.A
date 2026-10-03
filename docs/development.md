@@ -85,8 +85,13 @@ not part of that runtime. All use the same `venv` and symlink resolution:
 | Command | Script | Runs |
 |---|---|---|
 | `MIRA` | `bin/mira` | `python -m mira.main`: show the main window (starting the runtime if needed). Closing the window ends the runtime unless a notch is open. |
-| `MIRA-NOTCH` | `bin/mira-notch` | `python -m mira.main --notch`: show the notch (starting the runtime if needed), with the saved configuration and real task, device and connectivity notices; double-click opens the main window, closing it leaves the notch running. Quit from the notch's context menu or Ctrl+C. |
+| `MIRA-NOTCH` | `bin/mira-notch` | `python -m mira.main --notch`: show the notch (starting the runtime if needed), with the saved configuration and real task, device and connectivity notices; double-click opens the main window, closing it leaves the notch running. Quit from the notch's own controls (right click) or Ctrl+C. |
 | `MIRA-TUNE` | `bin/mira-tune` | `python -m mira.ui.notch --tune`: a standalone notch (no application behind it) with its tuning window, which changes it live, previews notices and eye cues, and can Save, Reload and Reset defaults. Closing the window quits. |
+
+In a running M.I.R.A., `M` (in its windows, outside text fields) or
+`Ctrl+Alt+M` (anywhere) toggles listening: the notch opens and shows the
+microphone's real waveform. Automated tests never open a microphone; they
+use fake capture backends.
 
 `python -m mira.ui.notch --notch-only` still shows the standalone notch
 without the tuning window, for development; it has no application and so no

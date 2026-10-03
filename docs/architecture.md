@@ -454,7 +454,18 @@ NotchWindow ── hover_changed ───────┤
 - **Presence** is resolved, never set from several places. The owner picks a
   base (hidden or shown); the notch is EXPANDED while any `ExpansionReason`
   holds — HOVER (if `expand_on_hover`), PINNED (tuning preview), NOTICE (a
-  notice whose category expands automatically) — and COMPACT otherwise.
+  notice whose category expands automatically), CONTROLS (the integrated
+  controls are open), LISTENING (MIRA is listening) — and COMPACT otherwise.
+  The content band shows, in this order of precedence: controls > notice >
+  listening (the real waveform) > task running > activity.
+- **Integrated controls.** Right click toggles the notch's own controls
+  (Settings, Quit M.I.R.A.), drawn as pills in the content band and clicked
+  in place; there is no native menu. Opening the main window is not a
+  control: the double click is that one gesture. Controls close after use,
+  on another right click, on hide, or 1.5 s after the pointer leaves
+  (re-entering in time keeps them), on the Scheduler. The notch accepts
+  mouse presses, which is what makes X11 deliver the releases its controls
+  act on.
   Activity alone never expands; it only chooses the content shown while open.
   A notice of a category that does not expand still becomes the content (seen
   on hover) and still makes the eyes react.
@@ -464,7 +475,8 @@ NotchWindow ── hover_changed ───────┤
   is no queue.
 - **Rendering.** COMPACT shows only the eyes. EXPANDED keeps the eyes where
   the compact notch places them and draws a vector symbol (`symbol_painter`,
-  Qt primitives only) and an optional elided label below them, laid out by
+  Qt primitives only) and an optional elided label below them (by default a
+  28 px symbol and 20 px text, with a 12 px readable floor), laid out by
   `NotchContentStyle` (`expanded_layout`): symbol size, text size,
   symbol–text spacing and a gap measured from the bottom of the eyes' whole
   motion envelope. The group is centred between the rounded corners. Content
@@ -473,8 +485,8 @@ NotchWindow ── hover_changed ───────┤
   notch keeps its last valid configuration. Mid-transition the content is
   revealed by the outline and faded with the reveal, by design.
 - **Actions.** The window emits `NotchAction` values (double click:
-  OPEN_MAIN_WINDOW; context menu: every offered action — open M.I.R.A.,
-  notch settings, quit) and only those its presentation offers.
+  OPEN_MAIN_WINDOW; integrated controls: OPEN_SETTINGS, QUIT) and only those
+  its presentation offers.
   `DesktopShell` honours them; the notch never holds `MainWindow`. The
   standalone tools offer none.
 - **Workspaces.** The notch is present on every virtual workspace. Before
@@ -564,18 +576,82 @@ allow-list/filter policy in `mira.core` deciding which become notices.
 
 | | |
 |---|---|
-| Implemented | one runtime per user with surface requests; lazy main window and notch; all-workspace presence on X11; configurable expanded content; USB, audio-topology and connectivity notices with supervised PipeWire monitoring; per-category expansion; SUCCESS/WARNING/ERROR cues and the TASK_RUNNING condition on every surface |
-| Prepared | `SystemEventSource` port for other platforms and embodiments; `EyeShape` in `EmbodimentFrame` for other renderers; run ids and a running-task set ready for asynchronous actions; one obvious runtime owner for a future audio subsystem |
-| Future | asynchronous (long) actions; desktop-notification source with a filter policy; Wayland workspace presence; microphone level |
+| Implemented | one runtime per user with surface requests; lazy main window and notch; all-workspace presence on X11; readable expanded content by default; integrated notch controls; USB, audio-topology and connectivity notices with supervised PipeWire monitoring; per-category expansion; SUCCESS/WARNING/ERROR cues and the TASK_RUNNING condition; keyboard listening activation; the runtime's microphone capture with real level and waveform in the notch |
+| Prepared | `SystemEventSource` port; `EyeShape` in `EmbodimentFrame`; run ids for asynchronous actions; `ListeningActivationMode.WAKE_WORD`, activation sources and capture leases for a wake-word detector; `AudioFrame` for speech processing |
+| Future | wake word; voice activity detection; speech-to-text and text-to-speech; asynchronous (long) actions; desktop-notification source with a filter policy; Wayland workspace presence |
 
-**Input level (not implemented).** No audio subsystem exists, so there is no
-real microphone level to show. The PipeWire source reports device *topology*
-only — which inputs exist and which is the default — never samples or
-levels; a present microphone says nothing about what it hears. The intended interface is a domain value such
-as `AudioInputLevel(amplitude: float in [0, 1], timestamp_ms: int)`, produced
-by a future audio adapter and fed to the presenter like activity (pulled or
-pushed on the UI thread), never a synthetic waveform. LISTENING's symbol is
-static until that source exists.
+### Audio input and listening
+
+```text
+keyboard (in-window M, global Ctrl+Alt+M)          future: wake-word detector
+        │  "listening_toggle_requested" (ActivationSource)        │
+        ▼                                                         ▼
+ListeningController (core) ── lease(CONVERSATION) ──▶ AudioInputService (core)
+        │ "listening_changed"                          one per runtime, leases
+        ▼                                                         │
+InteractionManager → ActivityAuthority → LISTENING     AudioCaptureBackend port
+        │                                              QtAudioCaptureBackend
+        ├─▶ FaceController (every surface)             (QAudioSource, 16 kHz s16)
+        └─▶ NotchPresenter: LISTENING reason                      │ AudioFrame
+                 NotchWindow pulls AudioInputService.waveform ◀───┘ measure / envelope /
+                 on each animator frame (~33 Hz)                     reducer (pull only)
+```
+
+Three things stay apart, and nothing assumes they coincide:
+
+| | what | where |
+|---|---|---|
+| capture capability | the microphone can be opened and delivers frames | `AudioInputService` + backend |
+| listening activation | something asks MIRA to start or stop listening | `ActivationSource`; keyboard today |
+| conversation LISTENING | MIRA is listening to the user | `ListeningController` → activity authority |
+
+- **Ownership.** `AudioInputService` is built once in the composition and
+  shut down first (after `ListeningController` lets go). Capture runs while
+  any *lease* is held — CONVERSATION while listening, DIAGNOSTICS for the
+  settings' microphone test — so "the microphone is open" is never taken to
+  mean "MIRA is listening". A wake-word detector will hold its own lease.
+  Surfaces never own audio; showing more surfaces never adds capture.
+- **Backend.** Qt Multimedia's `QAudioSource`, already part of PySide6: no
+  new dependency, in process, data delivered on the Qt main thread through
+  the event loop, input changes through `QMediaDevices`. 16 kHz signed
+  16-bit mono is requested; other formats are converted. It follows the
+  default input (moving capture when the default changes or the device
+  disappears; failing, once, when no input is left). PySide6 6.11 cannot
+  deliver `QAudioSource.stateChanged` to Python, so a 1 Hz watchdog detects
+  an error state or a stream with no data for 3 s. The first device
+  enumeration takes about 1.7 s, so the runtime prepares it at start, before
+  showing anything (enumeration only, no capture). `pw-record` on a pipe was
+  the alternative considered; it would add a second supervised child.
+- **Values** (`mira/domain/audio.py`, pure and deterministic):
+  `AudioFrame` (s16 mono PCM in memory, rate, timestamp); `measure` → RMS and
+  peak as fractions of full scale; a display scale in dBFS (−60 dB → 0,
+  0 dB → 1); `LevelEnvelope` with a 30 ms attack and 350 ms release driven by
+  frame timestamps; `WaveformReducer` keeping the peak of each 25 ms bucket,
+  at most 40 (about a second), so memory never grows with capture time.
+  Nothing is written to disk.
+- **Update path.** Frames never travel on the bus; renderers pull. The notch
+  reads the waveform on its repaints, which the existing face animator drives
+  at about 33 Hz: no new timer, nothing at audio rate, and a renderer that
+  falls behind only ever sees the latest bounded state.
+- **No fake waveform.** Without frames (unavailable, failed, not yet
+  arrived) there is no waveform and the notch shows the listening symbol. A
+  muted microphone delivers real silence, drawn as a quiet line.
+- **Failure.** A microphone that cannot open refuses the toggle; one lost
+  while listening ends listening. Each gives one WARNING notice and a log
+  line; MIRA keeps running.
+- **Priorities.** Eyes: a showing cue > TASK_RUNNING > the expression, which
+  shows LISTENING while listening. Notch content: controls > notice >
+  listening waveform > task running > activity. LISTENING expands the notch
+  through its own reason, and the open microphone is always visible: the
+  notch opens and the eyes show LISTENING on every surface, including a
+  main window alone.
+- **Keyboard safety.** The in-window key is ignored whenever the widget
+  receiving it, or the focus widget, is an editable text field (read-only
+  views do not count). The global shortcut is one `XGrabKey` of a combination
+  that must carry Ctrl, Alt or Super; MIRA never sees other keys.
+
+**Not implemented:** wake-word detection (modelled, never selectable), voice
+activity detection, speech-to-text, text-to-speech, recording.
 
 ## 10. Camera input
 
@@ -742,10 +818,11 @@ The following are extension directions, not existing APIs:
   No detector, observation model, or wiring from the camera into the face
   exists yet. Relation perception (object detection feeding a RelateAnything
   adapter) is a further direction with no code.
-- Voice input may enter the existing input/cognition pipeline, and voice output
-  may consume responses; no audio subsystem exists. The audio-device source
-  knows topology only; a microphone level (`AudioInputLevel(amplitude,
-  timestamp)`) needs a capture adapter first.
+- Voice input may enter the existing input/cognition pipeline: a wake-word
+  detector as an activation source, then voice activity detection and
+  speech-to-text over the frames the runtime's `AudioInputService` already
+  captures while listening; voice output may consume responses. Capture,
+  level and waveform exist (section 9a); no speech processing does.
 - Desktop application notifications may become notices through a filtered
   `SystemEventSource` (section 9a); investigated, not built.
 - Persistent memory may replace or complement `SessionMemory` behind an explicit
