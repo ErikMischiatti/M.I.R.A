@@ -239,3 +239,62 @@ def test_a_notch_built_while_listening_opens_listening(runtime):
         for obj in (shell.notch, shell.window, shell.animator):
             if obj is not None:
                 obj.deleteLater()
+
+
+# --- Wake monitoring and sessions in the notch ------------------------------------------------
+
+
+class WakeDetector:
+    name = "fake spotter"
+
+    def reset(self):
+        pass
+
+    def process(self, frame):
+        from mira.domain.voice import WakeWordDetection
+
+        return [WakeWordDetection("mira")] if frame.pcm[:2] == (7777).to_bytes(2, "little", signed=True) else []
+
+
+def frame_of(value, first=None):
+    samples = array("h", [value] * 512)
+    if first is not None:
+        samples[0] = first
+    return samples
+
+
+def test_wake_monitoring_keeps_the_notch_compact_and_a_session_opens_it(runtime):
+    from mira.domain.listening import ListeningActivationMode
+
+    app, backend, notch = runtime.app, runtime.backend, runtime.notch
+    app.listening.configure(ListeningActivationMode.WAKE_WORD, detector=WakeDetector())
+    clock = [0.0]
+
+    def send(value, first=None):
+        clock[0] += 512 / 16000
+        backend.on_frame(AudioFrame(frame_of(value, first).tobytes(), 16000, clock[0]))
+        app.scheduler.run_all() if hasattr(app.scheduler, "run_all") else None
+
+    for _ in range(30):
+        send(3000)  # the room is loud, but nobody said the phrase
+    finish(notch)
+    assert app.audio.capturing and notch.presence is C
+    assert not notch.presentation.listening and notch.current_waveform() is None
+
+    send(0, first=7777)
+    finish(notch)
+    assert notch.presence is E and ExpansionReason.LISTENING in notch.presentation.reasons
+
+    for _ in range(20):
+        send(1000)  # speech (the energy detector hears it over the quiet floor)
+    assert app.listening.status.speech_active and notch.current_waveform() is not None
+
+    notch.hover_changed.emit(True)
+    for _ in range(40):
+        send(0)
+    finish(notch)
+    assert not app.listening.listening
+    assert notch.presence is E and notch.presentation.reasons == {ExpansionReason.HOVER}
+    notch.hover_changed.emit(False)
+    finish(notch)
+    assert notch.presence is C and app.audio.capturing  # monitoring goes on, quietly

@@ -126,7 +126,14 @@ class EnergyVoiceActivityDetector:
     seconds: speech always has gaps between syllables, so it does not lift
     the floor, while a steady noise (a fan) becomes the floor within
     ``floor_s`` and stops counting as speech.
+
+    `reset` (a new session) restarts the window count but keeps the floor:
+    the room's noise belongs to the room, not to a session, and forgetting it
+    would make the first words after activation the floor. Before anything
+    was measured the floor is `UNMEASURED_FLOOR_DB`.
     """
+
+    UNMEASURED_FLOOR_DB = -60.0
 
     name = "energy (built-in)"
 
@@ -136,16 +143,19 @@ class EnergyVoiceActivityDetector:
         self.margin_db = margin_db
         self.min_db = min_db
         self._floor_windows = max(int(floor_s * sample_rate / window), 1)
+        # Filled with the unmeasured floor, so a level must hold for the
+        # whole floor span — a fan, never the first words — to become it.
+        self._levels: deque[float] = deque([self.UNMEASURED_FLOOR_DB] * self._floor_windows,
+                                           maxlen=self._floor_windows)
         self.reset()
 
     def reset(self) -> None:
         self._pending = array("h")
         self._samples = 0
-        self._levels: deque[float] = deque(maxlen=self._floor_windows)
 
     @property
     def noise_db(self) -> float:
-        return min(self._levels) if self._levels else -120.0
+        return min(self._levels)
 
     def process(self, frame: AudioFrame) -> list[SpeechWindow]:
         self._pending.frombytes(frame.pcm)
@@ -156,7 +166,7 @@ class EnergyVoiceActivityDetector:
             self._samples += self.window
             rms = math.sqrt(math.fsum(v * v for v in chunk) / self.window) / FULL_SCALE
             level = 20.0 * math.log10(rms) if rms > 0 else -120.0
-            floor = self.noise_db if self._levels else level
+            floor = self.noise_db
             self._levels.append(level)
             speech = level > self.min_db and level > floor + self.margin_db
             windows.append(SpeechWindow(speech, self._samples, self.window))

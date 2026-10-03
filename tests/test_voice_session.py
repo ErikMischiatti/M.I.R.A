@@ -222,6 +222,15 @@ def test_the_energy_detector_keeps_partial_windows_and_resets():
     assert vad.process(AudioFrame(tone(6000, WINDOW), RATE, 0.0))[0].end_sample == WINDOW
 
 
+def test_speech_right_after_activation_is_heard_and_the_floor_outlives_a_reset():
+    vad = EnergyVoiceActivityDetector()
+    assert all(w.speech for w in vad.process(AudioFrame(tone(6000, WINDOW * 3), RATE, 0.0)))  # no history yet
+
+    vad.process(AudioFrame(tone(60, WINDOW * 70), RATE, 0.0))  # the quiet room, measured
+    vad.reset()  # a new session
+    assert all(w.speech for w in vad.process(AudioFrame(tone(6000, WINDOW * 3), RATE, 0.0)))
+
+
 def test_a_steady_noise_becomes_the_floor_within_two_seconds():
     vad = EnergyVoiceActivityDetector()
     vad.process(AudioFrame(tone(60, WINDOW * 20), RATE, 0.0))
