@@ -13,10 +13,9 @@ it, and "the microphone is open" does not mean "MIRA is listening": a
 future wake-word detector will hold the microphone while MIRA is not
 listening, and turn into an activation source when it hears its word.
 
-`ListeningActivationMode` is the user's choice of how activation works.
-Only KEYBOARD is implemented; WAKE_WORD is part of the model so settings can
-be persisted and shown as coming later, never selectable while it would do
-nothing.
+`ListeningActivationMode` is the user's choice of how activation works:
+KEYBOARD (the in-window key and the global shortcut) or WAKE_WORD (a local
+keyword spotter; the keys still cancel). Both feed the same session.
 """
 
 from __future__ import annotations
@@ -30,13 +29,16 @@ class ListeningActivationMode(StrEnum):
     WAKE_WORD = "wake word"
 
 
-IMPLEMENTED_MODES = frozenset({ListeningActivationMode.KEYBOARD})
+# Wake word works only where its engine and model are installed; whether
+# it is available *here* is the runtime's answer, not this module's.
+IMPLEMENTED_MODES = frozenset({ListeningActivationMode.KEYBOARD, ListeningActivationMode.WAKE_WORD})
 
 
 class ActivationSource(StrEnum):
     """What asked for the change; for logs and future policy, never for capture."""
 
     KEYBOARD = "keyboard"
+    WAKE_WORD = "wake word"
 
 
 class ListeningState(StrEnum):
@@ -62,6 +64,9 @@ class ListeningStatus:
     source: ActivationSource | None = None
     capturing: bool = False
     reason: str | None = None
+    # Within a session: the user is speaking right now (an orthogonal signal,
+    # not another activity). False whenever not listening.
+    speech_active: bool = False
 
     @property
     def listening(self) -> bool:

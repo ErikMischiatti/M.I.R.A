@@ -15,7 +15,9 @@ the telemetry is cleared, so nothing stale is ever drawn.
 
 Frames arrive on the thread that started capture (the Qt main thread for
 the desktop backend) and are processed at once; there is no queue to fall
-behind.
+behind. Consumers that need the samples themselves — the voice pipeline —
+subscribe with `subscribe_frames`; they share this one capture, they never
+open another.
 """
 
 from __future__ import annotations
@@ -71,6 +73,7 @@ class AudioInputService:
         self._reducer = WaveformReducer()
         self._raw: AudioInputLevel | None = None
         self._stopped = False
+        self._frame_listeners: list = []
         self.frames_received = 0
 
     # --- Reading ------------------------------------------------------------------
@@ -114,6 +117,10 @@ class AudioInputService:
         prepare = getattr(self._backend, "prepare", None)
         if prepare is not None and not self._stopped:
             prepare()
+
+    def subscribe_frames(self, listener) -> None:
+        """Hand every captured frame to ``listener`` too, on the capture thread."""
+        self._frame_listeners.append(listener)
 
     # --- Leases -------------------------------------------------------------------
 
@@ -178,6 +185,8 @@ class AudioInputService:
         self._raw = measure(frame)
         self._envelope.update(self._raw)
         self._reducer.add(frame)
+        for listener in list(self._frame_listeners):
+            listener(frame)
 
     def _on_failure(self, reason: str) -> None:
         """Capture ended by itself: every lease is void; the holders are told."""

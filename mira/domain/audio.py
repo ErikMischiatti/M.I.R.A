@@ -201,12 +201,14 @@ class CaptureStatus(StrEnum):
 class CapturePurpose(StrEnum):
     """Why someone needs the microphone; one lease per purpose holder.
 
-    Conversation listening, and an explicit microphone test in the settings.
-    A wake-word detector would hold its own lease, so capture can run while
-    MIRA is not listening.
+    Conversation listening, wake-word monitoring and an explicit microphone
+    test in the settings. Monitoring holds its own lease, so capture runs
+    while MIRA is not listening — which is exactly what it must not show as
+    listening.
     """
 
     CONVERSATION = "conversation"
+    WAKE_MONITORING = "wake-word monitoring"
     DIAGNOSTICS = "microphone test"
 
 

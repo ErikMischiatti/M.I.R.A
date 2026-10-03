@@ -49,13 +49,16 @@ class Backend:
         self.running = False
 
 
-def test_wake_word_is_shown_as_coming_later_and_cannot_be_chosen(tmp_path):
+def test_wake_word_cannot_be_chosen_where_it_is_not_installed(tmp_path):
     page = ListeningPage(session=ListeningSession(tmp_path / "listening.json"))
     model = page.activation.model()
 
     labels = [page.activation.itemText(i) for i in range(page.activation.count())]
-    assert labels == ["Keyboard", "Wake word — coming later"]
+    assert labels == ["Keyboard", "Wake word — not installed"]
     assert model.item(0).isEnabled() and not model.item(1).isEnabled()
+
+    installed = ListeningPage(session=ListeningSession(tmp_path / "listening.json"), wake_available=True)
+    assert installed.activation.itemText(1) == "Wake word" and installed.activation.model().item(1).isEnabled()
     assert page.runtime_settings.activation is ListeningActivationMode.KEYBOARD
 
 

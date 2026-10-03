@@ -43,13 +43,14 @@ REFRESH_MS = 200
 
 _MODE_LABELS = {
     ListeningActivationMode.KEYBOARD: "Keyboard",
-    ListeningActivationMode.WAKE_WORD: "Wake word — coming later",
+    ListeningActivationMode.WAKE_WORD: "Wake word",
 }
+_UNAVAILABLE = " — not installed"
 
 
 class ListeningPage(QWidget):
     def __init__(self, *, audio=None, session: ListeningSession | None = None,
-                 apply: Callable[[ListeningSettings], None] | None = None):
+                 apply: Callable[[ListeningSettings], None] | None = None, wake_available: bool = False):
         super().__init__()
         self.audio = audio
         self.session = session
@@ -58,12 +59,15 @@ class ListeningPage(QWidget):
         self._settings = session.settings if session is not None else ListeningSettings()
 
         self.activation = QComboBox()
+        self.wake_available = wake_available
         for mode, label in _MODE_LABELS.items():
-            self.activation.addItem(label, mode.value)
+            usable = mode is not ListeningActivationMode.WAKE_WORD or wake_available
+            self.activation.addItem(label + ("" if usable else _UNAVAILABLE), mode.value)
         model = self.activation.model()
         if isinstance(model, QStandardItemModel):
             for row, mode in enumerate(_MODE_LABELS):
-                model.item(row).setEnabled(mode in IMPLEMENTED_MODES)
+                model.item(row).setEnabled(mode in IMPLEMENTED_MODES and (
+                    mode is not ListeningActivationMode.WAKE_WORD or wake_available))
         self.in_window_key = QLineEdit()
         self.in_window_key.setMaxLength(1)
         self.in_window_key.setToolTip("Toggles listening in M.I.R.A.'s windows, never while typing in a text field")

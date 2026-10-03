@@ -182,7 +182,7 @@ def build_application(
     # The runtime's one owner of the microphone; idle until someone leases it.
     audio = AudioInputService(event_bus, audio_backend)
     # The one decision whether MIRA listens; activation sources only ask.
-    listening = ListeningController(event_bus, audio)
+    listening = ListeningController(event_bus, audio, scheduler)
 
     return Application(
         event_bus=event_bus,

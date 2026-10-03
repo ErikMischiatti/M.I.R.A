@@ -72,7 +72,7 @@ def controller(opens=True):
     bus = EventBus()
     backend = Backend(opens)
     audio = AudioInputService(bus, backend)
-    listening = ListeningController(bus, audio)
+    listening = ListeningController(bus, audio, ManualScheduler())
     seen, notices = [], []
     bus.subscribe(LISTENING_EVENT, seen.append)
     bus.subscribe("notice", notices.append)
@@ -348,16 +348,16 @@ def test_the_listening_settings_default_to_keyboard_activation(tmp_path):
     assert not (tmp_path / "listening.json").exists()  # loading never writes
 
 
-def test_wake_word_is_modelled_but_never_silently_selected(tmp_path):
+def test_wake_word_activation_is_a_valid_setting(tmp_path):
     path = tmp_path / "listening.json"
     path.write_text(json.dumps({"version": 1, "activation": "wake word"}))
 
     session = ListeningSession(path)
 
-    assert session.settings.activation is ListeningActivationMode.KEYBOARD
-    assert "not available yet" in session.diagnostic
-    with pytest.raises(ListeningConfigError):
-        ListeningSettings(activation=ListeningActivationMode.WAKE_WORD)
+    # Whether it can work *here* is the runtime's answer (an installed
+    # detector), reported there; the setting itself is valid.
+    assert session.settings.activation is ListeningActivationMode.WAKE_WORD
+    assert session.diagnostic is None
 
 
 def test_listening_settings_round_trip_and_bad_files_fall_back(tmp_path):
