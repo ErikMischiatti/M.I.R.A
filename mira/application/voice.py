@@ -18,6 +18,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from mira.core.listening import ListeningController
+from mira.core.voice_processing import DESKTOP_MIN_BATCH
 from mira.domain.listening import ListeningActivationMode
 from mira.domain.voice import EnergyVoiceActivityDetector, SegmentationPolicy, WakeWordConfig
 
@@ -55,6 +56,7 @@ def configure_listening(listening: ListeningController, mode: ListeningActivatio
     if type(vad) is type(listening.vad) and engines.vad is None:
         vad = None  # keep the running built-in detector; nothing changed
     listening.configure(mode, policy=policy, detector=engines.detector, vad=vad, replace_detector=True)
+    listening.processor.min_batch = DESKTOP_MIN_BATCH
     return VoiceSetup(mode, getattr(engines.detector, "name", None), listening.vad.name,
                       engines.detector_problem if mode is ListeningActivationMode.WAKE_WORD else None,
                       engines.vad_problem)

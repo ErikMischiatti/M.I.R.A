@@ -365,3 +365,31 @@ def test_shutdown_ends_everything_and_releases_the_microphone(rig):
 
     assert rig.utterances == [] and rig.app.listening.last_end is SessionEnd.SHUTDOWN
     assert not rig.backend.running and rig.app.audio.lease_purposes == []
+
+
+def test_frames_wait_for_a_full_batch_and_keep_their_order():
+    from mira.core.voice_processing import VoiceJob, VoiceProcessor
+
+    seen = []
+
+    class Vad:
+        name = "order"
+
+        def reset(self):
+            pass
+
+        def process(self, frame):
+            seen.append(frame.timestamp_s)
+            return []
+
+    scheduler = ManualScheduler()
+    processor = VoiceProcessor(scheduler, detector=None, vad=Vad(), on_results=lambda batch: None)
+    processor.min_batch = 4
+    for t in range(3):
+        processor.submit(VoiceJob(AudioFrame(b"\0\0", RATE, float(t)), segment=True))
+    scheduler.run_all()
+    assert seen == [] and processor.pending == 3  # not yet a batch
+
+    processor.submit(VoiceJob(AudioFrame(b"\0\0", RATE, 3.0), segment=True))
+    scheduler.run_all()
+    assert seen == [0.0, 1.0, 2.0, 3.0]

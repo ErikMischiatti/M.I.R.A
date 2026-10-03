@@ -80,7 +80,9 @@ def measure(frame: AudioFrame) -> AudioInputLevel:
     samples = frame.samples()
     if not samples:
         return AudioInputLevel(0.0, 0.0, frame.timestamp_s)
-    squares = math.fsum(value * value for value in samples)
+    # The sum of squares in C (Python 3.12): this runs for every captured
+    # frame, also while only the wake word is monitored.
+    squares = float(math.sumprod(samples, samples))
     peak = max(max(samples), -min(samples))
     return AudioInputLevel(
         rms=min(math.sqrt(squares / len(samples)) / FULL_SCALE, 1.0),

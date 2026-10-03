@@ -164,7 +164,7 @@ class EnergyVoiceActivityDetector:
             chunk = self._pending[: self.window]
             del self._pending[: self.window]
             self._samples += self.window
-            rms = math.sqrt(math.fsum(v * v for v in chunk) / self.window) / FULL_SCALE
+            rms = math.sqrt(float(math.sumprod(chunk, chunk)) / self.window) / FULL_SCALE
             level = 20.0 * math.log10(rms) if rms > 0 else -120.0
             floor = self.noise_db
             self._levels.append(level)
