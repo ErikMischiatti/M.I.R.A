@@ -7,7 +7,7 @@ version 2::
 
     {"version": 2, "activation": "keyboard",
      "in_window_key": "M", "global_shortcut": "Ctrl+Alt+M",
-     "wake_word": {"phrase": "mira", "sensitivity": 0.5},
+     "wake_word": {"phrase": "mira", "sensitivity": 0.8},
      "speech_end_s": 0.8, "wait_timeout_s": 8.0}
 
 - ``activation``: ``"keyboard"`` or ``"wake word"`` (a local keyword
@@ -36,7 +36,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from mira.domain.listening import IMPLEMENTED_MODES, ListeningActivationMode
-from mira.domain.voice import SegmentationPolicy, WakeWordConfig
+from mira.domain.voice import DEFAULT_WAKE_SENSITIVITY, SegmentationPolicy, WakeWordConfig
 from mira.ui.desktop.global_shortcut import ShortcutError, parse_shortcut
 from mira.ui.notch.config_store import write_atomically
 
@@ -131,7 +131,7 @@ def from_dict(data) -> tuple[ListeningSettings, str | None, int]:
         raise ListeningConfigError("wake_word must be {\"phrase\", \"sensitivity\"}")
     try:
         wake_word = WakeWordConfig(wake.get("phrase", WakeWordConfig.__dataclass_fields__["phrase"].default),
-                                   _number(wake, "sensitivity", 0.5))
+                                   _number(wake, "sensitivity", DEFAULT_WAKE_SENSITIVITY))
         settings = ListeningSettings(
             mode, data.get("in_window_key", DEFAULT_IN_WINDOW_KEY), shortcut, wake_word,
             _number(data, "speech_end_s", _DEFAULT_POLICY.end_silence_s),

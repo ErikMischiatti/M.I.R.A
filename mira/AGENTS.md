@@ -44,6 +44,8 @@ Main modules:
   - notices: `Notice`, `NoticeCategory`, `NoticeTone` (`mira/domain/notice.py`)
   - system changes: `DeviceEvent`, `ConnectivityEvent`, the
     `SystemEventSource` port (`mira/domain/system_events.py`)
+  - voice: detector ports, `ListeningSession`, `Utterance`
+    (`mira/domain/voice.py`)
   - semantic eye cues: `EmbodimentCue`, `EyeShape`, `CuePlayback`
     (`mira/domain/embodiment_cue.py`); an overlay, never an expression
   - depends on nothing else in `mira`; must never import PySide6
@@ -56,6 +58,8 @@ Main modules:
     that imports `cv2`, lazily; OpenCV is the optional `camera` extra
   - `QtAudioCaptureBackend` (`mira/adapters/qt_audio.py`): microphone
     capture through Qt Multimedia's `QAudioSource`, default input
+  - `mira/adapters/sherpa_voice.py`: local keyword spotter and Silero VAD
+    (optional `voice` extra and model files)
   - Linux system sources, all event-driven on the Qt loop and optional:
     `LinuxUsbDeviceSource` (kernel uevents), `PipeWireAudioSource`
     (`pw-dump --monitor`), `NetworkManagerConnectivitySource` (QtDBus)
@@ -88,8 +92,10 @@ Main modules:
     `"tasks_changed"`; shown as the TASK_RUNNING condition
   - audio input (`mira/core/audio_input.py`): the runtime's one
     `AudioInputService`, capture by leases, pulled level and waveform
-  - listening (`mira/core/listening.py`): activation requests → capture
-    lease → `"listening_changed"`; LISTENING stays the activity authority's
+  - listening (`mira/core/listening.py`): keyboard or wake-word activation →
+    one `ListeningSession` (VAD segmentation) → `"listening_changed"` and
+    `"utterance_ready"`; LISTENING stays the activity authority's;
+    `mira/core/voice_processing.py` runs the engines off the UI thread
   - camera capture (`CameraCapture`): owns the capture thread, the newest
     frame and the camera status
 

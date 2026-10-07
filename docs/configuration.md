@@ -210,14 +210,21 @@ main window.
 ## Listening
 
 `~/.config/mira/listening.json` (`$XDG_CONFIG_HOME/mira/`) holds how
-listening is activated. It belongs to the runtime, not to the notch, so a
-runtime started by `MIRA` uses it too:
+listening starts and when speech ends. It belongs to the runtime, not to
+the notch, so a runtime started by `MIRA` uses it too:
 
 ```json
-{"version": 1, "activation": "keyboard",
- "in_window_key": "M", "global_shortcut": "Ctrl+Alt+M"}
+{"version": 2, "activation": "keyboard",
+ "in_window_key": "M", "global_shortcut": "Ctrl+Alt+M",
+ "wake_word": {"phrase": "mira", "sensitivity": 0.8},
+ "speech_end_s": 0.8, "wait_timeout_s": 8.0}
 ```
 
+- `activation`: `"keyboard"` or `"wake word"`. With the wake word, MIRA
+  listens for the phrase locally while staying idle, and starts listening
+  when it hears it; the keys still cancel a session. Wake word needs the
+  `voice` extra and its models (below); where they are missing the settings
+  say so and keyboard activation keeps working.
 - `in_window_key` toggles listening in M.I.R.A.'s own windows, never while
   the key goes to an editable text field (typing "MIRA" in the chat types
   it).
@@ -226,15 +233,41 @@ runtime started by `MIRA` uses it too:
   `null` turns it off. Ctrl+Alt+M is not bound in GNOME by default. A
   combination another X client already grabbed is reported and left off;
   GNOME's own shortcuts are not detected that way, so avoid them.
-- `activation` is `"keyboard"`. `"wake word"` is reserved: such a file loads
-  with keyboard activation and a diagnostic, because wake-word detection
-  does not exist yet.
+- `wake_word.phrase`: any name or short phrase, letters only; it is spelled
+  into the model's English tokens, so pronunciation matters.
+  `wake_word.sensitivity` (0–1): higher wakes more readily and falsely more
+  often. 0.8 caught an Italian-spoken "mira" about 4 times in 5 in testing.
+- `speech_end_s` (0.2–3): the silence that ends what you say; pauses between
+  words are shorter. `wait_timeout_s` (2–30): how long a session waits for
+  you to start speaking before ending quietly. A single utterance is capped
+  at 30 s.
 
-A missing or unusable file means the defaults; loading never writes. The
-settings window's Listening page edits these (applied at once, written by
-Save) and shows the audio input: backend, device, format, status, live RMS
-and peak, and a *Test microphone* switch that captures without MIRA
-listening. Captured audio is processed in memory and never saved.
+Version 1 files (keys only) still load, with these defaults for the rest,
+and are not rewritten until Save. A missing or unusable file means the
+defaults; loading never writes. The settings window's Listening page edits
+all of this (applied at once, written by Save), shows the audio input and a
+*Test microphone* switch, and shows the voice state — activation, wake
+engine and monitoring, detections, speech detector, session state, the last
+utterance's length and source — as metadata only. Microphone audio is
+processed in memory and never saved; wake-word spotting and speech
+detection run on this computer.
+
+### Voice engine and models
+
+Wake word and the Silero speech detector come from the optional `voice`
+extra (see [development.md](development.md#environment)) and two model files
+in `$XDG_DATA_HOME/mira/models` (`~/.local/share/mira/models`), from the
+sherpa-onnx releases (Apache-2.0):
+
+```bash
+mkdir -p ~/.local/share/mira/models && cd ~/.local/share/mira/models
+curl -fL -o kws.tar.bz2 https://github.com/k2-fsa/sherpa-onnx/releases/download/kws-models/sherpa-onnx-kws-zipformer-gigaspeech-3.3M-2024-01-01.tar.bz2
+tar xjf kws.tar.bz2 && rm kws.tar.bz2
+curl -fLO https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/silero_vad.onnx
+```
+
+Without them MIRA uses keyboard activation and its built-in energy-based
+speech detector.
 
 **Placement.** `top_margin` 0 puts the notch's top edge on the selected
 screen's top edge — the screen geometry, not the desktop work area below a

@@ -92,6 +92,12 @@ class VoiceActivityDetector(Protocol):
     def reset(self) -> None: ...
 
 
+# Measured on this project's target machine: an Italian-spoken "mira" was
+# heard 4 times out of about 5 at 0.8 and once at 0.5, with no false wake on
+# ordinary speech at either. A starting point, not a benchmark.
+DEFAULT_WAKE_SENSITIVITY = 0.8
+
+
 @dataclass(frozen=True, slots=True)
 class WakeWordConfig:
     """What to listen for. ``phrase`` is text, so a new name needs no new code.
@@ -102,7 +108,7 @@ class WakeWordConfig:
     """
 
     phrase: str = "mira"
-    sensitivity: float = 0.5
+    sensitivity: float = DEFAULT_WAKE_SENSITIVITY
 
     def __post_init__(self):
         phrase = self.phrase.strip() if isinstance(self.phrase, str) else ""

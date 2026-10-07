@@ -41,6 +41,16 @@ and numpy versions:
 venv/bin/python -m pip install --constraint constraints.txt --editable ".[dev,camera]"
 ```
 
+Local voice activation (wake word, Silero speech detection) is the optional
+`voice` extra, also outside CI; its models are separate downloads
+([configuration.md](configuration.md#voice-engine-and-models)). Tests never
+need it: they use fake engines, and the few that exercise the real models
+skip when they are not installed.
+
+```bash
+venv/bin/python -m pip install --constraint constraints.txt --editable ".[dev,voice]"
+```
+
 For a runtime-only editable install within the supported ranges, without the
 tested lock or pytest:
 
@@ -90,7 +100,10 @@ not part of that runtime. All use the same `venv` and symlink resolution:
 
 In a running M.I.R.A., `M` (in its windows, outside text fields) or
 `Ctrl+Alt+M` (anywhere) toggles listening: the notch opens and shows the
-microphone's real waveform. Automated tests never open a microphone; they
+microphone's real waveform. With wake-word activation chosen in the
+settings, saying the wake phrase does the same. A finished utterance is
+logged as `[listening] off: utterance ready (duration, samples, source)`;
+nothing transcribes it yet. Automated tests never open a microphone; they
 use fake capture backends.
 
 `python -m mira.ui.notch --notch-only` still shows the standalone notch

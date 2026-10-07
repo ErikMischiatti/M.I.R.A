@@ -583,7 +583,7 @@ allow-list/filter policy in `mira.core` deciding which become notices.
 ### Audio input and listening
 
 ```text
-keyboard (in-window M, global Ctrl+Alt+M)          future: wake-word detector
+keyboard (in-window M, global Ctrl+Alt+M)          wake word (see "Voice activation")
         │  "listening_toggle_requested" (ActivationSource)        │
         ▼                                                         ▼
 ListeningController (core) ── lease(CONVERSATION) ──▶ AudioInputService (core)
@@ -650,8 +650,104 @@ Three things stay apart, and nothing assumes they coincide:
   views do not count). The global shortcut is one `XGrabKey` of a combination
   that must carry Ctrl, Alt or Super; MIRA never sees other keys.
 
-**Not implemented:** wake-word detection (modelled, never selectable), voice
-activity detection, speech-to-text, text-to-speech, recording.
+### Voice activation and utterances
+
+```text
+AudioInputService (one capture, leases: WAKE_MONITORING, CONVERSATION, DIAGNOSTICS)
+        │ frames (main thread)
+        ▼
+ListeningController ──▶ VoiceProcessor (worker via Scheduler.submit; one batch at a
+        │                │               time, ≥4 frames, ≤64 waiting, oldest dropped)
+        │                ├── WakeWordDetector   (while monitoring and no session)
+        │                └── VoiceActivityDetector (while a session runs)
+        │ results (main thread)
+        ├── wake word heard ──▶ activation ──┐
+        ├── keyboard toggle ──▶ activation ──┤
+        │                                    ▼
+        │                ListeningSession (pure, sample-clocked)
+        │                WAITING_FOR_SPEECH ─onset─▶ SPEECH_ACTIVE ─silence─▶ utterance
+        │                    │ timeout                  │ max duration
+        ▼
+"listening_changed" (listening, speech_active)   "utterance_ready" (Utterance)  → [future STT]
+```
+
+Four things stay distinct, and none implies another:
+
+| | means | shown as |
+|---|---|---|
+| audio capture | samples exist | nothing by itself (the system's microphone indicator) |
+| wake monitoring | samples are inspected for the wake phrase | nothing: MIRA stays idle, the notch compact |
+| listening session | MIRA waits for, then records, one utterance | LISTENING on every surface; the notch opens with the real waveform |
+| speech active | the user is speaking inside a session | `ListeningStatus.speech_active`; an orthogonal signal, not another activity |
+
+And: an `UtteranceReady` is audio, not a transcription. Nothing consumes it
+yet beyond a metadata log line.
+
+- **Ports** (`mira/domain/voice.py`): `WakeWordDetector.process(frame) →
+  [WakeWordDetection]`, `VoiceActivityDetector.process(frame) →
+  [SpeechWindow]`. Nothing outside the adapters sees an engine object.
+  `WakeWordConfig` holds the phrase as text and a 0–1 sensitivity, so a new
+  name is a setting, not code.
+- **Engines** (`mira/adapters/sherpa_voice.py`, optional `voice` extra):
+  sherpa-onnx, Apache-2.0, offline, its own ONNX runtime, x86-64 and ARM
+  wheels. The keyword spotter is an open-vocabulary streaming zipformer
+  (English gigaspeech, 3.3 M parameters, int8): the phrase is spelled into
+  its BPE tokens with sentencepiece at load, no training. Speech detection
+  is Silero, one decision per 512-sample window through the bare `VadModel`
+  (sherpa's buffered detector was not used: its buffer kept doubling).
+  Without the extra or the models, wake word is unavailable (and said so)
+  and speech is found by `EnergyVoiceActivityDetector`: 12 dB above the
+  quietest window of the last 2 s, a floor that outlives sessions.
+  Considered and not chosen: Porcupine (needs an online-validated access
+  key), openWakeWord (non-commercial pretrained models, a fixed set of
+  words, scipy and scikit-learn), Vosk (a full recogniser for one word),
+  PocketSphinx (older, less accurate), silero-vad from PyPI (needs torch).
+- **Session policy** (`SegmentationPolicy`, clocked by sample count): onset
+  needs 3 speech windows among the last 5 (about 100 ms), so one noisy
+  window does not start speech; the end needs 0.8 s without speech
+  (configurable), so pauses between words do not end it; 0.25 s of tail is
+  kept; 0.3 s of pre-roll before the onset is included (never audio from
+  before the session); waiting times out quietly after 8 s (configurable);
+  an utterance is capped at 30 s, where it is discarded as a stuck detector
+  or constant noise. Memory is bounded in every state.
+- **Activation semantics.** One session at a time. The keyboard toggles: it
+  starts a session or cancels the running one (no utterance). A wake word
+  starts a session; it is ignored while one runs and for 1.5 s after one
+  ends, so one spoken phrase never starts two. The spotter's stream is reset
+  after each hit.
+- **Wake-word exclusion.** A wake-started session begins with the frame
+  after the one the spotter reported the phrase in. Frames captured after
+  it — later in the same worker batch or still queued — are re-routed to
+  the VAD in order, with one reset, so the command's first words are kept.
+  The boundary is the spotter's own frame, not a guessed duration; part of
+  the phrase's last syllable can remain in the next frame.
+- **Off the UI thread.** Detection and segmentation inference run in
+  `VoiceProcessor` on the thread pool, one batch at a time (the engines'
+  streaming state is never shared between threads), bound per batch so a
+  settings change never swaps an engine mid-batch. Results come back on
+  the main thread, where the session and all events live.
+- **Lifecycle.** Monitoring holds its own lease, so capture runs in wake
+  mode while MIRA is idle; a session adds the conversation lease on the same
+  capture. A lost microphone ends the session (one notice) and stops
+  monitoring (reported in diagnostics; restarting the runtime or changing
+  the setting resumes it). Shutdown ends the session, stops the worker and
+  releases every lease.
+- **Privacy.** Wake-word spotting and speech detection run locally; no
+  audio leaves the machine and none is written anywhere — not monitoring
+  audio, not utterances. Speech-to-text is not implemented and its provider
+  and privacy policy are not chosen.
+- **Measured** on the development laptop (one core): capture alone 1.6%,
+  wake monitoring about 10% in process (12% for the runtime with UI), a
+  waiting session 5%, keyboard idle 3%. Startup to ready about 1 s; the
+  audio backend's first enumeration after boot takes about 1.7 s, later
+  ones about 0.4 s. On the model's bundled recordings the spotter fired
+  exactly on the spoken keywords and never for "mira"/"nero"; with a live
+  Italian-spoken "mira" it fired about 4 times in 5 at sensitivity 0.8 (the
+  default) and once at 0.5, with no false wake in a few minutes of room
+  audio and speech. These are smoke observations, not benchmarks.
+
+**Not implemented:** speech-to-text, text-to-speech, spoken responses,
+speaker identification, recording.
 
 ## 10. Camera input
 
