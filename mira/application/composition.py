@@ -21,10 +21,11 @@ rather than incidentally, because two parts of it are observable:
     component constructing successfully while events reached nobody and timers
     sat on a scheduler nothing drives.
 
-`scheduler` and `camera_source` are the only injection seams, and each exists
-for the same two reasons rather than for symmetry: it is an adapter choice, and
-it is what lets the graph be built without the technology behind it — no Qt
-event loop for the scheduler, no webcam or OpenCV for the camera. Passing `ManualScheduler` from
+`scheduler`, `camera_source` and `voice_output` are the only injection seams,
+and each exists for the same two reasons rather than for symmetry: it is an
+adapter choice, and it is what lets the graph be built without the technology
+behind it — no Qt event loop for the scheduler, no webcam or OpenCV for the
+camera, no speakers for the voice. Passing `ManualScheduler` from
 `mira.domain.scheduler` yields the real graph, fully wired, driven by an
 explicit clock — which is how `tests/test_application_composition.py` exercises
 a whole turn without a `QApplication`.
@@ -40,16 +41,21 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from mira.adapters.opencv_camera import OpenCVCameraSource
+from mira.adapters.qt_audio import QtAudioOutput
 from mira.adapters.qt_scheduler import QtScheduler
 from mira.application.camera_config import camera_configuration_from_environment
+from mira.application.voice_config import voice_configuration_from_environment
 from mira.core.activity_authority import ActivityAuthority
 from mira.core.brain import Brain
 from mira.core.camera_capture import CameraCapture
 from mira.core.embodied_behavior import EmbodiedBehavior
 from mira.core.interaction_manager import InteractionManager
 from mira.core.state_manager import StateManager
+from mira.core.voice import VoiceController
 from mira.domain.camera import CameraSource
 from mira.domain.scheduler import Scheduler
+from mira.domain.vocal_synthesis import synthesizer_for
+from mira.domain.vocalization import AudioOutput
 from mira.messaging.events import EventBus
 
 
@@ -80,19 +86,26 @@ class Application:
     interaction_manager: InteractionManager
     embodied_behavior: EmbodiedBehavior
     camera: CameraCapture
+    voice: VoiceController
 
     def start(self) -> None:
-        """Start the long-running resources: currently only camera capture."""
+        """Start the long-running resources: camera capture, then the voice.
+
+        The voice's start is only its greeting; disabled, it does nothing.
+        """
         self.camera.start()
+        self.voice.start()
 
     def shutdown(self) -> None:
         """Stop the resources owned by this application graph.
 
         The camera goes first and releases its device before the scheduler
         stops; the two are independent, so the order only makes the device
-        free as early as possible.
+        free as early as possible. The voice stops before the scheduler, so its
+        playback timer is cancelled by its owner rather than swept up.
         """
         self.camera.shutdown()
+        self.voice.shutdown()
         self.scheduler.shutdown()
 
 
@@ -100,6 +113,7 @@ def build_application(
     *,
     scheduler: Scheduler | None = None,
     camera_source: CameraSource | None = None,
+    voice_output: AudioOutput | None = None,
 ) -> Application:
     """Construct and wire the application graph.
 
@@ -113,6 +127,13 @@ def build_application(
     `MIRA_CAMERA*` environment decides: an `OpenCVCameraSource` when the camera
     is enabled, otherwise no source and a disabled capture. Tests pass a fake
     source, so no test needs a webcam.
+
+    `voice_output` is the third. The `MIRA_VOICE*` environment decides whether
+    the voice is enabled, its character and its engine (V1 unless
+    `MIRA_VOICE_ENGINE=v2`); when enabled and no output is
+    passed, a `QtAudioOutput` is used. A disabled voice subscribes to nothing,
+    so the event bus is exactly what it was before the voice existed. Tests pass
+    a recording output, so no test needs speakers.
 
     No side effects: nothing is started, no state transition is triggered, no
     timer is armed and no device is opened. The returned graph is idle until
@@ -142,6 +163,20 @@ def build_application(
             camera_source = OpenCVCameraSource(camera_configuration.settings)
     camera = CameraCapture(camera_source)
 
+    voice_configuration = voice_configuration_from_environment()
+    if voice_configuration.enabled and voice_output is None:
+        voice_output = QtAudioOutput()
+    voice = VoiceController(
+        scheduler,
+        voice_output,
+        enabled=voice_configuration.enabled,
+        identity=voice_configuration.identity,
+        synthesizer=synthesizer_for(voice_configuration.engine),
+    )
+    # Last, so every existing subscriber keeps its position on the bus.
+    if voice.enabled:
+        voice.attach(event_bus)
+
     return Application(
         event_bus=event_bus,
         activity=activity,
@@ -150,4 +185,5 @@ def build_application(
         interaction_manager=interaction_manager,
         embodied_behavior=embodied_behavior,
         camera=camera,
+        voice=voice,
     )

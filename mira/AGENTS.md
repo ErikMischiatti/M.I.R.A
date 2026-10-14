@@ -40,6 +40,11 @@ Main modules:
   - camera boundary: `CameraSource`, `CameraFrame`, `CameraInfo`,
     `CameraSettings`, `CameraStatus` (`mira/domain/camera.py`); no OpenCV or
     numpy types
+  - nonverbal voice vocabulary: `VocalIntent`, `VocalizationRequest`,
+    `VoiceIdentity`, `PcmClip`, the `AudioOutput` port
+    (`mira/domain/vocalization.py`) and the pure, seeded synthesizers:
+    V1, the default (`mira/domain/vocal_synthesis.py`), and the opt-in V2
+    (`mira/domain/vocal_synthesis_v2.py`, `MIRA_VOICE_ENGINE=v2`)
   - `UserInput`, `IntentResult`, `BrainResponse` (`mira/domain/models.py`)
   - depends on nothing else in `mira`; must never import PySide6
 
@@ -49,6 +54,8 @@ Main modules:
     adapter; the only place that knows the turn lifecycle runs on a Qt event loop
   - `OpenCVCameraSource` (`mira/adapters/opencv_camera.py`): the only module
     that imports `cv2`, lazily; OpenCV is the optional `camera` extra
+  - `QtAudioOutput` (`mira/adapters/qt_audio.py`): plays voice clips through
+    Qt Multimedia on the main thread; no device is a status
   - may import `mira.domain`; never imported by the domain
 
 - `mira/application`
@@ -74,6 +81,9 @@ Main modules:
   - embodied behavior
   - camera capture (`CameraCapture`): owns the capture thread, the newest
     frame and the camera status
+  - voice policy (`VoiceController`, `mira/core/voice.py`): opt-in via
+    `MIRA_VOICE`, cooldown, bounded queue, no overlap; renders through
+    `Scheduler.submit`. The Brain never emits audio.
 
 - `mira/cognition`
   - intent engine abstraction

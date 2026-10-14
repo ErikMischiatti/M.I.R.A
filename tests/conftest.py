@@ -30,6 +30,12 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 #   MIRA_CAMERA_WIDTH               mira/application/camera_config.py:35
 #   MIRA_CAMERA_HEIGHT              mira/application/camera_config.py:36
 #   MIRA_CAMERA_FPS                 mira/application/camera_config.py:37
+#   MIRA_VOICE                      mira/application/voice_config.py:35
+#   MIRA_VOICE_VOLUME               mira/application/voice_config.py:36
+#   MIRA_VOICE_PITCH                mira/application/voice_config.py:37
+#   MIRA_VOICE_RATE                 mira/application/voice_config.py:38
+#   MIRA_VOICE_BRIGHTNESS           mira/application/voice_config.py:39
+#   MIRA_VOICE_ENGINE               mira/application/voice_config.py:40
 # `test_each_variable_is_read_at_the_line_it_is_attributed_to` checks every one.
 MIRA_ENV_VARS = (
     "MIRA_INTENT_ENGINE",
@@ -42,6 +48,12 @@ MIRA_ENV_VARS = (
     "MIRA_CAMERA_WIDTH",
     "MIRA_CAMERA_HEIGHT",
     "MIRA_CAMERA_FPS",
+    "MIRA_VOICE",
+    "MIRA_VOICE_VOLUME",
+    "MIRA_VOICE_PITCH",
+    "MIRA_VOICE_RATE",
+    "MIRA_VOICE_BRIGHTNESS",
+    "MIRA_VOICE_ENGINE",
 )
 
 

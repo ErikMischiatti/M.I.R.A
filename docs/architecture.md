@@ -32,6 +32,8 @@ environment variables and runtime resources see
   semantic EventBus, and are produced off the UI thread.
 - Every action reaches an explicit, source-independent execution policy before
   its handler can run.
+- The optional nonverbal voice observes turns from the EventBus; the Brain
+  never emits audio, and audio is rendered off the UI thread (section 15).
 
 ## 2. Layer map
 
@@ -42,14 +44,14 @@ Permissions are not transitive: `cognition` may import `actions`, but not
 
 | Layer | Responsibility | May import other M.I.R.A. layers |
 |---|---|---|
-| `domain` | Shared models, scheduler and camera ports, embodiment semantics, micro-motions and playback | none |
+| `domain` | Shared models, scheduler, camera and audio-output ports, embodiment semantics, micro-motions and playback, vocalization vocabulary and synthesis | none |
 | `config` | Packaged configuration resources | none |
 | `messaging` | Synchronous in-process event fan-out | none |
 | `memory` | In-session retention and context | `domain` |
 | `actions` | Contracts, registry, policy, executor, handlers | `domain`, `memory`, `messaging` |
 | `cognition` | Rule/LLM intent engines, schema checks, response building | `domain`, `memory`, `actions` |
-| `core` | Turn, interaction, activity, and behavior orchestration; camera capture | `domain`, `messaging`, `memory`, `actions`, `cognition` |
-| `adapters` | Concrete implementations of domain ports (Qt scheduler, OpenCV camera) | `domain` |
+| `core` | Turn, interaction, activity, and behavior orchestration; camera capture; voice policy | `domain`, `messaging`, `memory`, `actions`, `cognition` |
+| `adapters` | Concrete implementations of domain ports (Qt scheduler, OpenCV camera, Qt audio output) | `domain` |
 | `application` | Object construction and wiring | `domain`, `messaging`, `core`, `adapters` |
 | `ui` | Qt presentation and face control | `domain`, `application` |
 | `main` | Process entry point | unrestricted composition entry point |
@@ -72,7 +74,8 @@ mira.main
       → InteractionManager
       → EmbodiedBehavior
       → CameraCapture(OpenCVCameraSource if MIRA_CAMERA is set, else none)
-  → application.start()   (starts camera capture, if enabled)
+      → VoiceController(QtAudioOutput if MIRA_VOICE is set, else disabled)
+  → application.start()   (starts camera capture and the voice greeting, if enabled)
   → MainWindow(application)
   → Qt event loop
 ```
@@ -80,7 +83,8 @@ mira.main
 `Brain` currently constructs its own session memory, selected intent engine,
 response builder, action registry, executor, and concrete action handlers. The
 composition root shares one bus, one activity authority, and one scheduler
-across the graph. Tests may inject `ManualScheduler` and a fake `CameraSource`;
+across the graph. Tests may inject `ManualScheduler`, a fake `CameraSource`
+and a recording `AudioOutput`;
 no service container or runtime registry exists. Construction opens no device:
 capture begins only at `Application.start()`.
 
@@ -125,8 +129,9 @@ currently in use:
 | `user_input_received` | `Brain` | `InteractionManager` |
 | `processing_started` | `Brain` | `InteractionManager` |
 | `intent_inferred` | `Brain` | `EmbodiedBehavior` |
-| `action_started`, `action_completed`, `action_failed` | `ActionExecutor` | `MainWindow` |
-| `response_ready` | `Brain` | `InteractionManager`, `EmbodiedBehavior` |
+| `action_started`, `action_completed` | `ActionExecutor` | `MainWindow` |
+| `action_failed` | `ActionExecutor` | `MainWindow`, `VoiceController` (only when `MIRA_VOICE` is set) |
+| `response_ready` | `Brain` | `InteractionManager`, `EmbodiedBehavior`, `VoiceController` (only when `MIRA_VOICE` is set) |
 | `state_changed` | `StateManager` (via `ActivityAuthority`) | `MainWindow` |
 
 ## 6. Cognition
@@ -339,7 +344,8 @@ tests); it holds no timer and has nothing to shut down. `Application` owns the
 shared scheduler boundary and the camera capture. `QApplication.aboutToQuit`
 calls `Application.shutdown()`, which first shuts down the camera (stopping
 capture, joining the capture thread for up to two seconds, and releasing the
-device) and then the scheduler. Both are idempotent, and a shut-down camera
+device), then the voice (dropping queued requests, cancelling its playback
+timer and closing the audio output), and then the scheduler. Both are idempotent, and a shut-down camera
 refuses to start again. A read that outlasts the join still releases the
 device when it returns, and no second reader starts meanwhile; the capture
 thread is a daemon, so it cannot keep the process alive.
@@ -411,8 +417,9 @@ The following are extension directions, not existing APIs:
   No detector, observation model, or wiring from the camera into the face
   exists yet. Relation perception (object detection feeding a RelateAnything
   adapter) is a further direction with no code.
-- Voice input may enter the existing input/cognition pipeline, and voice output
-  may consume responses; no audio subsystem exists.
+- Voice input may enter the existing input/cognition pipeline. Nonverbal voice
+  output exists (section 15); speech recognition and spoken (verbal) output do
+  not.
 - Persistent memory may replace or complement `SessionMemory` behind an explicit
   persistence boundary; current memory is session-only.
 - A physical renderer or actuator may consume renderer-independent
@@ -420,3 +427,91 @@ The following are extension directions, not existing APIs:
 
 These capabilities should extend a concrete requirement when introduced. They
 are not prerequisites for starting feature work on the Foundation v1 baseline.
+
+## 15. Nonverbal voice
+
+An optional, offline voice that babbles: short pseudo-syllabic vocalizations
+whose rhythm and intonation carry intent and emotion, never words. The chat
+text remains the only source of precise content. Off unless `MIRA_VOICE=1`.
+
+```text
+response_ready / action_failed (EventBus)            Application.start()
+        ↓                                                    ↓
+vocal_intent_for_response()   core; explicit allowlist   GREETING
+        ↓                                                    ↓
+VoiceController               core; opt-in, cooldown, bounded queue, one clip at a time
+        ↓ Scheduler.submit (worker)
+synthesize(VocalizationRequest, VoiceIdentity) → PcmClip   domain; pure, seeded
+        ↓ completion on the serialized context
+AudioOutput.play(clip)        port; QtAudioOutput (adapters) in production
+        ↓ Scheduler.call_later(clip duration + gap)
+next queued request
+```
+
+- **Vocabulary** (`mira/domain/vocalization.py`). `VocalIntent` is the request
+  vocabulary: `greeting`, `acknowledgement`, `thinking`, `curious`, `happy`,
+  `confused`, `error`, `farewell`. A `VocalizationRequest` adds an intensity
+  (`0..1`) and an optional seed. `VoiceIdentity` is the character shared by
+  every intent: base pitch, pitch variation, speaking rate, brightness and
+  volume, clamped into designed ranges by `bounded()`. `PcmClip` is mono
+  int16 PCM in immutable bytes. `AudioOutput` is the playback port.
+- **Synthesis** (`mira/domain/vocal_synthesis.py`). Standard library only.
+  `plan_utterance` turns an intent's `Prosody` row into syllables with
+  timing, pitch glides, vowel colours and consonant-like onsets, bounded to
+  0.2–1.2 s. `render_plan` renders a harmonic source weighted by vowel
+  formant resonances and a brightness-dependent spectral tilt, with vibrato,
+  slow pitch jitter, raised-cosine syllable envelopes and short filtered-noise
+  onsets; then a gentle low-pass, DC block, peak normalization below full
+  scale and end fades. The same request, identity and seed produce the same
+  bytes. A clip renders in roughly 15–35 ms on a desktop CPU.
+- **Engines** (`VoiceEngine`, `MIRA_VOICE_ENGINE`). The renderer above is V1,
+  the default. An opt-in V2 (`mira/domain/vocal_synthesis_v2.py`, standard
+  library only, same contract and bounds) is selected with
+  `synthesize(..., engine=VoiceEngine.V2)`; composition binds the configured
+  engine with `synthesizer_for` and hands it to `VoiceController`, which is
+  unchanged. V2 plays a fixed per-intent script of syllables (`SCRIPTS_V2`) whose
+  seed nudges only timing and pitch. Each syllable morphs between two invented
+  vowel colours under three broad Gaussian formants over a ≈1/k harmonic tilt
+  (up to 28 partials), follows a cosine-smoothed three-point pitch gesture with a
+  delayed shallow vibrato, and starts with a few milliseconds of windowed,
+  smoothed noise (breath, glide, muted plosive, nasal). Its loudness
+  normalization matches V1, so the two can be compared directly.
+  Every V2 sound-design constant lives in a frozen `PresetV2`. The default,
+  `baseline`, is the V2 above; `soft`, `babble` and `expressive`
+  (`PRESETS_V2`) are experimental personalities for listening tests, selected
+  only through `synthesize_v2(..., preset=...)` and the demo — not engines, and
+  never chosen by composition. Their extra articulations (syllable splitting,
+  phrase declination, accents, an excursion limit) are off in `baseline` and
+  then draw nothing from the seeded generator, so `baseline` bytes are unchanged.
+- **Policy** (`mira/core/voice.py`). `VoiceController` accepts requests on the
+  serialized context only. It drops requests inside the cooldown (400 ms),
+  queues at most one while a clip renders or plays, and never queues an intent
+  twice. Rendering runs through `Scheduler.submit` as a pure function; the end
+  of playback is tracked with `call_later` from the clip's known duration, so
+  no audio-thread callback reaches application state. Synthesis errors,
+  playback errors and a missing device are logged and skipped. `attach`
+  subscribes it to `response_ready` and `action_failed`; composition calls it
+  only when the voice is enabled, so a disabled voice leaves the bus exactly as
+  it was. The Brain knows nothing about the voice, and the voice works with
+  or without a face.
+- **Playback** (`mira/adapters/qt_audio.py`). `QtAudioOutput` plays a clip
+  through `QAudioSink` reading a `QBuffer`, all on the Qt main thread, and
+  enforces that thread like `QtScheduler`. It probes the default device
+  lazily on first use, so construction opens nothing; no device is the
+  status `available == False`. A new clip replaces the previous one, and a
+  finished clip's sink is released when it goes idle.
+
+| Event | Vocal intent |
+|---|---|
+| Application start | `greeting` |
+| `action_failed` in the turn | `error` |
+| response to a `greeting` intent | `greeting` |
+| response with `CONFUSED` affect (e.g. `unknown`, empty input) | `confused` |
+| response with `HAPPY` affect | `happy` |
+| any other response | `acknowledgement` |
+
+`thinking`, `curious` and `farewell` are synthesized and available to callers,
+but no current event requests them. A future embodiment or notch interface
+would consume the same `VocalIntent` vocabulary by calling
+`VoiceController.vocalize` from its own observer, without the voice depending
+on that interface.

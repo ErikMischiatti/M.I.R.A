@@ -77,19 +77,19 @@ actions use for the `current` alias and relative paths (see
 
 ```text
 mira/
-├── domain/       # technology-independent vocabulary, scheduler and camera ports, micro-motions, playback
+├── domain/       # technology-independent vocabulary, scheduler/camera/audio ports, micro-motions, playback, voice synthesis
 ├── memory/       # session retention
 ├── messaging/    # synchronous event bus
 ├── actions/      # contracts, execution policy, registry, executor, handlers
 ├── cognition/    # rule and optional local-LLM inference, response building
-├── core/         # turn, activity, interaction, and behavior orchestration; camera capture
-├── adapters/     # Qt scheduler and OpenCV camera implementations
+├── core/         # turn, activity, interaction, and behavior orchestration; camera capture; voice policy
+├── adapters/     # Qt scheduler, OpenCV camera and Qt audio output implementations
 ├── application/  # construction and wiring
 ├── ui/           # Qt window, chat panel, debug drawer, face/ rendering
 ├── config/       # packaged expression profiles
 └── main.py       # process entry point
 bin/mira          # launcher script
-scripts/          # architecture checkers
+scripts/          # architecture checkers; voice_demo.py (standalone voice demo)
 tests/            # pytest suite
 docs/             # technical documentation
 ```
@@ -138,6 +138,7 @@ Tests are grouped by boundary rather than by file:
 | Actions | `test_action_executor.py`, `test_action_execution_policy.py`, `test_action_contract_consistency.py`, `test_desktop_actions.py` |
 | Embodiment | `test_embodiment_*.py`, `test_micro_motion*.py`, `test_face_*.py`, `test_expression_store.py` |
 | Camera | `test_camera_*.py`, `test_opencv_camera.py` |
+| Voice | `test_vocal_synthesis.py`, `test_voice_controller.py`, `test_qt_audio_adapter.py` |
 | Memory and messaging | `test_memory_contracts.py`, `test_messaging_contracts.py` |
 
 Shared test doubles live in `tests/doubles.py` (covered by
@@ -148,6 +149,12 @@ server, and no test opens a webcam or needs OpenCV: `tests/camera_doubles.py`
 provides a scripted `CameraSource`, and the adapter tests replace
 `cv2.VideoCapture` with a fake. The camera lifecycle tests use real threads,
 synchronized on events rather than sleeps.
+
+No test needs speakers: the voice tests use a recording `AudioOutput`, and the
+Qt audio adapter tests play only silence and accept a machine without a sound
+card. After voice changes, listen to `scripts/voice_demo.py` and start the app
+with `MIRA_VOICE=1`: a greeting at start, one short reaction per response, no
+overlap when sending messages quickly, and a clean exit.
 
 A physical camera needs a manual check after camera changes: the app starts
 with `MIRA_CAMERA=1`, the debug drawer reports `active` with a sane size,
