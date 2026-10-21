@@ -8,7 +8,8 @@ Five related ideas stay apart:
   for any embodiment;
 - *presence* (`NotchPresence`): how much of one surface is visible;
 - a *cue* (`EmbodimentCue`, here): MIRA itself reacting to a result or a
-  condition — success, warning, error — for a moment.
+  condition — success, warning, error — or greeting a device that arrived,
+  for a moment.
 
 A cue is an *overlay*, never a new expression. It does not change the intent,
 the expression or the micro-motions underneath; while it plays, the eyes take
@@ -26,10 +27,10 @@ Lifetime is counted in the controller's own frame time, so a cue needs no
 timer: ease in (`TRANSITION_S`: the natural eye closes, then opens as the
 shape), hold for its treatment's ``hold_s``, ease out the same way.
 
-Priority is deterministic: ERROR > WARNING > SUCCESS. A cue of equal or
-higher priority replaces the one playing (the same cue just holds again); a
-lower one is dropped, not queued — once the reaction is over it would be
-stale.
+Priority is deterministic: ERROR > WARNING > SUCCESS > GREETING. A cue of
+equal or higher priority replaces the one playing (the same cue just holds
+again); a lower one is dropped, not queued — once the reaction is over it
+would be stale.
 
 Ongoing states are not cues but *conditions* (`EmbodimentCondition`): true
 for as long as something lasts, with no timeout — TASK_RUNNING while any
@@ -59,6 +60,8 @@ class EmbodimentCue(StrEnum):
     SUCCESS = "success"
     WARNING = "warning"
     ERROR = "error"
+    GREETING = "greeting"
+    """A brief smile for a device that arrived; never over anything else."""
 
 
 class EyeShape(StrEnum):
@@ -86,6 +89,8 @@ CUE_TREATMENTS = {
     EmbodimentCue.SUCCESS: CueTreatment(EyeShape.CHEVRON, hold_s=0.9, priority=1),
     EmbodimentCue.WARNING: CueTreatment(EyeShape.TRIANGLE, hold_s=1.6, priority=2),
     EmbodimentCue.ERROR: CueTreatment(EyeShape.CROSS, hold_s=2.2, priority=3),
+    # The success smile, shorter and weaker: a glance, not a result.
+    EmbodimentCue.GREETING: CueTreatment(EyeShape.CHEVRON, hold_s=0.6, priority=0),
 }
 
 # Each way: half closing the natural eye, half opening the shape.
@@ -99,8 +104,15 @@ _TONE_CUE = {
 
 
 def cue_for_notice(notice: Notice) -> EmbodimentCue | None:
-    """The reaction a notice deserves; plain information gets none."""
-    return _TONE_CUE.get(notice.tone)
+    """The reaction a notice deserves.
+
+    Its tone decides first; plain information gets none, except a device
+    that arrived, which MIRA greets. A device leaving gets nothing.
+    """
+    cue = _TONE_CUE.get(notice.tone)
+    if cue is None and notice.device is not None and notice.device.connected:
+        return EmbodimentCue.GREETING
+    return cue
 
 
 class CuePlayback:

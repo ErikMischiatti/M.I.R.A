@@ -142,6 +142,68 @@ def _network(painter: QPainter, square: QRectF, color: QColor, phase: float) -> 
     _dot(painter, centre, square.width() * 0.07, color)
 
 
+def _phone(painter: QPainter, square: QRectF, color: QColor, phase: float) -> None:
+    # A smartphone: a tall slab with an earpiece slit and a home bar.
+    slab = _unit_rect(square, 0.28, 0.04, 0.44, 0.92)
+    painter.drawRoundedRect(slab, slab.width() * 0.22, slab.width() * 0.22)
+    painter.drawLine(_at(square, 0.44, 0.15), _at(square, 0.56, 0.15))
+    painter.drawLine(_at(square, 0.42, 0.84), _at(square, 0.58, 0.84))
+
+
+def _storage(painter: QPainter, square: QRectF, color: QColor, phase: float) -> None:
+    # A USB stick: a connector with its two contacts over a rounded body.
+    painter.drawRect(_unit_rect(square, 0.36, 0.06, 0.28, 0.28))
+    body = _unit_rect(square, 0.26, 0.34, 0.48, 0.6)
+    painter.drawRoundedRect(body, body.width() * 0.2, body.width() * 0.2)
+    for x in (0.44, 0.56):
+        _dot(painter, _at(square, x, 0.2), square.width() * 0.035, color)
+
+
+def _camera(painter: QPainter, square: QRectF, color: QColor, phase: float) -> None:
+    # A camera: a body with a viewfinder bump and a round lens.
+    painter.drawLine(_at(square, 0.32, 0.2), _at(square, 0.5, 0.2))
+    body = _unit_rect(square, 0.06, 0.28, 0.88, 0.58)
+    painter.drawRoundedRect(body, body.height() * 0.2, body.height() * 0.2)
+    painter.drawEllipse(_at(square, 0.5, 0.57), square.width() * 0.16, square.width() * 0.16)
+
+
+def _headphones(painter: QPainter, square: QRectF, color: QColor, phase: float) -> None:
+    # Headphones: a headband over two ear cups.
+    painter.drawArc(_unit_rect(square, 0.14, 0.1, 0.72, 0.8), 0, 180 * 16)
+    for x in (0.08, 0.74):
+        cup = _unit_rect(square, x, 0.5, 0.18, 0.38)
+        painter.drawRoundedRect(cup, cup.width() * 0.4, cup.width() * 0.4)
+
+
+def _keyboard(painter: QPainter, square: QRectF, color: QColor, phase: float) -> None:
+    # A keyboard: a wide outline with a row of keys over a space bar.
+    body = _unit_rect(square, 0.04, 0.24, 0.92, 0.52)
+    painter.drawRoundedRect(body, body.height() * 0.18, body.height() * 0.18)
+    for x in (0.26, 0.42, 0.58, 0.74):
+        _dot(painter, _at(square, x, 0.42), square.width() * 0.045, color)
+    painter.drawLine(_at(square, 0.32, 0.6), _at(square, 0.68, 0.6))
+
+
+def _usb(painter: QPainter, square: QRectF, color: QColor, phase: float) -> None:
+    # The USB trident: a stem with an arrowhead, a round and a square branch.
+    painter.drawLine(_at(square, 0.5, 0.86), _at(square, 0.5, 0.14))
+    head = QPainterPath(_at(square, 0.4, 0.22))
+    head.lineTo(_at(square, 0.5, 0.06))
+    head.lineTo(_at(square, 0.6, 0.22))
+    painter.drawPath(head)
+    left = QPainterPath(_at(square, 0.5, 0.66))
+    left.lineTo(_at(square, 0.28, 0.52))
+    left.lineTo(_at(square, 0.28, 0.42))
+    painter.drawPath(left)
+    painter.drawEllipse(_at(square, 0.28, 0.36), square.width() * 0.06, square.width() * 0.06)
+    right = QPainterPath(_at(square, 0.5, 0.74))
+    right.lineTo(_at(square, 0.72, 0.6))
+    right.lineTo(_at(square, 0.72, 0.5))
+    painter.drawPath(right)
+    painter.drawRect(_unit_rect(square, 0.66, 0.38, 0.12, 0.12))
+    _dot(painter, _at(square, 0.5, 0.88), square.width() * 0.08, color)
+
+
 _DRAW: dict[NotchSymbol, Callable[[QPainter, QRectF, QColor, float], None]] = {
     NotchSymbol.LISTENING: _listening,
     NotchSymbol.THINKING: _thinking,
@@ -152,4 +214,10 @@ _DRAW: dict[NotchSymbol, Callable[[QPainter, QRectF, QColor, float], None]] = {
     NotchSymbol.TASK: _task,
     NotchSymbol.DEVICE: _device,
     NotchSymbol.NETWORK: _network,
+    NotchSymbol.PHONE: _phone,
+    NotchSymbol.STORAGE: _storage,
+    NotchSymbol.CAMERA: _camera,
+    NotchSymbol.HEADPHONES: _headphones,
+    NotchSymbol.KEYBOARD: _keyboard,
+    NotchSymbol.USB: _usb,
 }

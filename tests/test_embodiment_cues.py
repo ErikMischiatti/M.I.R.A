@@ -30,7 +30,8 @@ from mira.domain.embodiment_cue import (
 )
 from mira.domain.embodiment_frame import EmbodimentFrame, EyeFrame
 from mira.domain.micro_motion import MicroMotions
-from mira.domain.notice import Notice, NoticeCategory, NoticeTone
+from mira.domain.devices import DeviceCategory
+from mira.domain.notice import Notice, NoticeCategory, NoticeDevice, NoticeTone
 from mira.domain.scheduler import ManualScheduler
 from mira.ui.face.eye import Eye
 from mira.ui.face.eye_painter import EyePainter
@@ -77,7 +78,29 @@ def test_each_cue_has_its_shape():
         EmbodimentCue.SUCCESS: EyeShape.CHEVRON,
         EmbodimentCue.WARNING: EyeShape.TRIANGLE,
         EmbodimentCue.ERROR: EyeShape.CROSS,
+        EmbodimentCue.GREETING: EyeShape.CHEVRON,
     }
+
+
+def test_a_device_that_arrives_is_greeted_and_one_that_leaves_is_not():
+    arrived = Notice(NoticeCategory.DEVICE, NoticeTone.INFO, "Pixel 8 connected",
+                     NoticeDevice(DeviceCategory.SMARTPHONE, connected=True))
+    left = Notice(NoticeCategory.DEVICE, NoticeTone.INFO, "Pixel 8 disconnected",
+                  NoticeDevice(DeviceCategory.SMARTPHONE, connected=False))
+
+    assert cue_for_notice(arrived) is EmbodimentCue.GREETING
+    assert cue_for_notice(left) is None
+
+
+def test_a_greeting_never_interrupts_another_cue_and_any_other_replaces_it():
+    playback = CuePlayback()
+    playback.show(EmbodimentCue.SUCCESS)
+    assert playback.show(EmbodimentCue.GREETING) is False
+
+    playback = CuePlayback()
+    playback.show(EmbodimentCue.GREETING)
+    assert playback.show(EmbodimentCue.SUCCESS) is True
+    assert playback.cue is EmbodimentCue.SUCCESS
 
 
 def test_a_cue_eases_in_holds_eases_out_and_ends():

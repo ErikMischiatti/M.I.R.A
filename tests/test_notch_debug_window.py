@@ -885,8 +885,11 @@ def test_a_preview_notice_makes_the_real_eyes_react(env):
     assert env.controller.active_cue is EmbodimentCue.ERROR
 
     env.controller.clear_cue()
-    env.debug.preview_buttons["Device connected"].click()
+    env.debug.preview_buttons["Device disconnected"].click()
     assert env.controller.active_cue is None  # information gets no cue
+
+    env.debug.preview_buttons["Phone connected"].click()
+    assert env.controller.active_cue is EmbodimentCue.GREETING  # an arrival is greeted
 
 
 @pytest.mark.parametrize("cue", ["success", "warning", "error"])

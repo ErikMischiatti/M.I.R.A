@@ -41,6 +41,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from mira.domain.devices import DeviceCategory
 from mira.domain.embodiment import ActivityState, EmbodimentIntent, ExpressionKey
 from mira.domain.embodiment_cue import EmbodimentCue
 from mira.domain.notice import Notice, NoticeCategory, NoticeTone
@@ -112,7 +113,9 @@ CATEGORY_LABELS = {
 # Synthetic notices for visual tuning; they exist only in this window and
 # never reach an application. System ones come from sample semantic events
 # through the producers' own conversion, so they look exactly like real ones.
-_PREVIEW_DEVICE = dict(kind=DeviceKind.USB, name="USB keyboard", key="preview")
+_PREVIEW_DEVICE = dict(kind=DeviceKind.USB, name="USB keyboard", key="preview", category=DeviceCategory.INPUT)
+_PREVIEW_PHONE = dict(kind=DeviceKind.USB, name="Pixel 8", key="preview-phone", category=DeviceCategory.SMARTPHONE)
+_PREVIEW_STORAGE = dict(kind=DeviceKind.USB, name="SanDisk Ultra", key="preview-storage", category=DeviceCategory.STORAGE)
 PREVIEW_NOTICES = {
     "Task done": Notice(NoticeCategory.TASK, NoticeTone.SUCCESS),
     "Task failed": Notice(NoticeCategory.TASK, NoticeTone.ERROR, "Failed"),
@@ -120,6 +123,9 @@ PREVIEW_NOTICES = {
     "Error": Notice(NoticeCategory.ALERT, NoticeTone.ERROR, "Something failed"),
     "Device connected": device_notice(DeviceEvent(change=DeviceChange.CONNECTED, **_PREVIEW_DEVICE)),
     "Device disconnected": device_notice(DeviceEvent(change=DeviceChange.DISCONNECTED, **_PREVIEW_DEVICE)),
+    "Phone connected": device_notice(DeviceEvent(change=DeviceChange.CONNECTED, **_PREVIEW_PHONE)),
+    "Phone disconnected": device_notice(DeviceEvent(change=DeviceChange.DISCONNECTED, **_PREVIEW_PHONE)),
+    "Storage connected": device_notice(DeviceEvent(change=DeviceChange.CONNECTED, **_PREVIEW_STORAGE)),
     "Network lost": connectivity_notice(Connectivity.OFFLINE),
     "Back online": connectivity_notice(Connectivity.ONLINE),
 }
@@ -356,7 +362,7 @@ class NotchDebugWindow(QWidget):
             button.clicked.connect(lambda _=False, a=activity: self.preview_activity(a))
             self.preview_buttons[activity.value] = button
             activities.addWidget(button)
-        notice_rows = [QHBoxLayout(), QHBoxLayout()]
+        notice_rows = [QHBoxLayout() for _ in range((len(PREVIEW_NOTICES) + 3) // 4)]
         for index, (name, notice) in enumerate(PREVIEW_NOTICES.items()):
             button = QPushButton(name)
             button.setEnabled(self.presenter is not None)
@@ -374,7 +380,8 @@ class NotchDebugWindow(QWidget):
             cues.addWidget(button)
         form.addRow("Activity", activities)
         form.addRow("Notice", notice_rows[0])
-        form.addRow("", notice_rows[1])
+        for row in notice_rows[1:]:
+            form.addRow("", row)
         self.task_running_button = QPushButton("Task running")
         self.task_running_button.setCheckable(True)
         self.task_running_button.setEnabled(self.presenter is not None)

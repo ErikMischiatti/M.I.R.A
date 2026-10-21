@@ -71,6 +71,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from enum import StrEnum
 
+from mira.domain.devices import DeviceCategory
 from mira.domain.embodiment import ActivityState
 from mira.domain.notice import Notice, NoticeCategory, NoticeTone
 from mira.domain.scheduler import Scheduler, TimerHandle
@@ -99,6 +100,12 @@ class NotchSymbol(StrEnum):
     TASK = "task"
     DEVICE = "device"
     NETWORK = "network"
+    PHONE = "phone"
+    STORAGE = "storage"
+    CAMERA = "camera"
+    HEADPHONES = "headphones"
+    KEYBOARD = "keyboard"
+    USB = "usb"
 
 
 class NotchAction(StrEnum):
@@ -137,6 +144,17 @@ _CATEGORY_SYMBOL = {
     NoticeCategory.CONNECTIVITY: NotchSymbol.NETWORK,
 }
 
+# A device notice that says what kind of device it is about shows that kind.
+# Only the USB source classifies today, so an unknown kind is a USB plug.
+_DEVICE_SYMBOL = {
+    DeviceCategory.SMARTPHONE: NotchSymbol.PHONE,
+    DeviceCategory.STORAGE: NotchSymbol.STORAGE,
+    DeviceCategory.CAMERA: NotchSymbol.CAMERA,
+    DeviceCategory.AUDIO: NotchSymbol.HEADPHONES,
+    DeviceCategory.INPUT: NotchSymbol.KEYBOARD,
+    DeviceCategory.UNKNOWN: NotchSymbol.USB,
+}
+
 # Used when a notice brings no text of its own. A neutral device or task
 # notice without text is left to its symbol.
 _TONE_LABEL = {
@@ -147,7 +165,11 @@ _TONE_LABEL = {
 
 
 def notice_content(notice: Notice) -> NotchContent:
-    symbol = _TONE_SYMBOL.get(notice.tone) or _CATEGORY_SYMBOL[notice.category]
+    symbol = _TONE_SYMBOL.get(notice.tone)
+    if symbol is None and notice.device is not None:
+        symbol = _DEVICE_SYMBOL[notice.device.category]
+    if symbol is None:
+        symbol = _CATEGORY_SYMBOL[notice.category]
     text = (notice.text or "").strip() or None
     return NotchContent(symbol, text if text is not None else _TONE_LABEL.get(notice.tone))
 
