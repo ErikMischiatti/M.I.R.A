@@ -216,28 +216,59 @@ an invalid `MIRA_CAMERA_DEVICE` or a camera held by another application reports
 USB device notices need a manual check after changes to the USB source,
 the producers or the notch's notice path. The tests use a fake kernel
 (`tests/usb_doubles.py`: a sysfs tree and a socket pair), so only a real
-plug proves the kernel side:
+plug proves the kernel side. Quit any running MIRA first — a second launch
+only forwards to the running runtime, whose environment is the one that
+counts — then start it with the USB debug log, keeping only MIRA's own
+device and notice lines:
 
 ```bash
-MIRA_DEVICE_MONITOR_DEBUG=1 venv/bin/python -m mira.main --notch
+MIRA_DEVICE_MONITOR_DEBUG=1 venv/bin/python -m mira.main --notch 2>&1 \
+  | grep --line-buffered -E '^\[(devices|notices)\]' | tee usb-check.log
 ```
 
-Quit any running MIRA first: a second launch only forwards to the running
-runtime, whose environment is the one that counts.
+Ctrl+C quits through the orderly shutdown. Expected timings: an arrival
+shows about 0.8 s after the device is ready, an unplug about 2.5 s after it
+happens, and a notice stays `notice_duration_ms` (4 s by default).
 
-1. Plug in a smartphone (unlocked, "File transfer" selected). After under a
-   second the notch expands once, shows the phone symbol and "<name>
-   connected", and the eyes smile briefly; stderr shows one
-   `[devices] connected …: smartphone …` line.
-2. After `notice_duration_ms` (4 s by default) the notch returns to how it was.
-3. Unplug it: "<name> disconnected" with the same symbol, no smile.
-4. Repeat with a USB stick (storage symbol), and plug and unplug quickly:
-   nothing is shown.
-5. `MIRA_DEVICE_MONITOR=0`: startup logs that USB monitoring is disabled
-   and plugging shows nothing.
+| # | Scenario | Do | Expect |
+|---|---|---|---|
+| 1 | Android smartphone | Plug in an unlocked phone; select *File transfer* | One expansion: phone symbol, "<name> connected", a brief smile; one `[devices] connected …: smartphone` line. After 4 s the notch is as before. Unplug: "<name> disconnected", same symbol, no smile. |
+| 2 | USB storage | Plug in a USB stick, wait, unplug | Storage symbol, "<name> connected"; later "<name> disconnected". No disconnect from mounting or the file manager opening. |
+| 3 | Rapid reconnect | Unplug and replug the phone in the same port within about 2 s; then do it 5 times in a row | Nothing at all, or — if a replug took longer than 2.5 s — a disconnect then a connect, never a burst. `[devices]` shows every remove and add. |
+| 4 | USB mode switching | With the phone connected, switch *File transfer* → *PTP* → *USB tethering/No data transfer* → *File transfer*, a few seconds apart; with developer options, toggle *USB debugging* | Nothing for switches between phone modes. From *No data transfer* (shown as an unknown USB device, named) to *File transfer*: once, "<name> connected" with the phone symbol. Note the time between `disconnected` and `connected` lines; above 2.5 s the switch shows as a disconnect and a connect. |
+| 5 | Connected during startup | (a) Leave the phone plugged in and start MIRA; (b) plug it in while MIRA is starting | (a) A `present at start …` line and no notice; unplugging later announces it. (b) Either the same as (a), or one arrival if it was still configuring (`configuring at start …`). Never two. |
+| 6 | Unplugged during the notch animation | Plug in, and unplug while the notch is still expanding or showing "connected" | About 2.5 s after the unplug the content becomes "<name> disconnected" (or, within the first 0.8 s, nothing at all is shown); the notch collapses 4 s later. No stuck expansion, no error. |
+| 7 | Monitoring disabled | Start with `MIRA_DEVICE_MONITOR=0` | `[notices] USB device monitoring disabled`; plugging shows nothing. |
 
 Without hardware, MIRA-TUNE's *Phone connected*, *Phone disconnected* and
 *Storage connected* previews go through the same presenter and eye path.
+
+**Diagnostics without serial numbers.** MIRA's `[devices]` lines carry the
+port, category, name, vendor:product id and interface classes, never a
+serial. The kernel's own messages are serial-free too — use `--kernel`, not
+`--udev`, whose events add `ID_SERIAL` from udev's database:
+
+```bash
+udevadm monitor --kernel --property --subsystem-match=usb | tee usb-uevents.log
+```
+
+What MIRA reads from sysfs for every connected device, without `serial`
+(do not use `lsusb -v`, which prints it):
+
+```bash
+for d in /sys/bus/usb/devices/*; do
+  n=${d##*/}; case $n in *:*|usb*) continue;; esac
+  printf '%s %s:%s cfg=%s "%s" "%s" |' "$n" "$(cat $d/idVendor)" "$(cat $d/idProduct)" \
+    "$(cat $d/bConfigurationValue)" "$(cat $d/manufacturer 2>/dev/null)" "$(cat $d/product 2>/dev/null)"
+  for i in $d/$n:*; do
+    printf ' %s/%s/%s(%s)' $(cat $i/bInterfaceClass $i/bInterfaceSubClass $i/bInterfaceProtocol) \
+      "$(cat $i/interface 2>/dev/null)"
+  done; echo
+done
+```
+
+Product strings are the device's own and may name its owner (a phone
+renamed "Anna's Pixel"); check a log before sharing it.
 
 ## Dependencies
 

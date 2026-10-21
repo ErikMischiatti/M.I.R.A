@@ -64,7 +64,8 @@ Main modules:
     (optional `voice` extra and model files)
   - Linux system sources, all event-driven on the Qt loop and optional:
     `LinuxUsbDeviceSource` (kernel uevents; classifies devices from sysfs,
-    never reads serials), `PipeWireAudioSource`
+    never reads serials; supervised and resynchronised after lost
+    messages), `PipeWireAudioSource`
     (`pw-dump --monitor`), `NetworkManagerConnectivitySource` (QtDBus)
   - may import `mira.domain`; never imported by the domain
 

@@ -533,7 +533,8 @@ adapters (mira/adapters)            SystemNoticeProducer       │              
 - **Producers** (`mira/core/notice_producers.py`) own the noise policy:
   device changes settle for 800 ms per device (a connect and disconnect that
   cancel announce nothing; a new device becoming the default announces only
-  its arrival), unchanged repeats within 3 s are dropped, and connectivity is
+  its arrival; a USB unplug waits 2.5 s for a re-enumeration, see "USB device
+  notices"), unchanged repeats within 3 s are dropped, and connectivity is
   debounced for 3 s with the first state as baseline, so a short drop or
   flapping says nothing. Timers run on the `Scheduler` port.
 - **Ownership.** The one runtime owns one `SystemNoticeProducer` with one
@@ -544,7 +545,7 @@ adapters (mira/adapters)            SystemNoticeProducer       │              
 | Producer | created / started / stopped by | on failure |
 |---|---|---|
 | `TaskActivity`, `TaskNoticeProducer` | composition; live with the graph | — |
-| USB (`LinuxUsbDeviceSource`) | producer | ENOBUFS (dropped messages) is skipped; any other socket error stops USB watching with one log line, never a busy loop |
+| USB (`LinuxUsbDeviceSource`) | producer | ENOBUFS (dropped messages) resynchronises the known devices with sysfs; any other socket error closes the socket and reopens it after 1 s, doubling to 30 s, back to 1 s after a minute of stable running, then resynchronises; never a busy loop; an exception handling one message drops that message only |
 | PipeWire (`PipeWireAudioSource`) | producer | `pw-dump` exiting or failing to start is retried after 1 s, doubling to 30 s, back to 1 s after a minute of stable running; one child at a time; the restarted monitor's first dump is reconciled by node name, so only real changes are announced; an intentional shutdown never restarts |
 | NetworkManager | producer | unavailable if NetworkManager is absent at start (not retried); a restart of NetworkManager itself relies on QtDBus following the service name (not exercised) |
 
@@ -564,9 +565,11 @@ ordinary device events are not.
 ```text
 kernel uevent (add … bind / remove)
   └▶ LinuxUsbDeviceSource (adapters)   one event per physical device, read from sysfs:
-       │                                name, manufacturer, DeviceCategory; never the serial
-       ▼ DeviceEvent(kind=USB, change, name, key=devpath, category, manufacturer)
-  SystemNoticeProducer (core)          settle 800 ms · bounce · repeat 3 s
+       │                                name, manufacturer, DeviceCategory, identity;
+       │                                never the serial
+       ▼ DeviceEvent(kind=USB, change, name, key=devpath, category, manufacturer, identity)
+  SystemNoticeProducer (core)          settle 800 ms · unplug waits 2.5 s (re-enumeration)
+       │                                · bounce · mode switch · repeat 3 s
        ▼ "notice": Notice(DEVICE, INFO, "Pixel 8 connected", NoticeDevice(SMARTPHONE, connected))
   DesktopShell ─▶ deliver_notice ─┬▶ NotchPresenter: expands (device switch), phone symbol + label,
                                   │                  back after notice_duration_ms
@@ -579,45 +582,96 @@ kernel uevent (add … bind / remove)
   announces when the device is configured: at `add` if sysfs already lists
   every interface of the active configuration (`bNumInterfaces`), otherwise
   at `bind`. A device removed before that announces nothing, and a device is
-  never announced twice. The producer's settle and repeat rules then absorb
-  re-enumeration and flaky cables.
+  never announced twice. A *configuration* change without re-enumeration
+  (usbmuxd switching an iPhone to configuration 4) only replaces interfaces
+  and announces nothing.
 - **Identification.** `product` and `manufacturer` strings, `idVendor` and
   `idProduct` (debug log only) and each interface's class triple and
-  description; nothing else, and never `serial`. `key` is the sysfs devpath,
-  stable per port, used only to correlate arrival and removal. A device that
-  names itself nothing is called by its category ("USB storage connected"),
-  never by a guess.
-- **Classification** (`classify_usb_device`), from the device's own
-  descriptors, first match wins: SMARTPHONE (Android ADB/fastboot interface
-  `ff/42/01`/`ff/42/03`, an interface named "MTP", or a product named
-  "iPhone"), STORAGE (`08`), CAMERA (`0e` video, `06` still image/PTP), AUDIO
-  (`01`), INPUT (`03`), else UNKNOWN. `DeviceCategory` is domain vocabulary
-  (`mira/domain/devices.py`); the USB class rules stay in the adapter.
+  description; nothing else, and never `serial`. `key` is the sysfs devpath
+  (the port), used to correlate arrival and removal; `identity` is
+  `usb:<idVendor>:<manufacturer>:<product>`, which a phone keeps in every USB
+  mode (its `idProduct` changes), used to tell a re-enumeration from another
+  device. A device that names itself nothing is called by its category
+  ("USB storage connected"), never by a guess.
+- **Classification** (`classify_usb_device`) prefers UNKNOWN to a guess.
+  SMARTPHONE needs a known phone maker's vendor id (`PHONE_VENDORS`: Google,
+  Samsung, Xiaomi, OnePlus, Motorola, Huawei, OPPO/realme, Sony Mobile, LG,
+  HTC, ZTE, TCL/Alcatel) *and* a phone function — MTP (interface named
+  "MTP"), PTP (`06`), Android debugging or fastboot (`ff/42/01`,
+  `ff/42/03`) — or Apple's vendor id with a product named "iPhone". Then
+  STORAGE (`08`), CAMERA (`0e` video; `06` still image only from a camera
+  maker in `CAMERA_VENDORS`), AUDIO (`01`), INPUT (`03`), else UNKNOWN. So a
+  phone in PTP mode is a smartphone, MTP or ADB from anyone else (a watch, a
+  media player, a VR headset, a development board) is unknown, and a phone in
+  charge-only mode that exposes no phone function is unknown, named by its
+  own strings. `DeviceCategory` is domain vocabulary
+  (`mira/domain/devices.py`); the USB rules and vendor lists stay in the
+  adapter.
+- **USB mode switching** is decided by the producer. Android re-enumerates
+  on every mode switch (charging, file transfer, PTP, debugging): the kernel
+  removes the phone and adds it again, usually 1–2 s later, with another
+  `idProduct`. A USB disconnect therefore waits `USB_REENUMERATION_MS`
+  (2.5 s) before it is announced, and within that window:
+
+  | then arrives | announced |
+  |---|---|
+  | the same device (same `identity`), any port, same or a less specific category | nothing: a mode switch, or replugged at once |
+  | the same device, now identifiable (category became known, or changed) | its arrival, e.g. charge-only → file transfer: "Pixel 8 connected" with the phone symbol |
+  | a different device in the same port | the first one's disconnect at once, then the newcomer as usual |
+  | nothing | the disconnect, 2.5 s after the unplug |
+
+  A connect and disconnect within the 800 ms settle still cancel out, and
+  flapping announces only the state it ends in. Audio devices keep the
+  800 ms settle.
+- **Failure and recovery.** A socket that cannot be opened at start makes
+  the source unavailable (logged once). A persistent socket error closes it
+  and reopens it after 1 s, doubling to 30 s, back to 1 s after a minute of
+  stable running; one socket at a time, and shutdown cancels the retry. When
+  messages may have been lost — the kernel dropped some (`ENOBUFS`) or the
+  socket was reopened — the known devices are resynchronised with sysfs:
+  devices that left are reported disconnected, devices that arrived
+  connected, devices still there say nothing. An exception while handling
+  one message, or in a listener, is logged and costs that message only.
+- **Startup.** The socket is opened before sysfs is scanned, so no arrival
+  falls between the two. Devices present then are the baseline and announce
+  nothing; one still being configured is announced at its `bind`, as it is
+  arriving.
 - **Presentation.** `Notice.device` (`NoticeDevice`: category, connected)
   lets each embodiment show the kind of device. The notch maps it to a
   symbol — phone, USB stick, camera, headphones, keyboard, USB trident for
   unknown — and keeps the generic device symbol for unclassified notices
   (audio routes). A tone other than INFO still decides the symbol. The eyes
   play `EmbodimentCue.GREETING` (the success smile, 0.6 s, lowest priority:
-  it never interrupts another cue) for an arrival; a removal gets none.
-- **Threading.** The uevent socket is read by a `QSocketNotifier` on the Qt
-  main thread and every step after it is synchronous on that thread, so
-  widgets are only touched from the UI thread and nothing blocks: the sysfs
-  reads are a handful of small virtual files per arrival.
+  it never interrupts another cue) for an arrival; a removal gets none. A
+  removal while the arrival still shows replaces it (no queue).
+- **Threading and resources.** The uevent socket is read by a
+  `QSocketNotifier` on the Qt main thread, at most 64 messages per wake-up
+  (the notifier fires again for the rest), and every step after it is
+  synchronous on that thread, so widgets are only touched from the UI thread
+  and nothing blocks: the sysfs reads are a handful of small virtual files
+  per arrival. No thread is started. One socket, one notifier and at most
+  one retry timer exist; the producer holds one pending change per device.
+  The socket asks for a 1 MiB receive buffer (capped by
+  `net.core.rmem_max`). Ordinary device events are logged only with
+  `MIRA_DEVICE_MONITOR_DEBUG=1`.
 - **Configuration.** `MIRA_DEVICE_MONITOR=0` leaves the USB source out of
   `desktop_system_event_sources` (audio and connectivity are unaffected);
-  `MIRA_DEVICE_MONITOR_DEBUG=1` logs each arrival and removal with its
-  classification. Expansion and duration are the notch's existing
-  `automatic_expansion.device` and `notice_duration_ms`.
-- **Limitations.** Classification is only as good as the descriptors: a
-  phone in PTP mode reads as a camera, a phone in charge-only mode as
-  unknown (or by its strings), and any device exposing ADB or MTP (a media
-  player, a development board) as a smartphone. A phone switching USB mode
-  re-enumerates at the same port; when that happens inside the settle window
-  it is a bounce and says nothing, so the new mode is not announced. A notice
-  still replaces the content of an open notch, the listening waveform
-  included, for its duration (no priority or queue). Names come from the
-  device's own strings; no vendor database is consulted.
+  `MIRA_DEVICE_MONITOR_DEBUG=1` logs the devices present at start and each
+  arrival and removal with its classification. Expansion and duration are
+  the notch's existing `automatic_expansion.device` and
+  `notice_duration_ms`.
+- **Limitations.** A real unplug is announced 2.5 s after it happens. Two
+  devices with the same vendor, manufacturer and product strings (two
+  identical sticks) swapped within 2.5 s count as one. A phone whose maker
+  is not listed, or an iPad, is unknown (named by its strings); a phone
+  maker's tablet is a "smartphone". A phone whose mode switch takes longer
+  than 2.5 s is announced as disconnected and connected again. A device
+  whose product string changes between modes is treated as another device.
+  A notice still replaces the content of an open notch, the listening
+  waveform included, for its duration (no priority or queue). Names come
+  from the device's own strings; no vendor database is consulted. SIGTERM
+  ends the runtime without the orderly shutdown (see Single runtime); the
+  kernel still closes the socket.
 - **Next.** M2 — device information providers behind their own source or
   enrichment step (ADB for model and battery, `usbmuxd` for iPhones, UPower,
   storage capacity), adding fields to `NoticeDevice`/`DeviceEvent` rather
