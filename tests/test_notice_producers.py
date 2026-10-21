@@ -8,6 +8,7 @@ network manager.
 from __future__ import annotations
 
 import ast
+from dataclasses import replace
 import pathlib
 
 import pytest
@@ -16,6 +17,7 @@ from mira.actions.action_models import ActionResult
 from mira.core.notice_producers import (
     CONNECTIVITY_SETTLE_MS,
     DEVICE_REPEAT_MS,
+    DEVICE_CHANGED_EVENT,
     DEVICE_SETTLE_MS,
     NOTICE_EVENT,
     USB_REENUMERATION_MS,
@@ -114,14 +116,14 @@ def test_device_events_become_device_notices(event, text):
 
 @pytest.mark.parametrize(("event", "text", "device"), [
     (plug(name="Pixel 8", category=DeviceCategory.SMARTPHONE), "Pixel 8 connected",
-     NoticeDevice(DeviceCategory.SMARTPHONE, connected=True)),
+     NoticeDevice(DeviceCategory.SMARTPHONE, connected=True, key="1-2")),
     (plug(DeviceChange.DISCONNECTED, name="Pixel 8", category=DeviceCategory.SMARTPHONE), "Pixel 8 disconnected",
-     NoticeDevice(DeviceCategory.SMARTPHONE, connected=False)),
+     NoticeDevice(DeviceCategory.SMARTPHONE, connected=False, key="1-2")),
     # A device that names itself nothing is called what it is, never guessed.
     (plug(name="", category=DeviceCategory.STORAGE), "USB storage connected",
-     NoticeDevice(DeviceCategory.STORAGE, connected=True)),
+     NoticeDevice(DeviceCategory.STORAGE, connected=True, key="1-2")),
     (plug(name="", category=DeviceCategory.UNKNOWN), "USB device connected",
-     NoticeDevice(DeviceCategory.UNKNOWN, connected=True)),
+     NoticeDevice(DeviceCategory.UNKNOWN, connected=True, key="1-2")),
 ])
 def test_a_classified_device_notice_says_what_kind_of_device_it_is(event, text, device):
     assert device_notice(event) == Notice(NoticeCategory.DEVICE, NoticeTone.INFO, text, device)
@@ -143,8 +145,8 @@ def test_a_settled_classified_arrival_and_removal_keep_their_device():
     producer.shutdown()
 
     assert [(notice.text, notice.device) for notice in notices] == [
-        ("Pixel 8 connected", NoticeDevice(DeviceCategory.SMARTPHONE, connected=True)),
-        ("Pixel 8 disconnected", NoticeDevice(DeviceCategory.SMARTPHONE, connected=False)),
+        ("Pixel 8 connected", NoticeDevice(DeviceCategory.SMARTPHONE, connected=True, key="1-2")),
+        ("Pixel 8 disconnected", NoticeDevice(DeviceCategory.SMARTPHONE, connected=False, key="1-2")),
     ]
 
 
@@ -456,3 +458,61 @@ def test_the_producer_can_be_started_again_after_shutdown(system):
     system.scheduler.advance(DEVICE_SETTLE_MS)
 
     assert system.source.started == 2 and texts(system) == [("Pixel 8 connected", DeviceCategory.SMARTPHONE)]
+
+
+# --- What the device information service follows ------------------------------------------
+
+
+@pytest.fixture
+def changes(system):
+    seen = []
+    system._bus.subscribe(DEVICE_CHANGED_EVENT, seen.append)
+    return seen
+
+
+def test_announced_arrivals_and_departures_are_published_as_device_changes(system, changes):
+    system.handle(phone())
+    system.scheduler.advance(DEVICE_SETTLE_MS)
+    system.handle(phone(DeviceChange.DISCONNECTED))
+    system.scheduler.advance(USB_REENUMERATION_MS)
+
+    assert [event.change for event in changes] == [DeviceChange.CONNECTED, DeviceChange.DISCONNECTED]
+
+
+def test_a_bounce_and_a_dropped_repeat_publish_nothing(system, changes):
+    system.handle(phone())
+    system.handle(phone(DeviceChange.DISCONNECTED))
+    system.scheduler.advance(10_000)
+    assert changes == []
+
+    plugged_in(system, phone())
+    changes.clear()
+    system.handle(phone())
+    system.scheduler.advance(DEVICE_SETTLE_MS)  # the same arrival again: a repeat
+    assert changes == []
+
+
+def test_a_silent_mode_switch_is_published_with_the_new_services(system, changes):
+    plugged_in(system, phone())
+    changes.clear()
+    debugging = replace(phone(), services=frozenset({"mtp", "adb"}))
+
+    system.handle(phone(DeviceChange.DISCONNECTED))
+    system.scheduler.advance(1500)
+    system.handle(debugging)
+
+    assert system.notices == [] and changes == [debugging]
+
+
+def test_a_silent_port_move_publishes_the_departure_from_the_old_port(system, changes):
+    plugged_in(system, phone(key="3-2"))
+    changes.clear()
+
+    system.handle(phone(DeviceChange.DISCONNECTED, key="3-2"))
+    system.scheduler.advance(1000)
+    system.handle(phone(key="3-4"))
+
+    assert [(event.change, event.key) for event in changes] == [
+        (DeviceChange.DISCONNECTED, "3-2"),
+        (DeviceChange.CONNECTED, "3-4"),
+    ]

@@ -37,6 +37,13 @@ Noise is the producers' problem, not the adapters' and not the notch's:
   `CONNECTIVITY_SETTLE_MS` and differ from the last announced one, so a
   network that drops for a second, or flaps, says nothing.
 
+Besides notices, the system producer publishes the device changes it
+stands behind as ``"device_changed"`` (the `DeviceEvent`): every announced
+arrival and departure, and a silent re-enumeration (the same device back in
+another mode, which may offer other services). Whoever wants to know which
+devices are present *as the user was told* — the device information service
+— follows that, not the raw source events.
+
 Timers run on the injected `Scheduler`, so the producers are deterministic
 under `ManualScheduler` and need no GUI toolkit.
 """
@@ -63,6 +70,7 @@ from mira.domain.system_events import (
 from mira.messaging.events import EventBus
 
 NOTICE_EVENT = "notice"
+DEVICE_CHANGED_EVENT = "device_changed"
 
 DEVICE_SETTLE_MS = 800
 USB_REENUMERATION_MS = 2500
@@ -193,7 +201,12 @@ class SystemNoticeProducer:
                     # Back as something it was not before: news, not a repeat.
                     self._announced.discard((event.kind, DeviceChange.CONNECTED, event.key))
                 else:
-                    return  # re-enumerated (a mode switch) or replugged at once
+                    # Re-enumerated (a mode switch) or replugged at once: no
+                    # news, but it is here, and may offer other services now.
+                    if previous.key != event.key:
+                        self._bus.emit(DEVICE_CHANGED_EVENT, previous)  # it left its old port
+                    self._bus.emit(DEVICE_CHANGED_EVENT, event)
+                    return
             if previous.change is DeviceChange.CONNECTED and event.change is DeviceChange.DEFAULT_CHANGED:
                 event = previous  # its arrival says enough
         delay = DEVICE_SETTLE_MS
@@ -236,6 +249,7 @@ class SystemNoticeProducer:
             self._scheduler.call_later(DEVICE_REPEAT_MS, lambda: self._announced.discard(identity))
         )
         self._bus.emit(NOTICE_EVENT, device_notice(event))
+        self._bus.emit(DEVICE_CHANGED_EVENT, event)
 
     # --- Connectivity ----------------------------------------------------------------
 

@@ -64,6 +64,9 @@ class NoticeDevice:
     category: DeviceCategory
     connected: bool
     """True when it arrived, False when it left."""
+    key: str | None = None
+    """Which device (`DeviceEvent.key`), to correlate later information
+    with this notice; never shown."""
 
 
 @dataclass(frozen=True, slots=True)

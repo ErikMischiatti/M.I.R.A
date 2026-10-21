@@ -160,7 +160,7 @@ def test_a_phone_plugged_in_expands_the_notch_with_its_name_and_the_eyes_greet_i
 
     shown = presentation(runtime)
     assert shown.content == NotchContent(NotchSymbol.PHONE, "Google Pixel 8 connected")
-    assert shown.notice.device == NoticeDevice(DeviceCategory.SMARTPHONE, connected=True)
+    assert shown.notice.device == NoticeDevice(DeviceCategory.SMARTPHONE, connected=True, key=PHONE)
     assert runtime.desktop.notch.presence is NotchPresence.EXPANDED
     assert runtime.desktop.controller.active_cue is EmbodimentCue.GREETING
 

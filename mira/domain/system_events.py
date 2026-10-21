@@ -55,6 +55,11 @@ class DeviceEvent:
     switching USB mode), so a producer can tell that from a different device
     in the same port. Never a serial number; None when the source cannot
     tell, and then every device at one ``key`` counts as the same.
+
+    ``services`` are what the device offers that something could talk to —
+    ``"adb"``, ``"mtp"``, ``"ptp"``, ``"usbmux"`` (Apple's device
+    multiplexer) — as its descriptors declare them, so an information
+    provider can tell whether asking makes sense. Empty when unknown.
     """
 
     kind: DeviceKind
@@ -64,6 +69,7 @@ class DeviceEvent:
     category: DeviceCategory | None = None
     manufacturer: str | None = None
     identity: str | None = None
+    services: frozenset[str] = frozenset()
 
 
 class Connectivity(StrEnum):
@@ -136,7 +142,7 @@ def device_notice(event: DeviceEvent) -> Notice:
         text = f"{_DEVICE_NOUN[event.kind]}: {name}"
     device = None
     if event.category is not None and event.change is not DeviceChange.DEFAULT_CHANGED:
-        device = NoticeDevice(event.category, event.change is DeviceChange.CONNECTED)
+        device = NoticeDevice(event.category, event.change is DeviceChange.CONNECTED, event.key)
     return Notice(NoticeCategory.DEVICE, NoticeTone.INFO, text, device)
 
 

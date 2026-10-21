@@ -107,6 +107,9 @@ VENDOR_CLASS = 0xFF
 # Android's debug bridge and fastboot: vendor class, subclass 0x42.
 ANDROID_SUBCLASS = 0x42
 ANDROID_PROTOCOLS = frozenset({0x01, 0x03})
+ADB_PROTOCOL = 0x01
+# Apple's device multiplexer (usbmuxd talks to an iPhone through it).
+APPLE_MUX = (VENDOR_CLASS, 0xFE, 0x02)
 
 # USB-IF vendor ids (as sysfs writes them) of makers whose devices with a
 # phone function are phones or tablets. Deliberately short: contract
@@ -304,6 +307,22 @@ def _is_phone_function(interface: UsbInterface) -> bool:
         or (interface.cls == VENDOR_CLASS and interface.subclass == ANDROID_SUBCLASS
             and interface.protocol in ANDROID_PROTOCOLS)
     )
+
+
+def device_services(interfaces: Iterable[UsbInterface]) -> frozenset[str]:
+    """What the device offers to talk to, as `DeviceEvent.services` names it."""
+    services = set()
+    for interface in interfaces:
+        mtp = interface.description.strip().upper() == "MTP"
+        if mtp:
+            services.add("mtp")
+        elif interface.cls == STILL_IMAGE_CLASS:
+            services.add("ptp")
+        if (interface.cls, interface.subclass, interface.protocol) == (VENDOR_CLASS, ANDROID_SUBCLASS, ADB_PROTOCOL):
+            services.add("adb")
+        if (interface.cls, interface.subclass, interface.protocol) == APPLE_MUX:
+            services.add("usbmux")
+    return frozenset(services)
 
 
 def classify_usb_device(
@@ -603,6 +622,7 @@ class LinuxUsbDeviceSource:
         return DeviceEvent(
             DeviceKind.USB, DeviceChange.CONNECTED, name, devpath,
             category=category, manufacturer=info.manufacturer or None, identity=device_identity(info),
+            services=device_services(info.interfaces),
         )
 
     def _device_path(self, devpath: str) -> Path:
