@@ -28,20 +28,26 @@ remembered on arrival, because the attributes are gone by the time the
 removal arrives. Devices present at start are read once so their removal can
 be named, and announce nothing themselves.
 
-**Classification** (`classify_usb_device`) uses only the classes the device
-declares, conservatively, first match wins:
+**Classification** (`classify_usb_device`) uses only what the device
+declares, first match wins, and prefers UNKNOWN to a guess:
 
-    SMARTPHONE  an Android debug/fastboot interface (ff/42/01, ff/42/03), an
-                interface named "MTP", or a product named "iPhone"
+    SMARTPHONE  Apple's vendor id with a product named "iPhone"; or a known
+                phone maker's vendor id (`PHONE_VENDORS`) together with a
+                phone function — MTP (an interface named "MTP"), PTP (still
+                image class 06), Android debugging/fastboot (ff/42/01,
+                ff/42/03)
     STORAGE     mass storage (08)
-    CAMERA      video (0e) or still image / PTP (06)
+    CAMERA      video (0e); still image (06) only from a known camera
+                maker (`CAMERA_VENDORS`)
     AUDIO       audio (01)
     INPUT       human interface device (03)
     UNKNOWN     anything else
 
-so a webcam with a microphone is a camera and a headset with volume buttons
-is an audio device. Other platforms or richer sources (udev's hardware
-database, ADB) can classify differently behind the same `DeviceEvent`.
+so a phone in PTP mode is a smartphone, not a camera; MTP or ADB from any
+other vendor (a media player, a watch, a development board) is unknown; and
+a phone in charge-only mode that exposes no phone function is unknown, named
+by its own strings. A webcam with a microphone is a camera and a headset
+with volume buttons is an audio device.
 
 No libudev or pyudev: the kernel's own message format is a few
 NUL-separated ``KEY=value`` strings.
@@ -76,11 +82,44 @@ VENDOR_CLASS = 0xFF
 ANDROID_SUBCLASS = 0x42
 ANDROID_PROTOCOLS = frozenset({0x01, 0x03})
 
-# Per interface class, first match wins (see the module).
+# USB-IF vendor ids (as sysfs writes them) of makers whose devices with a
+# phone function are phones or tablets. Deliberately short: contract
+# manufacturers and chipset vendors (Qualcomm, MediaTek), whose ids appear on
+# all kinds of boards, are left out. Other phones are UNKNOWN, by name.
+PHONE_VENDORS = frozenset({
+    "18d1",  # Google
+    "04e8",  # Samsung
+    "2717",  # Xiaomi
+    "2a70",  # OnePlus
+    "22b8",  # Motorola
+    "12d1",  # Huawei
+    "22d9",  # OPPO (and realme)
+    "0fce",  # Sony Mobile
+    "1004",  # LG
+    "0bb4",  # HTC
+    "19d2",  # ZTE
+    "1bbb",  # TCL / Alcatel
+})
+APPLE_VENDOR = "05ac"
+# Makers of cameras that speak PTP over USB.
+CAMERA_VENDORS = frozenset({
+    "04a9",  # Canon
+    "04b0",  # Nikon
+    "04cb",  # Fujifilm
+    "07b4",  # Olympus / OM System
+    "04da",  # Panasonic
+    "054c",  # Sony
+    "2672",  # GoPro
+    "1a98",  # Leica
+    "25fb",  # Pentax (Ricoh)
+    "05ca",  # Ricoh
+})
+
+# Per interface class, first match wins (see the module). Still image is
+# decided separately: alone it does not say "camera".
 _CLASS_CATEGORY = (
     (MASS_STORAGE_CLASS, DeviceCategory.STORAGE),
     (VIDEO_CLASS, DeviceCategory.CAMERA),
-    (STILL_IMAGE_CLASS, DeviceCategory.CAMERA),
     (AUDIO_CLASS, DeviceCategory.AUDIO),
     (HID_CLASS, DeviceCategory.INPUT),
 )
@@ -202,8 +241,8 @@ def read_device(device: Path) -> UsbDeviceInfo | None:
     return UsbDeviceInfo(
         product=_read_attribute(device, "product"),
         manufacturer=_read_attribute(device, "manufacturer"),
-        vendor_id=_read_attribute(device, "idVendor"),
-        product_id=_read_attribute(device, "idProduct"),
+        vendor_id=_read_attribute(device, "idVendor").lower(),
+        product_id=_read_attribute(device, "idProduct").lower(),
         device_class=_hex(_read_attribute(device, "bDeviceClass")),
         interfaces=read_interfaces(device),
     )
@@ -222,19 +261,29 @@ def describe_device(device: Path) -> str | None:
     return None if info is None else device_name(info.product, info.manufacturer)
 
 
+def _is_phone_function(interface: UsbInterface) -> bool:
+    return (
+        interface.description.strip().upper() == "MTP"
+        or interface.cls == STILL_IMAGE_CLASS
+        or (interface.cls == VENDOR_CLASS and interface.subclass == ANDROID_SUBCLASS
+            and interface.protocol in ANDROID_PROTOCOLS)
+    )
+
+
 def classify_usb_device(
-    interfaces: Iterable[UsbInterface], *, device_class: int | None = None, product: str = ""
+    interfaces: Iterable[UsbInterface],
+    *,
+    device_class: int | None = None,
+    product: str = "",
+    vendor_id: str = "",
 ) -> DeviceCategory:
     """The category a device's own descriptors support; see the module."""
 
     interfaces = tuple(interfaces)
-    for interface in interfaces:
-        if interface.cls == VENDOR_CLASS and interface.subclass == ANDROID_SUBCLASS \
-                and interface.protocol in ANDROID_PROTOCOLS:
-            return DeviceCategory.SMARTPHONE
-        if interface.description.strip().upper() == "MTP":
-            return DeviceCategory.SMARTPHONE
-    if "iphone" in product.lower():
+    vendor = vendor_id.strip().lower()
+    if vendor == APPLE_VENDOR and product.strip().lower().startswith("iphone"):
+        return DeviceCategory.SMARTPHONE
+    if vendor in PHONE_VENDORS and any(_is_phone_function(interface) for interface in interfaces):
         return DeviceCategory.SMARTPHONE
     classes = {interface.cls for interface in interfaces}
     if device_class is not None and device_class not in _UNINFORMATIVE_DEVICE_CLASSES:
@@ -242,6 +291,8 @@ def classify_usb_device(
     for cls, category in _CLASS_CATEGORY:
         if cls in classes:
             return category
+    if STILL_IMAGE_CLASS in classes and vendor in CAMERA_VENDORS:
+        return DeviceCategory.CAMERA
     return DeviceCategory.UNKNOWN
 
 
@@ -384,7 +435,9 @@ class LinuxUsbDeviceSource:
         info = read_device(self._device_path(devpath))
         if info is None:
             return None
-        category = classify_usb_device(info.interfaces, device_class=info.device_class, product=info.product)
+        category = classify_usb_device(
+            info.interfaces, device_class=info.device_class, product=info.product, vendor_id=info.vendor_id,
+        )
         name = device_name(info.product, info.manufacturer)
         if log:
             interfaces = " ".join(str(interface) for interface in info.interfaces) or "none"

@@ -26,7 +26,7 @@ from mira.domain.scheduler import ManualScheduler
 from mira.ui.desktop_shell import DesktopShell, Surface
 from mira.ui.notch.presence import NotchPresence
 from mira.ui.notch.presentation import NotchContent, NotchSymbol, notice_content
-from usb_doubles import ADB, HID, MASS_STORAGE, MTP, FakeKernel, configure, make_device, uevent
+from usb_doubles import ADB, GOOGLE, HID, MASS_STORAGE, MTP, FakeKernel, configure, make_device, uevent
 
 
 # --- Configuration ---------------------------------------------------------------------
@@ -134,7 +134,7 @@ def presentation(runtime):
 
 
 def test_a_phone_plugged_in_expands_the_notch_with_its_name_and_the_eyes_greet_it(runtime):
-    device = make_device(runtime.kernel.sysfs, PHONE, product="Pixel 8", manufacturer="Google",
+    device = make_device(runtime.kernel.sysfs, PHONE, product="Pixel 8", manufacturer="Google", vendor=GOOGLE,
                          configured=False, listed=False)
     runtime.deliver(uevent("add", PHONE))
     configure(device, [MTP, ADB])

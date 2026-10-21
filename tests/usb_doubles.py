@@ -7,6 +7,7 @@ message for it; the source reads both exactly as it reads the real ones.
 
 from __future__ import annotations
 
+import shutil
 import socket
 from collections.abc import Iterable
 from pathlib import Path
@@ -24,6 +25,9 @@ AUDIO_CONTROL = "01/01/00"
 AUDIO_STREAMING = "01/02/00"
 HID = "03/01/01"
 VENDOR = "ff/ff/00"
+# USB vendor ids, as sysfs writes them.
+GOOGLE = "18d1"
+CANON = "04a9"
 
 
 def uevent(action: str, devpath: str, **fields) -> bytes:
@@ -66,6 +70,15 @@ def make_device(
     return device
 
 
+def unplug(sysfs: Path, devpath: str) -> None:
+    """What sysfs looks like once the kernel has removed the device."""
+    device = sysfs / devpath.lstrip("/")
+    for link in (sysfs / "bus" / "usb" / "devices").iterdir():
+        if link.name == device.name or link.name.startswith(f"{device.name}:"):
+            link.unlink()
+    shutil.rmtree(device)
+
+
 def configure(device: Path, interfaces: Iterable[str]) -> None:
     """What the kernel does between a device's ``add`` and its ``bind``.
 
@@ -86,21 +99,41 @@ def configure(device: Path, interfaces: Iterable[str]) -> None:
 
 
 class FakeKernel:
-    """The kernel's end of the uevent socket, and the sysfs it describes."""
+    """The kernel's end of the uevent socket, and the sysfs it describes.
+
+    Every open makes a fresh socket pair, so a source can be shut down and
+    started again, or lose its socket and reopen it; ``fail_opens`` makes
+    that many opens fail first, as an unavailable netlink would.
+    """
 
     def __init__(self, sysfs: Path):
         self.sysfs = sysfs
         (sysfs / "bus" / "usb" / "devices").mkdir(parents=True, exist_ok=True)
+        self.end: socket.socket | None = None
+        self.ours: socket.socket | None = None
+        self.opens = 0
+        self.fail_opens = 0
+        self._pairs: list[tuple[socket.socket, socket.socket]] = []
+
+    def open(self) -> socket.socket:
+        self.opens += 1
+        if self.fail_opens:
+            self.fail_opens -= 1
+            raise PermissionError("netlink refused")
         self.end, self.ours = socket.socketpair(socket.AF_UNIX, socket.SOCK_DGRAM)
         self.ours.setblocking(False)
+        self.end.settimeout(2)  # a full queue fails the test instead of hanging it
+        self._pairs.append((self.end, self.ours))
+        return self.ours
 
     def source(self, **options) -> LinuxUsbDeviceSource:
-        return LinuxUsbDeviceSource(sysfs=self.sysfs, open_socket=lambda: self.ours, **options)
+        return LinuxUsbDeviceSource(sysfs=self.sysfs, open_socket=self.open, **options)
 
     def send(self, *messages: bytes) -> None:
         for message in messages:
             self.end.send(message)
 
     def close(self) -> None:
-        self.end.close()
-        self.ours.close()
+        for pair in self._pairs:
+            for sock in pair:
+                sock.close()

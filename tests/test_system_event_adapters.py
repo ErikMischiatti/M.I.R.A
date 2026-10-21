@@ -48,6 +48,8 @@ from usb_doubles import (
     VENDOR,
     VIDEO_CONTROL,
     VIDEO_STREAMING,
+    CANON,
+    GOOGLE,
     FakeKernel,
     configure,
     make_device,
@@ -193,7 +195,8 @@ def test_a_device_not_yet_configured_is_announced_at_its_bind_with_every_interfa
     # then one add per interface, then the device's bind.
     devpath = "/devices/pci0/usb1/1-3"
     usb.start(usb.events.append)
-    device = make_device(usb.sysfs, devpath, product="Pixel 8", manufacturer="Google", configured=False, listed=False)
+    device = make_device(usb.sysfs, devpath, product="Pixel 8", manufacturer="Google", vendor=GOOGLE,
+                         configured=False, listed=False)
 
     deliver(usb, uevent("add", devpath))
     assert usb.events == []
@@ -325,28 +328,42 @@ def interfaces(*specs: str) -> list[UsbInterface]:
     return result
 
 
-@pytest.mark.parametrize(("specs", "category"), [
-    ((MTP, ADB), DeviceCategory.SMARTPHONE),                    # Android, file transfer + debugging
-    ((MTP,), DeviceCategory.SMARTPHONE),                        # Android, file transfer
-    ((VENDOR, "ff/42/01"), DeviceCategory.SMARTPHONE),          # Android, debugging only
-    (("ff/42/03",), DeviceCategory.SMARTPHONE),                 # fastboot
-    ((MASS_STORAGE,), DeviceCategory.STORAGE),
-    ((VIDEO_CONTROL, VIDEO_STREAMING, AUDIO_CONTROL, AUDIO_STREAMING), DeviceCategory.CAMERA),
-    ((PTP,), DeviceCategory.CAMERA),                            # a still camera (or a phone in PTP mode)
-    ((AUDIO_CONTROL, AUDIO_STREAMING, HID), DeviceCategory.AUDIO),
-    ((HID, HID), DeviceCategory.INPUT),
-    ((VENDOR,), DeviceCategory.UNKNOWN),
-    (("e0/01/01", "e0/01/01"), DeviceCategory.UNKNOWN),         # a Bluetooth adapter
-    ((), DeviceCategory.UNKNOWN),
+@pytest.mark.parametrize(("specs", "vendor", "category"), [
+    # A phone maker's device with a phone function, in every USB mode.
+    ((MTP, ADB), GOOGLE, DeviceCategory.SMARTPHONE),             # file transfer + debugging
+    ((MTP,), GOOGLE, DeviceCategory.SMARTPHONE),                 # file transfer
+    ((PTP,), GOOGLE, DeviceCategory.SMARTPHONE),                 # PTP: a phone, not a camera
+    ((VENDOR, "ff/42/01"), "04e8", DeviceCategory.SMARTPHONE),   # debugging only (Samsung)
+    (("ff/42/03",), "2717", DeviceCategory.SMARTPHONE),          # fastboot (Xiaomi)
+    # The same functions from anyone else say nothing about phones.
+    ((MTP,), "091e", DeviceCategory.UNKNOWN),                    # a watch or media player
+    ((VENDOR, "ff/42/01"), "2833", DeviceCategory.UNKNOWN),      # a headset or board with ADB
+    ((PTP,), "1234", DeviceCategory.UNKNOWN),                    # PTP from an unknown maker
+    ((PTP,), CANON, DeviceCategory.CAMERA),                      # PTP from a camera maker
+    # Charge-only: a phone maker's device with no phone function.
+    ((VENDOR,), GOOGLE, DeviceCategory.UNKNOWN),
+    ((), GOOGLE, DeviceCategory.UNKNOWN),
+    # Anything else is what its classes say, whoever made it.
+    ((MASS_STORAGE,), "04e8", DeviceCategory.STORAGE),           # a Samsung SSD
+    ((MASS_STORAGE,), "", DeviceCategory.STORAGE),
+    ((VIDEO_CONTROL, VIDEO_STREAMING, AUDIO_CONTROL, AUDIO_STREAMING), "", DeviceCategory.CAMERA),
+    ((AUDIO_CONTROL, AUDIO_STREAMING, HID), "", DeviceCategory.AUDIO),
+    ((HID, HID), "", DeviceCategory.INPUT),
+    ((VENDOR,), "", DeviceCategory.UNKNOWN),
+    (("e0/01/01", "e0/01/01"), "8087", DeviceCategory.UNKNOWN),  # a Bluetooth adapter
+    ((), "", DeviceCategory.UNKNOWN),
 ])
-def test_devices_are_classified_from_their_own_interfaces(specs, category):
-    assert classify_usb_device(interfaces(*specs)) is category
+def test_devices_are_classified_only_as_far_as_their_descriptors_support(specs, vendor, category):
+    assert classify_usb_device(interfaces(*specs), vendor_id=vendor) is category
 
 
-def test_a_device_level_class_counts_and_an_iphone_is_a_smartphone():
+def test_a_device_level_class_counts_and_only_apples_iphone_is_a_smartphone():
     assert classify_usb_device([], device_class=0x08) is DeviceCategory.STORAGE
     assert classify_usb_device([], device_class=0xEF) is DeviceCategory.UNKNOWN
-    assert classify_usb_device(interfaces(PTP, VENDOR), product="iPhone") is DeviceCategory.SMARTPHONE
+    assert classify_usb_device(interfaces(PTP, VENDOR), product="iPhone", vendor_id="05ac") \
+        is DeviceCategory.SMARTPHONE
+    assert classify_usb_device(interfaces(PTP, VENDOR), product="iPad", vendor_id="05AC") is DeviceCategory.UNKNOWN
+    assert classify_usb_device(interfaces(PTP), product="iPhone", vendor_id="1234") is DeviceCategory.UNKNOWN
 
 
 def test_a_device_with_unreadable_interfaces_is_classified_from_what_is_left(tmp_path):
