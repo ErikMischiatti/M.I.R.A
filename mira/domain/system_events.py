@@ -20,7 +20,8 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Protocol, Union
 
-from mira.domain.notice import Notice, NoticeCategory, NoticeTone
+from mira.domain.devices import DeviceCategory
+from mira.domain.notice import Notice, NoticeCategory, NoticeDevice, NoticeTone
 
 
 class DeviceKind(StrEnum):
@@ -41,12 +42,21 @@ class DeviceChange(StrEnum):
 @dataclass(frozen=True, slots=True)
 class DeviceEvent:
     """One device change. ``key`` identifies the device across events; ``name``
-    is what a person would call it."""
+    is what a person would call it, or empty when the device does not say.
+
+    ``category`` and ``manufacturer`` are what the source could read, and
+    None when it reads no such thing (audio routes are not classified); a
+    source that classifies but cannot tell says `DeviceCategory.UNKNOWN`.
+    ``kind`` is the facility it was seen through, so for USB it is also the
+    connection. ``key`` is for correlation only and is never a serial number.
+    """
 
     kind: DeviceKind
     change: DeviceChange
     name: str
     key: str
+    category: DeviceCategory | None = None
+    manufacturer: str | None = None
 
 
 class Connectivity(StrEnum):
@@ -95,15 +105,32 @@ _DEVICE_NOUN = {
 }
 
 
+# What to call a classified device that brings no name of its own.
+_CATEGORY_NAME = {
+    DeviceCategory.SMARTPHONE: "Smartphone",
+    DeviceCategory.STORAGE: "USB storage",
+    DeviceCategory.CAMERA: "Camera",
+    DeviceCategory.AUDIO: "Audio device",
+    DeviceCategory.INPUT: "Input device",
+}
+
+
 def device_notice(event: DeviceEvent) -> Notice:
-    name = event.name.strip() or f"{_DEVICE_NOUN[event.kind]} device"
+    name = (
+        event.name.strip()
+        or _CATEGORY_NAME.get(event.category)
+        or f"{_DEVICE_NOUN[event.kind]} device"
+    )
     if event.change is DeviceChange.CONNECTED:
         text = f"{name} connected"
     elif event.change is DeviceChange.DISCONNECTED:
         text = f"{name} disconnected"
     else:
         text = f"{_DEVICE_NOUN[event.kind]}: {name}"
-    return Notice(NoticeCategory.DEVICE, NoticeTone.INFO, text)
+    device = None
+    if event.category is not None and event.change is not DeviceChange.DEFAULT_CHANGED:
+        device = NoticeDevice(event.category, event.change is DeviceChange.CONNECTED)
+    return Notice(NoticeCategory.DEVICE, NoticeTone.INFO, text, device)
 
 
 _CONNECTIVITY_NOTICE = {

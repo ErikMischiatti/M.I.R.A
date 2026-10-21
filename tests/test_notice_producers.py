@@ -24,7 +24,8 @@ from mira.core.notice_producers import (
     device_notice,
     task_notice,
 )
-from mira.domain.notice import Notice, NoticeCategory, NoticeTone
+from mira.domain.devices import DeviceCategory
+from mira.domain.notice import Notice, NoticeCategory, NoticeDevice, NoticeTone
 from mira.domain.scheduler import ManualScheduler
 from mira.domain.system_events import (
     Connectivity,
@@ -68,8 +69,8 @@ def system():
     producer.shutdown()
 
 
-def plug(change=DeviceChange.CONNECTED, kind=DeviceKind.USB, name="Keyboard", key="1-2"):
-    return DeviceEvent(kind, change, name, key)
+def plug(change=DeviceChange.CONNECTED, kind=DeviceKind.USB, name="Keyboard", key="1-2", category=None):
+    return DeviceEvent(kind, change, name, key, category=category)
 
 
 # --- Tasks -----------------------------------------------------------------------------
@@ -108,6 +109,42 @@ def test_a_payload_without_data_is_a_plain_failure():
 ])
 def test_device_events_become_device_notices(event, text):
     assert device_notice(event) == Notice(NoticeCategory.DEVICE, NoticeTone.INFO, text)
+
+
+@pytest.mark.parametrize(("event", "text", "device"), [
+    (plug(name="Pixel 8", category=DeviceCategory.SMARTPHONE), "Pixel 8 connected",
+     NoticeDevice(DeviceCategory.SMARTPHONE, connected=True)),
+    (plug(DeviceChange.DISCONNECTED, name="Pixel 8", category=DeviceCategory.SMARTPHONE), "Pixel 8 disconnected",
+     NoticeDevice(DeviceCategory.SMARTPHONE, connected=False)),
+    # A device that names itself nothing is called what it is, never guessed.
+    (plug(name="", category=DeviceCategory.STORAGE), "USB storage connected",
+     NoticeDevice(DeviceCategory.STORAGE, connected=True)),
+    (plug(name="", category=DeviceCategory.UNKNOWN), "USB device connected",
+     NoticeDevice(DeviceCategory.UNKNOWN, connected=True)),
+])
+def test_a_classified_device_notice_says_what_kind_of_device_it_is(event, text, device):
+    assert device_notice(event) == Notice(NoticeCategory.DEVICE, NoticeTone.INFO, text, device)
+
+
+def test_a_settled_classified_arrival_and_removal_keep_their_device():
+    bus, scheduler = EventBus(), ManualScheduler()
+    source = FakeSource()
+    producer = SystemNoticeProducer(bus, scheduler, [source])
+    notices: list[Notice] = []
+    bus.subscribe(NOTICE_EVENT, notices.append)
+    producer.start()
+    phone = plug(name="Pixel 8", category=DeviceCategory.SMARTPHONE)
+
+    source.listener(phone)
+    scheduler.advance(DEVICE_SETTLE_MS)
+    source.listener(plug(DeviceChange.DISCONNECTED, name="Pixel 8", category=DeviceCategory.SMARTPHONE))
+    scheduler.advance(DEVICE_SETTLE_MS)
+    producer.shutdown()
+
+    assert [(notice.text, notice.device) for notice in notices] == [
+        ("Pixel 8 connected", NoticeDevice(DeviceCategory.SMARTPHONE, connected=True)),
+        ("Pixel 8 disconnected", NoticeDevice(DeviceCategory.SMARTPHONE, connected=False)),
+    ]
 
 
 def test_a_device_change_is_announced_once_it_settles(system):

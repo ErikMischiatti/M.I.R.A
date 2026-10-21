@@ -19,13 +19,17 @@ Two independent axes, both deliberately small:
 Only categories with a producer or a presentation today are listed; new ones
 are added when something emits them. `text` is optional and short: an
 embodiment that cannot show text, or a notice whose tone says enough, needs
-none.
+none. `device` is optional too: a DEVICE notice whose source could tell what
+kind of device it is about, and whether it arrived or left, says so, and an
+embodiment may show it (the notch draws a phone for a phone).
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import StrEnum
+
+from mira.domain.devices import DeviceCategory
 
 
 class NoticeCategory(StrEnum):
@@ -54,9 +58,19 @@ class NoticeTone(StrEnum):
 
 
 @dataclass(frozen=True, slots=True)
+class NoticeDevice:
+    """The device a DEVICE notice is about, when its source could tell."""
+
+    category: DeviceCategory
+    connected: bool
+    """True when it arrived, False when it left."""
+
+
+@dataclass(frozen=True, slots=True)
 class Notice:
     """One transient notice; a value, not a command."""
 
     category: NoticeCategory
     tone: NoticeTone = NoticeTone.INFO
     text: str | None = None
+    device: NoticeDevice | None = None
