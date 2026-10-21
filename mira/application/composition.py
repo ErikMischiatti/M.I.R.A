@@ -52,11 +52,13 @@ from mira.core.embodied_behavior import EmbodiedBehavior
 from mira.core.interaction_manager import InteractionManager
 from mira.core.listening import ListeningController
 from mira.core.audio_input import AudioInputService
+from mira.core.device_info import DeviceInfoService
 from mira.core.notice_producers import SystemNoticeProducer, TaskNoticeProducer
 from mira.core.task_activity import TaskActivity
 from mira.core.state_manager import StateManager
 from mira.domain.audio import AudioCaptureBackend
 from mira.domain.camera import CameraSource
+from mira.domain.device_info import DeviceInfoProvider
 from mira.domain.scheduler import Scheduler
 from mira.domain.system_events import SystemEventSource
 from mira.messaging.events import EventBus
@@ -92,12 +94,15 @@ class Application:
     tasks: TaskActivity
     task_notices: TaskNoticeProducer
     system_notices: SystemNoticeProducer
+    device_info: DeviceInfoService
     audio: AudioInputService
     listening: ListeningController
 
     def start(self) -> None:
         """Start the long-running resources: camera capture and system watching."""
         self.camera.start()
+        # Ready before the first device is announced.
+        self.device_info.start()
         self.system_notices.start()
 
     def shutdown(self) -> None:
@@ -111,8 +116,10 @@ class Application:
         # released before anything else.
         self.listening.shutdown()
         self.audio.shutdown()
-        # The system sources next: their pending timers are cancelled while
-        # the scheduler still accepts it.
+        # Device information and the system sources next: their pending
+        # timers are cancelled while the scheduler still accepts it, and a
+        # query still running answers to nobody.
+        self.device_info.shutdown()
         self.system_notices.shutdown()
         self.camera.shutdown()
         self.scheduler.shutdown()
@@ -124,6 +131,8 @@ def build_application(
     camera_source: CameraSource | None = None,
     system_event_sources: Sequence[SystemEventSource] = (),
     audio_backend: AudioCaptureBackend | None = None,
+    device_info_providers: Sequence[DeviceInfoProvider] = (),
+    device_monitor: DeviceMonitorConfiguration | None = None,
 ) -> Application:
     """Construct and wire the application graph.
 
@@ -145,6 +154,11 @@ def build_application(
     `system_event_sources` are the platform adapters whose changes become
     notices (`desktop_system_event_sources` for a Linux desktop); by default
     none, so a test or a headless runtime watches nothing.
+
+    `device_info_providers` learn more about connected devices
+    (`desktop_device_info_providers`); by default none, so no test runs a
+    command. `device_monitor` supplies their refresh interval and debug
+    logging; by default no refresh and no logging (not the environment).
 
     No side effects: nothing is started, no state transition is triggered, no
     timer is armed and no device is opened. The returned graph is idle until
@@ -180,6 +194,12 @@ def build_application(
     # Both only emit "notice"; how a notice looks is each embodiment's choice.
     task_notices = TaskNoticeProducer(event_bus)
     system_notices = SystemNoticeProducer(event_bus, scheduler, system_event_sources)
+    # Follows the devices the producer announces; asks providers off-thread.
+    device_monitor = DeviceMonitorConfiguration() if device_monitor is None else device_monitor
+    device_info = DeviceInfoService(
+        event_bus, scheduler, device_info_providers,
+        refresh_interval_s=device_monitor.refresh_s, debug=device_monitor.debug,
+    )
     # The runtime's one owner of the microphone; idle until someone leases it.
     audio = AudioInputService(event_bus, audio_backend)
     # The one decision whether MIRA listens; activation sources only ask.
@@ -196,6 +216,7 @@ def build_application(
         tasks=tasks,
         task_notices=task_notices,
         system_notices=system_notices,
+        device_info=device_info,
         audio=audio,
         listening=listening,
     )
@@ -229,3 +250,28 @@ def desktop_system_event_sources(
     else:
         print("[notices] USB device monitoring disabled (MIRA_DEVICE_MONITOR)")
     return [*sources, PipeWireAudioSource(), NetworkManagerConnectivitySource()]
+
+
+def desktop_device_info_providers(
+    device_monitor: DeviceMonitorConfiguration | None = None,
+) -> list[DeviceInfoProvider]:
+    """The device information providers for a Linux desktop; none elsewhere.
+
+    Android phones through adb, iPhones through UPower, USB storage through
+    sysfs. Each is asked only about devices it supports and reports a
+    missing tool as a problem, never an error; none is required. Off with
+    `MIRA_DEVICE_INFO=0` (by default the environment decides).
+    """
+
+    if not sys.platform.startswith("linux"):
+        return []
+    if device_monitor is None:
+        device_monitor = device_monitor_configuration_from_environment()
+    if not device_monitor.info:
+        print("[notices] device information disabled (MIRA_DEVICE_INFO)")
+        return []
+    from mira.adapters.adb import AdbDeviceInfoProvider
+    from mira.adapters.upower_phone import UPowerPhoneProvider
+    from mira.adapters.usb_storage import UsbStorageInfoProvider
+
+    return [AdbDeviceInfoProvider(), UPowerPhoneProvider(), UsbStorageInfoProvider()]

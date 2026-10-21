@@ -164,7 +164,7 @@ def test_main_connects_every_shutdown_before_running(monkeypatch, argv, surface)
     ]
     # One runtime: one set of system watchers and one audio backend, whichever
     # surface came first.
-    assert built_with == [["audio_backend", "system_event_sources"]]
+    assert built_with == [["audio_backend", "device_info_providers", "device_monitor", "system_event_sources"]]
 
 
 def test_a_forwarding_launcher_exits_without_starting_qt(monkeypatch, capsys):

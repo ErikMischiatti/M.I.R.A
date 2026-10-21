@@ -30,7 +30,12 @@ from PySide6.QtWidgets import QApplication
 
 from mira.application.audio import desktop_audio_backend
 from mira.application.voice import configure_listening
-from mira.application.composition import build_application, desktop_system_event_sources
+from mira.application.composition import (
+    build_application,
+    desktop_device_info_providers,
+    desktop_system_event_sources,
+)
+from mira.application.device_config import device_monitor_configuration_from_environment
 from mira.application.instance import (
     Forwarded,
     InstanceError,
@@ -151,8 +156,14 @@ def main(argv: list[str] | None = None, *, claim=claim_runtime):
     # `QtScheduler` binds whichever thread builds it as the serialized context,
     # and this is the thread that runs the event loop below. One runtime, so
     # one set of system watchers, whichever surfaces it shows.
+    # Read once: the USB source, the information providers and their
+    # service all follow the same settings.
+    device_monitor = device_monitor_configuration_from_environment()
     application = build_application(
-        system_event_sources=desktop_system_event_sources(), audio_backend=desktop_audio_backend()
+        system_event_sources=desktop_system_event_sources(device_monitor),
+        audio_backend=desktop_audio_backend(),
+        device_info_providers=desktop_device_info_providers(device_monitor),
+        device_monitor=device_monitor,
     )
 
     # The runtime's own preferences (not the notch's): how listening starts.
