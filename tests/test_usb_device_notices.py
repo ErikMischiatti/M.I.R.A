@@ -288,6 +288,39 @@ def test_closing_mira_while_a_device_is_settling_shows_nothing_and_releases_the_
     assert socket.fileno() == -1 and not runtime.source.watching
 
 
+def test_a_monitor_failure_pauses_notices_and_recovery_reports_what_changed(qt_application, tmp_path, capsys):
+    import errno
+
+    kernel = FakeKernel(tmp_path / "sys")
+    scheduler = ManualScheduler()
+    source = kernel.source(call_later=scheduler.call_later)
+    application = build_application(scheduler=scheduler, system_event_sources=[source])
+    notices = []
+    application.event_bus.subscribe("notice", notices.append)
+    application.start()
+    try:
+        class Broken:
+            def recv(self, size):
+                raise OSError(errno.EIO, "Input/output error")
+
+            def close(self):
+                pass
+
+        source._socket = Broken()
+        source.on_readable()
+        assert not source.watching
+        make_device(kernel.sysfs, PHONE, product="Stick", interfaces=[MASS_STORAGE])  # missed meanwhile
+
+        scheduler.advance(1000)          # reopened, resynchronised
+        scheduler.advance(DEVICE_SETTLE_MS)
+
+        assert source.watching and [notice.text for notice in notices] == ["Stick connected"]
+        assert "USB monitoring resumed" in capsys.readouterr().err
+    finally:
+        application.shutdown()
+        kernel.close()
+
+
 @pytest.mark.skipif(not sys.platform.startswith("linux"), reason="Linux desktop adapters")
 def test_with_monitoring_disabled_nothing_watches_usb(qt_application):
     from mira.adapters.linux_usb import LinuxUsbDeviceSource

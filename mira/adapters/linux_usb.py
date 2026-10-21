@@ -3,7 +3,9 @@
 The kernel announces every device it adds or removes on a netlink socket
 (`NETLINK_KOBJECT_UEVENT`, multicast group 1), readable without privileges.
 The socket is watched by the Qt event loop (`QSocketNotifier`), so nothing
-polls and no thread is started: a message is read only when one arrives.
+polls and no thread is started: a message is read only when one arrives, and
+at most `MAX_MESSAGES_PER_WAKE` per wake-up, so a burst (a dock with many
+devices) never holds the UI thread; the notifier fires again for the rest.
 
 Only whole USB devices are reported (``SUBSYSTEM=usb``,
 ``DEVTYPE=usb_device``), not their interfaces, and never hubs (root hubs
@@ -18,18 +20,19 @@ soon as it is configured — at ``add`` if sysfs already lists every interface
 of its configuration (``bNumInterfaces``) by the time the message is read,
 otherwise at its ``bind`` — so the classification sees all interfaces and a
 device is never announced twice. A device removed before it was configured
-announces nothing.
+announces nothing. Devices present at start are read once so their removal
+can be named, and announce nothing themselves; one still being configured
+at start is announced at its ``bind``, as it is arriving.
 
 **What is read.** From the device's sysfs directory: ``product``,
 ``manufacturer``, ``idVendor``/``idProduct``, ``bDeviceClass`` and, per
 interface, its class triple and description string. Never ``serial``: no
 persistent hardware identifier reaches an event or a log line. Everything is
 remembered on arrival, because the attributes are gone by the time the
-removal arrives. Devices present at start are read once so their removal can
-be named, and announce nothing themselves. An event's ``identity`` is the
-vendor id with the manufacturer and product strings — the same for a phone
-in every USB mode, unlike its product id — so the producer can tell a phone
-re-enumerating from another device plugged into the same port.
+removal arrives. An event's ``identity`` is the vendor id with the
+manufacturer and product strings — the same for a phone in every USB mode,
+unlike its product id — so the producer can tell a phone re-enumerating from
+another device plugged into the same port.
 
 **Classification** (`classify_usb_device`) uses only what the device
 declares, first match wins, and prefers UNKNOWN to a guess:
@@ -52,6 +55,18 @@ a phone in charge-only mode that exposes no phone function is unknown, named
 by its own strings. A webcam with a microphone is a camera and a headset
 with volume buttons is an audio device.
 
+**Failure and recovery.** A socket that cannot be opened at start makes the
+source unavailable. Once running, the socket is supervised like the PipeWire
+monitor: a persistent error closes it and it is reopened after a delay that
+doubles from `RETRY_INITIAL_MS` to `RETRY_MAX_MS` (back to the initial delay
+after `STABLE_MS` of stable running). Whenever messages may have been lost —
+the kernel dropped some (``ENOBUFS``) or the socket was reopened — the known
+devices are *resynchronised* with sysfs: devices that left are reported as
+disconnected, devices that arrived as connected, and devices still there
+say nothing. An exception while handling one message is logged and drops
+that message only. `shutdown` closes the socket, cancels any retry and stops
+delivery, even from inside a listener.
+
 No libudev or pyudev: the kernel's own message format is a few
 NUL-separated ``KEY=value`` strings.
 """
@@ -61,11 +76,12 @@ from __future__ import annotations
 import errno
 import socket
 import sys
+import time
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, replace
 from pathlib import Path
 
-from PySide6.QtCore import QSocketNotifier
+from PySide6.QtCore import QSocketNotifier, QTimer
 
 from mira.domain.devices import DeviceCategory
 from mira.domain.system_events import DeviceChange, DeviceEvent, DeviceKind, SystemEventListener
@@ -73,6 +89,13 @@ from mira.domain.system_events import DeviceChange, DeviceEvent, DeviceKind, Sys
 NETLINK_KOBJECT_UEVENT = 15
 KERNEL_GROUP = 1
 HUB_CLASS = 0x09
+
+# Asked for, not guaranteed: the kernel caps it at net.core.rmem_max.
+RECEIVE_BUFFER_BYTES = 1 << 20
+MAX_MESSAGES_PER_WAKE = 64
+RETRY_INITIAL_MS = 1000
+RETRY_MAX_MS = 30000
+STABLE_MS = 60000
 
 # USB-IF class codes (https://www.usb.org/defined-class-codes).
 AUDIO_CLASS = 0x01
@@ -133,8 +156,13 @@ _UNINFORMATIVE_DEVICE_CLASSES = frozenset({0x00, 0xEF, VENDOR_CLASS})
 
 def open_uevent_socket() -> socket.socket:
     sock = socket.socket(socket.AF_NETLINK, socket.SOCK_DGRAM, NETLINK_KOBJECT_UEVENT)
-    sock.bind((0, KERNEL_GROUP))
-    sock.setblocking(False)
+    try:
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, RECEIVE_BUFFER_BYTES)
+        sock.bind((0, KERNEL_GROUP))
+        sock.setblocking(False)
+    except OSError:
+        sock.close()
+        raise
     return sock
 
 
@@ -307,11 +335,27 @@ def classify_usb_device(
 # --- The source --------------------------------------------------------------------
 
 
+class _QtTimer:
+    """A cancellable single-shot timer on the Qt loop (the default retry timer)."""
+
+    def __init__(self, delay_ms: int, callback: Callable[[], None]):
+        self._timer = QTimer()
+        self._timer.setSingleShot(True)
+        self._timer.timeout.connect(callback)
+        self._timer.start(delay_ms)
+
+    def cancel(self) -> None:
+        self._timer.stop()
+
+
 class LinuxUsbDeviceSource:
     """A `SystemEventSource` for USB devices; see the module.
 
     With ``debug`` every arrival and removal is logged with its
     classification (``[devices] …``), never with a serial number.
+    ``call_later(ms, callback)`` schedules a reopen and returns a handle with
+    ``cancel()``; ``clock`` measures how long a socket ran, in seconds. Both
+    are seams for tests, as is ``open_socket``.
     """
 
     name = "USB devices (kernel uevents)"
@@ -322,33 +366,72 @@ class LinuxUsbDeviceSource:
         sysfs: Path = Path("/sys"),
         open_socket: Callable[[], socket.socket] = open_uevent_socket,
         debug: bool = False,
+        call_later=_QtTimer,
+        clock: Callable[[], float] = time.monotonic,
     ):
         self._sysfs = sysfs
         self._open_socket = open_socket
         self._debug = debug
+        self._call_later = call_later
+        self._clock = clock
         self._socket: socket.socket | None = None
         self._notifier: QSocketNotifier | None = None
         self._listener: SystemEventListener | None = None
+        self._running = False
         # devpath -> its arrival, for every non-hub device known to be present.
         self._present: dict[str, DeviceEvent] = {}
         # Added but not configured yet: announced at their bind.
         self._configuring: set[str] = set()
+        self._retry = None
+        self._delay_ms = RETRY_INITIAL_MS
+        self._opened_at = 0.0
+        # Identifies the one scheduled reopen, so a timer that fires late or
+        # twice can never open a second socket.
+        self._generation = 0
+        self.restarts = 0
 
     def start(self, listener: SystemEventListener) -> bool:
-        if self._socket is not None:
+        if self._running:
             return True
         try:
-            self._socket = self._open_socket()
+            sock = self._open_socket()
         except OSError:
             return False
-        self._listener = listener
-        self._present = self._present_devices()
-        self._configuring.clear()
-        self._notifier = QSocketNotifier(self._socket.fileno(), QSocketNotifier.Type.Read)
-        self._notifier.activated.connect(self.on_readable)
+        self._running, self._listener = True, listener
+        self._delay_ms = RETRY_INITIAL_MS
+        # Open first, then look: a device arriving in between is in both, and
+        # its `add` simply finds it already known.
+        self._attach(sock)
+        self._present, self._configuring = self._scan()
+        for devpath, arrival in self._present.items():
+            self._log(f"present at start {self._port(devpath)}: {arrival.category} {arrival.name!r}")
+        for devpath in self._configuring:
+            self._log(f"configuring at start {self._port(devpath)}; announced at its bind")
         return True
 
     def shutdown(self) -> None:
+        self._running = False
+        self._listener = None
+        self._generation += 1
+        if self._retry is not None:
+            self._retry.cancel()
+            self._retry = None
+        self._detach()
+        self._configuring.clear()
+
+    @property
+    def watching(self) -> bool:
+        return self._socket is not None
+
+    # --- The socket ----------------------------------------------------------------
+
+    def _attach(self, sock: socket.socket) -> None:
+        self._socket = sock
+        self._opened_at = self._clock()
+        self._notifier = QSocketNotifier(sock.fileno(), QSocketNotifier.Type.Read)
+        self._notifier.activated.connect(self.on_readable)
+
+    def _detach(self) -> None:
         if self._notifier is not None:
             self._notifier.setEnabled(False)
             self._notifier.activated.disconnect(self.on_readable)
@@ -357,20 +440,81 @@ class LinuxUsbDeviceSource:
         if self._socket is not None:
             self._socket.close()
             self._socket = None
-        self._listener = None
-        self._configuring.clear()
 
-    @property
-    def watching(self) -> bool:
-        return self._socket is not None
+    def on_readable(self, *_) -> None:
+        """Read what is queued, up to `MAX_MESSAGES_PER_WAKE`; called by the notifier."""
+        for _ in range(MAX_MESSAGES_PER_WAKE):
+            if self._socket is None:
+                return  # shut down or lost, possibly by a listener
+            try:
+                message = self._socket.recv(65536)
+            except (BlockingIOError, InterruptedError):
+                return
+            except OSError as error:
+                if error.errno == errno.ENOBUFS:
+                    # The kernel dropped messages: what they said is in sysfs.
+                    print("[notices] USB uevents were dropped; resynchronising with sysfs", file=sys.stderr)
+                    self.resync()
+                    continue
+                # Anything else will not go away by reading again: reopen
+                # later rather than spin on a readable but broken socket.
+                self._lost(error)
+                return
+            try:
+                event = self.event_for(parse_uevent(message))
+            except Exception as error:  # noqa: BLE001 - one bad message must not stop watching
+                print(f"[notices] USB uevent ignored ({type(error).__name__}: {error})", file=sys.stderr)
+                continue
+            self._deliver(event)
 
-    def _present_devices(self) -> dict[str, DeviceEvent]:
-        present = {}
+    def _deliver(self, event: DeviceEvent | None) -> None:
+        if event is None or self._listener is None:
+            return
+        try:
+            self._listener(event)
+        except Exception as error:  # noqa: BLE001 - a failing consumer must not stop watching
+            print(f"[notices] USB event not delivered ({type(error).__name__}: {error})", file=sys.stderr)
+
+    def _lost(self, error: OSError) -> None:
+        self._detach()
+        if not self._running or self._retry is not None:
+            return
+        if (self._clock() - self._opened_at) * 1000 >= STABLE_MS:
+            self._delay_ms = RETRY_INITIAL_MS
+        delay = self._delay_ms
+        self._delay_ms = min(self._delay_ms * 2, RETRY_MAX_MS)
+        print(f"[notices] USB uevent socket failed ({error}); USB monitoring paused, retrying in {delay / 1000:g} s",
+              file=sys.stderr)
+        self._generation += 1
+        generation = self._generation
+        self._retry = self._call_later(delay, lambda: self._reopen(generation))
+
+    def _reopen(self, generation: int) -> None:
+        if generation != self._generation or not self._running or self._socket is not None:
+            return
+        self._retry = None
+        try:
+            sock = self._open_socket()
+        except OSError as error:
+            self._opened_at = self._clock()  # it did not run: keep backing off
+            self._lost(error)
+            return
+        self.restarts += 1
+        self._attach(sock)
+        print("[notices] USB monitoring resumed", file=sys.stderr)
+        self.resync()
+
+    # --- Devices ---------------------------------------------------------------------
+
+    def _scan(self) -> tuple[dict[str, DeviceEvent], set[str]]:
+        """The devices sysfs lists now: configured ones, and ones still configuring."""
+        present: dict[str, DeviceEvent] = {}
+        configuring: set[str] = set()
         devices = self._sysfs / "bus" / "usb" / "devices"
         try:
             entries = list(devices.iterdir())
         except OSError:
-            return present
+            return present, configuring
         for entry in entries:
             if ":" in entry.name:
                 continue  # an interface, not a device
@@ -379,29 +523,32 @@ class LinuxUsbDeviceSource:
                 devpath = "/" + str(real.relative_to(self._sysfs.resolve()))
             except (OSError, ValueError):
                 continue
+            if is_hub(real):
+                continue
+            if not is_configured(real):
+                configuring.add(devpath)
+                continue
             event = self._arrival_from_sysfs(devpath)
             if event is not None:
                 present[devpath] = event
-        return present
+        return present, configuring
 
-    def on_readable(self, *_) -> None:
-        """Drain every queued message; called by the notifier."""
-        while self._socket is not None:
-            try:
-                message = self._socket.recv(65536)
-            except (BlockingIOError, InterruptedError):
-                return
-            except OSError as error:
-                if error.errno == errno.ENOBUFS:
-                    continue  # the kernel dropped messages; carry on with the next
-                # Anything else will not go away by reading again: stop
-                # watching rather than spin on a readable but broken socket.
-                print(f"[notices] USB uevent socket failed ({error}); USB notices stop", file=sys.stderr)
-                self.shutdown()
-                return
-            event = self.event_for(parse_uevent(message))
-            if event is not None and self._listener is not None:
-                self._listener(event)
+    def resync(self) -> None:
+        """Report what changed while messages may have been lost; see the module."""
+        present, configuring = self._scan()
+        events = []
+        for devpath, known in self._present.items():
+            now = present.get(devpath)
+            if now is None or now.identity != known.identity:
+                events.append(replace(known, change=DeviceChange.DISCONNECTED))
+        for devpath, now in present.items():
+            known = self._present.get(devpath)
+            if known is None or known.identity != now.identity:
+                events.append(now)
+        self._present, self._configuring = present, configuring
+        self._log(f"resynchronised: {len(events)} change(s), {len(configuring)} configuring")
+        for event in events:
+            self._deliver(event)
 
     def event_for(self, fields: dict[str, str] | None) -> DeviceEvent | None:
         if not fields or fields.get("SUBSYSTEM") != "usb" or fields.get("DEVTYPE") != "usb_device":

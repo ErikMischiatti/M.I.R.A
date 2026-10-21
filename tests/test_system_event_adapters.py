@@ -9,6 +9,7 @@ test.
 from __future__ import annotations
 
 import json
+import re
 import os
 import stat
 import sys
@@ -22,6 +23,10 @@ pytest.importorskip("PySide6")
 from PySide6.QtCore import QCoreApplication, QEvent, QEventLoop, QTimer
 
 from mira.adapters.linux_usb import (
+    MAX_MESSAGES_PER_WAKE,
+    RETRY_INITIAL_MS,
+    RETRY_MAX_MS,
+    STABLE_MS,
     LinuxUsbDeviceSource,
     UsbInterface,
     classify_usb_device,
@@ -54,6 +59,7 @@ from usb_doubles import (
     configure,
     make_device,
     uevent,
+    unplug,
 )
 
 
@@ -304,6 +310,19 @@ def test_a_serial_number_never_reaches_an_event_or_the_debug_log(kernel, capsys)
     assert "SERIAL0123456789" not in log and "SERIAL0123456789" not in repr(events)
     assert "[devices] connected 1-3: smartphone 'Google Pixel 8' (18d1:4ee7, interfaces 06/01/01)" in log
     assert "[devices] disconnected 1-3" in log
+
+
+def test_the_debug_log_lists_what_was_there_at_start(kernel, capsys):
+    make_device(kernel.sysfs, "/d/usb1/1-1", product="Keyboard", interfaces=[HID])
+    make_device(kernel.sysfs, "/d/usb1/1-2", product="Stick", configured=False)
+    source = kernel.source(debug=True)
+
+    source.start(lambda event: None)
+    source.shutdown()
+
+    log = capsys.readouterr().err
+    assert "[devices] present at start 1-1: input 'Keyboard'" in log
+    assert "[devices] configuring at start 1-2; announced at its bind" in log
 
 
 def test_without_debug_ordinary_device_events_are_not_logged(usb, capsys):
@@ -613,20 +632,101 @@ class BrokenSocket:
         self.closed = True
 
 
-def test_a_persistent_socket_error_stops_watching_instead_of_spinning(tmp_path, capsys):
+# --- USB: failure, recovery and lifecycle ------------------------------------------------
+
+
+@pytest.fixture
+def supervised(kernel):
+    """A source whose reopen timer and clock the test drives."""
+    scheduler, now = ManualScheduler(), [0.0]
+    source = kernel.source(call_later=scheduler.call_later, clock=lambda: now[0])
+    source.events, source.scheduler, source.now, source.kernel = [], scheduler, now, kernel
+    yield source
+    source.shutdown()
+
+
+def break_socket(source) -> BrokenSocket:
     import errno
 
     broken = BrokenSocket(OSError(errno.EBADF, "Bad file descriptor"))
-    source = LinuxUsbDeviceSource(sysfs=tmp_path, open_socket=lambda: broken)
-    source._socket, source._listener = broken, lambda event: None  # as `start` leaves it
-
+    source._socket = broken  # the socket goes bad under the running source
     source.on_readable()
-
-    assert broken.reads == 1 and broken.closed and not source.watching
-    assert "USB notices stop" in capsys.readouterr().err
+    return broken
 
 
-def test_dropped_kernel_messages_are_skipped_not_fatal(tmp_path):
+def test_a_persistent_socket_error_pauses_watching_and_reopens_it(supervised, capsys):
+    supervised.start(supervised.events.append)
+
+    broken = break_socket(supervised)
+
+    assert broken.reads == 1 and broken.closed and not supervised.watching
+    assert "USB monitoring paused, retrying in 1 s" in capsys.readouterr().err
+    supervised.scheduler.advance(RETRY_INITIAL_MS)
+    assert supervised.watching and supervised.restarts == 1
+    assert "USB monitoring resumed" in capsys.readouterr().err
+
+
+def test_reopening_backs_off_to_a_ceiling_and_never_opens_twice(supervised, capsys):
+    supervised.start(supervised.events.append)
+    supervised.kernel.fail_opens = 7
+    break_socket(supervised)
+
+    delays = []
+    while not supervised.watching:
+        delay = float(re.findall(r"retrying in (\d+) s", capsys.readouterr().err)[-1])
+        delays.append(delay)
+        supervised.scheduler.advance(int(delay * 1000))
+    opens = supervised.kernel.opens
+    supervised.scheduler.advance(10 * RETRY_MAX_MS)
+
+    assert delays == [1, 2, 4, 8, 16, 30, 30, 30]
+    assert supervised.kernel.opens == opens and supervised.restarts == 1
+
+
+def test_the_backoff_starts_again_after_a_stable_run(supervised, capsys):
+    supervised.start(supervised.events.append)
+    supervised.kernel.fail_opens = 1
+    break_socket(supervised)
+    supervised.scheduler.advance(RETRY_INITIAL_MS)      # fails: 2 s next
+    supervised.scheduler.advance(2 * RETRY_INITIAL_MS)  # reopens
+    assert supervised.watching
+    supervised.now[0] += STABLE_MS / 1000
+    capsys.readouterr()
+
+    break_socket(supervised)
+
+    assert "retrying in 1 s" in capsys.readouterr().err
+
+
+def test_shutdown_while_paused_cancels_the_reopen(supervised):
+    supervised.start(supervised.events.append)
+    break_socket(supervised)
+    opens = supervised.kernel.opens
+
+    supervised.shutdown()
+    supervised.scheduler.advance(10 * RETRY_MAX_MS)
+
+    assert supervised.kernel.opens == opens and not supervised.watching
+
+
+def test_changes_missed_while_paused_are_reported_once_on_reopening(supervised):
+    sysfs = supervised.kernel.sysfs
+    make_device(sysfs, "/d/usb1/1-1", product="Keyboard", vendor="046d", interfaces=[HID])
+    make_device(sysfs, "/d/usb1/1-2", product="Mouse", vendor="046d", interfaces=[HID])
+    supervised.start(supervised.events.append)
+    break_socket(supervised)
+
+    unplug(sysfs, "/d/usb1/1-1")
+    make_device(sysfs, "/d/usb1/1-3", product="Stick", vendor="0781", interfaces=[MASS_STORAGE])
+    supervised.scheduler.advance(RETRY_INITIAL_MS)
+
+    assert [(event.change, event.name) for event in supervised.events] == [
+        (DeviceChange.DISCONNECTED, "Keyboard"),
+        (DeviceChange.CONNECTED, "Stick"),
+    ]
+
+
+def test_dropped_kernel_messages_are_recovered_from_sysfs(usb, capsys):
     import errno
 
     class Overflowing(BrokenSocket):
@@ -636,10 +736,158 @@ def test_dropped_kernel_messages_are_skipped_not_fatal(tmp_path):
                 raise OSError(errno.ENOBUFS, "No buffer space available")
             raise BlockingIOError
 
-    sock = Overflowing(None)
-    source = LinuxUsbDeviceSource(sysfs=tmp_path, open_socket=lambda: sock)
-    source._socket, source._listener = sock, lambda event: None
+    make_device(usb.sysfs, "/d/usb1/1-1", product="Keyboard", vendor="046d", interfaces=[HID])
+    make_device(usb.sysfs, "/d/usb1/1-2", product="Mouse", vendor="046d", interfaces=[HID])
+    usb.start(usb.events.append)
+    # Their messages are among the dropped ones.
+    unplug(usb.sysfs, "/d/usb1/1-1")
+    make_device(usb.sysfs, "/d/usb1/1-3", product="Stick", vendor="0781", interfaces=[MASS_STORAGE])
+    usb._socket = Overflowing(None)
 
-    source.on_readable()
+    usb.on_readable()
 
-    assert sock.reads == 2 and source.watching
+    assert [(event.change, event.name) for event in usb.events] == [
+        (DeviceChange.DISCONNECTED, "Keyboard"),
+        (DeviceChange.CONNECTED, "Stick"),
+    ]
+    assert usb.watching and "resynchronising" in capsys.readouterr().err
+
+
+def test_a_device_swapped_for_another_while_unwatched_both_left_and_arrived(usb):
+    make_device(usb.sysfs, "/d/usb1/1-1", product="Keyboard", vendor="046d", interfaces=[HID])
+    usb.start(usb.events.append)
+    unplug(usb.sysfs, "/d/usb1/1-1")
+    make_device(usb.sysfs, "/d/usb1/1-1", product="Stick", vendor="0781", interfaces=[MASS_STORAGE])
+
+    usb.resync()
+
+    assert [(event.change, event.name) for event in usb.events] == [
+        (DeviceChange.DISCONNECTED, "Keyboard"),
+        (DeviceChange.CONNECTED, "Stick"),
+    ]
+
+
+def test_a_burst_is_read_in_bounded_slices(usb, monkeypatch):
+    import mira.adapters.linux_usb as linux_usb
+
+    assert MAX_MESSAGES_PER_WAKE <= 100
+    monkeypatch.setattr(linux_usb, "MAX_MESSAGES_PER_WAKE", 4)  # a socket pair queues only so many
+    usb.start(usb.events.append)
+    read = []
+    usb.event_for = read.append  # count the messages handled, nothing else
+    usb.kernel.send(*(uevent("change", f"/d/usb1/1-{n}") for n in range(6)))
+
+    usb.on_readable()
+    assert len(read) == 4  # the notifier fires again for the rest
+    usb.on_readable()
+    assert len(read) == 6
+
+
+def test_a_failing_listener_does_not_lose_the_next_event(usb, capsys):
+    delivered = []
+
+    def failing(event):
+        delivered.append(event)
+        raise RuntimeError("boom")
+
+    usb.start(failing)
+    for port in ("1-1", "1-2"):
+        make_device(usb.sysfs, f"/d/usb1/{port}", product=port, interfaces=[HID], listed=False)
+
+    deliver(usb, uevent("add", "/d/usb1/1-1"), uevent("add", "/d/usb1/1-2"))
+
+    assert [event.name for event in delivered] == ["1-1", "1-2"] and usb.watching
+    assert "USB event not delivered (RuntimeError: boom)" in capsys.readouterr().err
+
+
+def test_a_message_that_cannot_be_handled_is_dropped_alone(usb, monkeypatch, capsys):
+    import mira.adapters.linux_usb as linux_usb
+
+    usb.start(usb.events.append)
+    device = make_device(usb.sysfs, "/d/usb1/1-2", product="Mouse", interfaces=[HID], configured=False,
+                         listed=False)
+    real = linux_usb.read_device
+    failures = [ValueError("corrupt")]
+
+    def flaky(device):
+        if failures:
+            raise failures.pop()
+        return real(device)
+
+    monkeypatch.setattr(linux_usb, "read_device", flaky)
+    deliver(usb, uevent("add", "/d/usb1/1-2"))     # waits for its configuration
+    configure(device, [HID])
+    deliver(usb, uevent("bind", "/d/usb1/1-2"),    # reading it fails: dropped
+            uevent("remove", "/d/usb1/1-2"),
+            uevent("add", "/d/usb1/1-2"))          # the next message is handled
+
+    assert [event.change for event in usb.events] == [DeviceChange.CONNECTED]
+    assert "USB uevent ignored (ValueError: corrupt)" in capsys.readouterr().err
+
+
+def test_shutdown_from_inside_a_listener_stops_delivery_at_once(usb):
+    def quitting(event):
+        usb.events.append(event)
+        usb.shutdown()
+
+    usb.start(quitting)
+    for port in ("1-1", "1-2"):
+        make_device(usb.sysfs, f"/d/usb1/{port}", product=port, interfaces=[HID], listed=False)
+
+    deliver(usb, uevent("add", "/d/usb1/1-1"), uevent("add", "/d/usb1/1-2"))
+
+    assert [event.name for event in usb.events] == ["1-1"] and not usb.watching
+
+
+def test_a_device_still_configuring_at_start_is_announced_at_its_bind(usb):
+    device = make_device(usb.sysfs, "/d/usb1/1-3", product="Stick", configured=False)
+    usb.start(usb.events.append)
+    assert usb.events == []
+
+    configure(device, [MASS_STORAGE])
+    deliver(usb, uevent("bind", "/d/usb1/1-3"))
+
+    assert [(event.change, event.category) for event in usb.events] == [
+        (DeviceChange.CONNECTED, DeviceCategory.STORAGE),
+    ]
+
+
+def test_a_device_gone_before_it_could_be_read_announces_nothing(usb):
+    usb.start(usb.events.append)
+
+    deliver(usb, uevent("add", "/d/usb1/1-3"), uevent("remove", "/d/usb1/1-3"), uevent("bind", "/d/usb1/1-3"))
+
+    assert usb.events == []
+
+
+def test_repeated_start_and_shutdown_releases_every_socket(kernel):
+    source = kernel.source()
+
+    for _ in range(5):
+        assert source.start(lambda event: None)
+        assert source.start(lambda event: None)  # idempotent: no second socket
+        source.shutdown()
+        source.shutdown()
+
+    assert kernel.opens == 5
+    assert all(ours.fileno() == -1 for _, ours in kernel._pairs)
+    assert source._notifier is None and not source.watching
+
+
+@pytest.mark.skipif(not sys.platform.startswith("linux"), reason="netlink is Linux only")
+def test_the_real_uevent_socket_opens_and_closes_without_leaking(tmp_path):
+    from mira.adapters.linux_usb import open_uevent_socket
+
+    try:
+        open_uevent_socket().close()
+    except OSError as error:
+        pytest.skip(f"no netlink here: {error}")
+    descriptors = len(os.listdir("/proc/self/fd"))
+    source = LinuxUsbDeviceSource(sysfs=tmp_path)
+
+    for _ in range(20):
+        assert source.start(lambda event: None)
+        source.shutdown()
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+
+    assert len(os.listdir("/proc/self/fd")) == descriptors
