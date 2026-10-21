@@ -195,6 +195,7 @@ Tests are grouped by boundary rather than by file:
 | Actions | `test_action_executor.py`, `test_action_execution_policy.py`, `test_action_contract_consistency.py`, `test_desktop_actions.py` |
 | Embodiment | `test_embodiment_*.py`, `test_micro_motion*.py`, `test_face_*.py`, `test_expression_store.py` |
 | Camera | `test_camera_*.py`, `test_opencv_camera.py` |
+| System events and notices | `test_system_event_adapters.py`, `test_notice_producers.py`, `test_usb_device_notices.py` |
 | Memory and messaging | `test_memory_contracts.py`, `test_messaging_contracts.py` |
 
 Shared test doubles live in `tests/doubles.py` (covered by
@@ -211,6 +212,32 @@ with `MIRA_CAMERA=1`, the debug drawer reports `active` with a sane size,
 quitting releases the device (another application can open it afterwards), and
 an invalid `MIRA_CAMERA_DEVICE` or a camera held by another application reports
 `unavailable` while the rest of the app keeps working.
+
+USB device notices need a manual check after changes to the USB source,
+the producers or the notch's notice path. The tests use a fake kernel
+(`tests/usb_doubles.py`: a sysfs tree and a socket pair), so only a real
+plug proves the kernel side:
+
+```bash
+MIRA_DEVICE_MONITOR_DEBUG=1 venv/bin/python -m mira.main --notch
+```
+
+Quit any running MIRA first: a second launch only forwards to the running
+runtime, whose environment is the one that counts.
+
+1. Plug in a smartphone (unlocked, "File transfer" selected). After under a
+   second the notch expands once, shows the phone symbol and "<name>
+   connected", and the eyes smile briefly; stderr shows one
+   `[devices] connected …: smartphone …` line.
+2. After `notice_duration_ms` (4 s by default) the notch returns to how it was.
+3. Unplug it: "<name> disconnected" with the same symbol, no smile.
+4. Repeat with a USB stick (storage symbol), and plug and unplug quickly:
+   nothing is shown.
+5. `MIRA_DEVICE_MONITOR=0`: startup logs that USB monitoring is disabled
+   and plugging shows nothing.
+
+Without hardware, MIRA-TUNE's *Phone connected*, *Phone disconnected* and
+*Storage connected* previews go through the same presenter and eye path.
 
 ## Dependencies
 

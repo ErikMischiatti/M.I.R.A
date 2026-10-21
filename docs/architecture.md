@@ -516,7 +516,7 @@ adapters (mira/adapters)            SystemNoticeProducer       │              
 | action completed | real | task / success |
 | action failed | real | task / error, "Failed" |
 | action needs confirmation | real | task / warning |
-| USB device connected / disconnected | real (kernel uevents) | device / info |
+| USB device connected / disconnected | real (kernel uevents) | device / info, with the device's kind (see "USB device notices") |
 | audio output or input connected / disconnected | real (PipeWire) | device / info |
 | default audio input or output changed | real (PipeWire) | device / info |
 | network lost / limited / back online | real (NetworkManager) | connectivity / warning, success |
@@ -525,8 +525,8 @@ adapters (mira/adapters)            SystemNoticeProducer       │              
 - **Adapters** (`mira/adapters`) translate one facility into semantic events
   (`mira/domain/system_events.py`) and know nothing about notices. All are
   event-driven on the Qt loop: the kernel's `NETLINK_KOBJECT_UEVENT` socket
-  under a `QSocketNotifier` (whole USB devices only, never hubs, named from
-  sysfs); one `pw-dump --monitor` child process (audio nodes and the
+  under a `QSocketNotifier` (whole USB devices only, never hubs, named and
+  classified from sysfs once configured); one `pw-dump --monitor` child process (audio nodes and the
   effective defaults; the first dump is the baseline); NetworkManager's
   `Connectivity` property over QtDBus. A missing facility makes the source
   report itself unavailable at start; none is required.
@@ -559,6 +559,72 @@ ordinary device events are not.
   another runtime passes other sources or none, and renders `NotchPresentation`
   and cues its own way.
 
+### USB device notices
+
+```text
+kernel uevent (add … bind / remove)
+  └▶ LinuxUsbDeviceSource (adapters)   one event per physical device, read from sysfs:
+       │                                name, manufacturer, DeviceCategory; never the serial
+       ▼ DeviceEvent(kind=USB, change, name, key=devpath, category, manufacturer)
+  SystemNoticeProducer (core)          settle 800 ms · bounce · repeat 3 s
+       ▼ "notice": Notice(DEVICE, INFO, "Pixel 8 connected", NoticeDevice(SMARTPHONE, connected))
+  DesktopShell ─▶ deliver_notice ─┬▶ NotchPresenter: expands (device switch), phone symbol + label,
+                                  │                  back after notice_duration_ms
+                                  └▶ FaceController: GREETING cue on arrival only
+```
+
+- **One connection, one event.** A composite device produces one uevent per
+  interface plus its own `add` and `bind`; only the device's are read. The
+  kernel sends `add` before it configures the device, so the adapter
+  announces when the device is configured: at `add` if sysfs already lists
+  every interface of the active configuration (`bNumInterfaces`), otherwise
+  at `bind`. A device removed before that announces nothing, and a device is
+  never announced twice. The producer's settle and repeat rules then absorb
+  re-enumeration and flaky cables.
+- **Identification.** `product` and `manufacturer` strings, `idVendor` and
+  `idProduct` (debug log only) and each interface's class triple and
+  description; nothing else, and never `serial`. `key` is the sysfs devpath,
+  stable per port, used only to correlate arrival and removal. A device that
+  names itself nothing is called by its category ("USB storage connected"),
+  never by a guess.
+- **Classification** (`classify_usb_device`), from the device's own
+  descriptors, first match wins: SMARTPHONE (Android ADB/fastboot interface
+  `ff/42/01`/`ff/42/03`, an interface named "MTP", or a product named
+  "iPhone"), STORAGE (`08`), CAMERA (`0e` video, `06` still image/PTP), AUDIO
+  (`01`), INPUT (`03`), else UNKNOWN. `DeviceCategory` is domain vocabulary
+  (`mira/domain/devices.py`); the USB class rules stay in the adapter.
+- **Presentation.** `Notice.device` (`NoticeDevice`: category, connected)
+  lets each embodiment show the kind of device. The notch maps it to a
+  symbol — phone, USB stick, camera, headphones, keyboard, USB trident for
+  unknown — and keeps the generic device symbol for unclassified notices
+  (audio routes). A tone other than INFO still decides the symbol. The eyes
+  play `EmbodimentCue.GREETING` (the success smile, 0.6 s, lowest priority:
+  it never interrupts another cue) for an arrival; a removal gets none.
+- **Threading.** The uevent socket is read by a `QSocketNotifier` on the Qt
+  main thread and every step after it is synchronous on that thread, so
+  widgets are only touched from the UI thread and nothing blocks: the sysfs
+  reads are a handful of small virtual files per arrival.
+- **Configuration.** `MIRA_DEVICE_MONITOR=0` leaves the USB source out of
+  `desktop_system_event_sources` (audio and connectivity are unaffected);
+  `MIRA_DEVICE_MONITOR_DEBUG=1` logs each arrival and removal with its
+  classification. Expansion and duration are the notch's existing
+  `automatic_expansion.device` and `notice_duration_ms`.
+- **Limitations.** Classification is only as good as the descriptors: a
+  phone in PTP mode reads as a camera, a phone in charge-only mode as
+  unknown (or by its strings), and any device exposing ADB or MTP (a media
+  player, a development board) as a smartphone. A phone switching USB mode
+  re-enumerates at the same port; when that happens inside the settle window
+  it is a bounce and says nothing, so the new mode is not announced. A notice
+  still replaces the content of an open notch, the listening waveform
+  included, for its duration (no priority or queue). Names come from the
+  device's own strings; no vendor database is consulted.
+- **Next.** M2 — device information providers behind their own source or
+  enrichment step (ADB for model and battery, `usbmuxd` for iPhones, UPower,
+  storage capacity), adding fields to `NoticeDevice`/`DeviceEvent` rather
+  than new paths; nothing is shown that was not read. M3 — notice priority
+  and queuing in `NotchPresenter` (so a device never covers listening),
+  device-specific cues, several devices at once, user-configurable reactions.
+
 **Desktop application notifications (investigated, not implemented).**
 GNOME's notification server (gnome-shell, `org.freedesktop.Notifications` on
 the session bus) can be observed passively: a D-Bus monitor connection
@@ -576,9 +642,9 @@ allow-list/filter policy in `mira.core` deciding which become notices.
 
 | | |
 |---|---|
-| Implemented | one runtime per user with surface requests; lazy main window and notch; all-workspace presence on X11; readable expanded content by default; integrated notch controls; USB, audio-topology and connectivity notices with supervised PipeWire monitoring; per-category expansion; SUCCESS/WARNING/ERROR cues and the TASK_RUNNING condition; keyboard listening activation; the runtime's microphone capture with real level and waveform in the notch |
+| Implemented | one runtime per user with surface requests; lazy main window and notch; all-workspace presence on X11; readable expanded content by default; integrated notch controls; USB, audio-topology and connectivity notices with supervised PipeWire monitoring; USB device classification with per-kind notch symbols and an arrival greeting; per-category expansion; SUCCESS/WARNING/ERROR cues and the TASK_RUNNING condition; keyboard listening activation; the runtime's microphone capture with real level and waveform in the notch |
 | Prepared | `SystemEventSource` port; `EyeShape` in `EmbodimentFrame`; run ids for asynchronous actions; `ListeningActivationMode.WAKE_WORD`, activation sources and capture leases for a wake-word detector; `AudioFrame` for speech processing |
-| Future | wake word; voice activity detection; speech-to-text and text-to-speech; asynchronous (long) actions; desktop-notification source with a filter policy; Wayland workspace presence |
+| Future | device information providers (ADB, iPhone, UPower, storage capacity); notice priority and queuing; wake word; voice activity detection; speech-to-text and text-to-speech; asynchronous (long) actions; desktop-notification source with a filter policy; Wayland workspace presence |
 
 ### Audio input and listening
 

@@ -41,7 +41,9 @@ Main modules:
     `CameraSettings`, `CameraStatus` (`mira/domain/camera.py`); no OpenCV or
     numpy types
   - `UserInput`, `IntentResult`, `BrainResponse` (`mira/domain/models.py`)
-  - notices: `Notice`, `NoticeCategory`, `NoticeTone` (`mira/domain/notice.py`)
+  - notices: `Notice`, `NoticeCategory`, `NoticeTone`, `NoticeDevice`
+    (`mira/domain/notice.py`)
+  - device kinds: `DeviceCategory` (`mira/domain/devices.py`)
   - system changes: `DeviceEvent`, `ConnectivityEvent`, the
     `SystemEventSource` port (`mira/domain/system_events.py`)
   - voice: detector ports, `ListeningSession`, `Utterance`
@@ -61,7 +63,8 @@ Main modules:
   - `mira/adapters/sherpa_voice.py`: local keyword spotter and Silero VAD
     (optional `voice` extra and model files)
   - Linux system sources, all event-driven on the Qt loop and optional:
-    `LinuxUsbDeviceSource` (kernel uevents), `PipeWireAudioSource`
+    `LinuxUsbDeviceSource` (kernel uevents; classifies devices from sysfs,
+    never reads serials), `PipeWireAudioSource`
     (`pw-dump --monitor`), `NetworkManagerConnectivitySource` (QtDBus)
   - may import `mira.domain`; never imported by the domain
 

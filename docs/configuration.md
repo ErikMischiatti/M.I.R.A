@@ -26,6 +26,8 @@ environment.
 | `MIRA_CAMERA_WIDTH` | device default | Requested frame width in pixels. Non-integer or non-positive values are ignored. |
 | `MIRA_CAMERA_HEIGHT` | device default | Requested frame height in pixels. Non-integer or non-positive values are ignored. |
 | `MIRA_CAMERA_FPS` | device default | Requested frame rate. Non-numeric, non-finite or non-positive values are ignored. |
+| `MIRA_DEVICE_MONITOR` | unset (enabled) | `0`, `false`, `no` or `off` (case-insensitive) stops watching USB devices; anything else keeps it on. Audio-device and connectivity notices are not affected. |
+| `MIRA_DEVICE_MONITOR_DEBUG` | unset (disabled) | `1`, `true`, `yes` or `on` logs every USB arrival and removal to stderr (`[devices] …`) with its category, vendor:product id and interface classes. Serial numbers are never read. |
 | `MIRA_NOTCH_CONFIG` | `$XDG_CONFIG_HOME/mira/notch.json` | Notch configuration file used by `MIRA`, `MIRA-NOTCH` and `MIRA-TUNE`. `--config PATH` overrides it for the notch tools. |
 
 The four `MIRA_OLLAMA_*`/`MIRA_LLM_*` variables only matter in LLM mode, and
@@ -187,7 +189,13 @@ devices (PipeWire through `pw-dump`) and connectivity (NetworkManager over
 D-Bus); a facility that is missing is reported once at startup
 (`[notices] … unavailable`) and simply produces nothing. Short-lived changes
 are suppressed: a device that bounces, a repeated announcement, or a network
-drop shorter than three seconds says nothing.
+drop shorter than three seconds says nothing. A USB device is announced once
+per connection with its name and what kind of device it is — smartphone,
+storage, camera, audio, input or unknown, read from the device's own
+descriptors — and the notch shows the matching symbol; MIRA's eyes smile
+briefly when one arrives. How long it shows is `notice_duration_ms`, and
+whether it expands the notch is `automatic_expansion.device`.
+`MIRA_DEVICE_MONITOR=0` turns USB watching off.
 
 **Older versions.** Version 4 is version 3 with the readable floor above.
 Older files still load, in memory, and are made readable without tuning;
