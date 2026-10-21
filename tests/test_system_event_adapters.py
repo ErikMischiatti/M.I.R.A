@@ -33,6 +33,7 @@ from mira.adapters.linux_usb import (
 from mira.adapters.networkmanager import NetworkManagerConnectivitySource, connectivity_from_nm
 from mira.adapters.pipewire_audio import JsonArrayStream, PipeWireAudioSource, PipeWireTracker
 from mira.application.composition import build_application, desktop_system_event_sources
+from mira.application.device_config import DeviceMonitorConfiguration
 from mira.domain.devices import DeviceCategory
 from mira.domain.scheduler import ManualScheduler
 from mira.domain.system_events import Connectivity, ConnectivityEvent, DeviceChange, DeviceEvent, DeviceKind
@@ -523,6 +524,24 @@ def test_a_linux_desktop_gets_usb_audio_and_connectivity_watchers():
     kinds = {type(source).__name__ for source in desktop_system_event_sources()}
 
     assert kinds == {"LinuxUsbDeviceSource", "PipeWireAudioSource", "NetworkManagerConnectivitySource"}
+
+
+@pytest.mark.skipif(not sys.platform.startswith("linux"), reason="Linux desktop adapters")
+def test_usb_watching_can_be_turned_off_and_made_verbose(capsys):
+    off = desktop_system_event_sources(DeviceMonitorConfiguration(enabled=False))
+    verbose = desktop_system_event_sources(DeviceMonitorConfiguration(debug=True))
+
+    assert {type(source).__name__ for source in off} == {"PipeWireAudioSource", "NetworkManagerConnectivitySource"}
+    assert "USB device monitoring disabled" in capsys.readouterr().out
+    usb = [source for source in verbose if isinstance(source, LinuxUsbDeviceSource)]
+    assert len(usb) == 1 and usb[0]._debug
+
+
+@pytest.mark.skipif(not sys.platform.startswith("linux"), reason="Linux desktop adapters")
+def test_the_environment_decides_usb_watching_by_default(monkeypatch):
+    monkeypatch.setenv("MIRA_DEVICE_MONITOR", "0")
+
+    assert not any(isinstance(source, LinuxUsbDeviceSource) for source in desktop_system_event_sources())
 
 
 def test_the_application_starts_and_stops_its_sources():

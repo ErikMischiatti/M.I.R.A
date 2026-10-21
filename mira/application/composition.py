@@ -43,6 +43,7 @@ from dataclasses import dataclass
 
 from mira.adapters.opencv_camera import OpenCVCameraSource
 from mira.application.camera_config import camera_configuration_from_environment
+from mira.application.device_config import DeviceMonitorConfiguration, device_monitor_configuration_from_environment
 from mira.application.scheduling import build_scheduler
 from mira.core.activity_authority import ActivityAuthority
 from mira.core.brain import Brain
@@ -200,13 +201,18 @@ def build_application(
     )
 
 
-def desktop_system_event_sources() -> list[SystemEventSource]:
+def desktop_system_event_sources(
+    device_monitor: DeviceMonitorConfiguration | None = None,
+) -> list[SystemEventSource]:
     """The system watchers for a Linux desktop; none elsewhere.
 
     USB arrivals (kernel uevents), audio devices (PipeWire) and network
     connectivity (NetworkManager). Each one that cannot run here reports
     itself unavailable when started; none is required. Built only when asked
     for: they need a running Qt event loop.
+
+    `device_monitor` decides whether USB devices are watched, and with debug
+    logging; by default the `MIRA_DEVICE_MONITOR*` environment does.
     """
 
     if not sys.platform.startswith("linux"):
@@ -215,4 +221,11 @@ def desktop_system_event_sources() -> list[SystemEventSource]:
     from mira.adapters.networkmanager import NetworkManagerConnectivitySource
     from mira.adapters.pipewire_audio import PipeWireAudioSource
 
-    return [LinuxUsbDeviceSource(), PipeWireAudioSource(), NetworkManagerConnectivitySource()]
+    if device_monitor is None:
+        device_monitor = device_monitor_configuration_from_environment()
+    sources: list[SystemEventSource] = []
+    if device_monitor.enabled:
+        sources.append(LinuxUsbDeviceSource(debug=device_monitor.debug))
+    else:
+        print("[notices] USB device monitoring disabled (MIRA_DEVICE_MONITOR)")
+    return [*sources, PipeWireAudioSource(), NetworkManagerConnectivitySource()]
