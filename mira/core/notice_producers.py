@@ -16,6 +16,18 @@ Noise is the producers' problem, not the adapters' and not the notch's:
   the pending one, and a connect and a disconnect that cancel out (a USB
   device re-enumerating, a flaky cable) announce nothing. A device that
   appears and then becomes the default announces only its arrival.
+- **A USB device that leaves may be coming straight back.** A phone that
+  switches USB mode (charging, file transfer, PTP, debugging) re-enumerates:
+  the kernel removes it and adds it again, typically a second or two later.
+  So a USB disconnect waits `USB_REENUMERATION_MS` instead, and an arrival
+  of the *same* device (same `DeviceEvent.identity`, in the same port or
+  another one) within that window is a mode switch, not a reconnect: it
+  announces nothing — unless the device is now identifiable where it was not
+  before (its category became known, or changed), which is announced as its
+  arrival. A *different* device in the same port means the first one really
+  left: its disconnect is announced at once, then the newcomer settles as
+  usual. A real unplug is therefore announced `USB_REENUMERATION_MS` after it
+  happens.
 - **Repeats are dropped**: the same change of the same device announced
   again within `DEVICE_REPEAT_MS`, with no other change of it in between
   (two sources seeing one event, a driver re-announcing), is not announced
@@ -34,6 +46,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 
 from mira.actions.action_models import ActionResult
+from mira.domain.devices import DeviceCategory
 from mira.domain.notice import Notice, NoticeCategory, NoticeTone
 from mira.domain.scheduler import Scheduler, TimerHandle
 from mira.domain.system_events import (
@@ -52,6 +65,7 @@ from mira.messaging.events import EventBus
 NOTICE_EVENT = "notice"
 
 DEVICE_SETTLE_MS = 800
+USB_REENUMERATION_MS = 2500
 DEVICE_REPEAT_MS = 3000
 CONNECTIVITY_SETTLE_MS = 3000
 
@@ -165,21 +179,51 @@ class SystemNoticeProducer:
     def _device(self, event: DeviceEvent) -> None:
         slot = (event.kind, event.key)
         pending = self._pending.pop(slot, None)
+        if pending is None and event.change is DeviceChange.CONNECTED:
+            pending = self._departure_of(event)
         if pending is not None:
             previous, timer = pending
             timer.cancel()
-            if {previous.change, event.change} == {DeviceChange.CONNECTED, DeviceChange.DISCONNECTED}:
-                return  # a bounce: nothing changed for the user
+            if previous.change is DeviceChange.CONNECTED and event.change is DeviceChange.DISCONNECTED:
+                return  # a bounce: it never settled, so nothing changed for the user
+            if previous.change is DeviceChange.DISCONNECTED and event.change is DeviceChange.CONNECTED:
+                if previous.identity != event.identity:
+                    self._announce(previous)  # another device: the first one really left
+                elif self._identified_anew(previous, event):
+                    # Back as something it was not before: news, not a repeat.
+                    self._announced.discard((event.kind, DeviceChange.CONNECTED, event.key))
+                else:
+                    return  # re-enumerated (a mode switch) or replugged at once
             if previous.change is DeviceChange.CONNECTED and event.change is DeviceChange.DEFAULT_CHANGED:
                 event = previous  # its arrival says enough
-        timer = self._scheduler.call_later(DEVICE_SETTLE_MS, lambda: self._settled(slot))
+        delay = DEVICE_SETTLE_MS
+        if event.change is DeviceChange.DISCONNECTED and event.kind is DeviceKind.USB:
+            delay = USB_REENUMERATION_MS
+        timer = self._scheduler.call_later(delay, lambda: self._settled(slot))
         self._pending[slot] = (event, timer)
+
+    def _departure_of(self, arrival: DeviceEvent) -> tuple[DeviceEvent, TimerHandle] | None:
+        """The pending departure of the same device from another port, taken out."""
+        if arrival.identity is None:
+            return None
+        for slot, (pending, timer) in self._pending.items():
+            if pending.kind is arrival.kind and pending.change is DeviceChange.DISCONNECTED \
+                    and pending.identity == arrival.identity:
+                del self._pending[slot]
+                return pending, timer
+        return None
+
+    @staticmethod
+    def _identified_anew(before: DeviceEvent, after: DeviceEvent) -> bool:
+        return after.category not in (None, DeviceCategory.UNKNOWN) and after.category != before.category
 
     def _settled(self, slot: tuple[DeviceKind, str]) -> None:
         pending = self._pending.pop(slot, None)
         if pending is None or not self._running:
             return
-        event = pending[0]
+        self._announce(pending[0])
+
+    def _announce(self, event: DeviceEvent) -> None:
         identity = (event.kind, event.change, event.key)
         if identity in self._announced:
             return  # repeated within DEVICE_REPEAT_MS

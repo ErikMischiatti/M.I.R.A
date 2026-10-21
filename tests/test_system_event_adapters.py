@@ -212,7 +212,7 @@ def test_a_device_not_yet_configured_is_announced_at_its_bind_with_every_interfa
 
     assert usb.events == [DeviceEvent(
         DeviceKind.USB, DeviceChange.CONNECTED, "Google Pixel 8", devpath,
-        category=DeviceCategory.SMARTPHONE, manufacturer="Google",
+        category=DeviceCategory.SMARTPHONE, manufacturer="Google", identity="usb:18d1:Google:Pixel 8",
     )]
 
 
@@ -364,6 +364,18 @@ def test_a_device_level_class_counts_and_only_apples_iphone_is_a_smartphone():
         is DeviceCategory.SMARTPHONE
     assert classify_usb_device(interfaces(PTP, VENDOR), product="iPad", vendor_id="05AC") is DeviceCategory.UNKNOWN
     assert classify_usb_device(interfaces(PTP), product="iPhone", vendor_id="1234") is DeviceCategory.UNKNOWN
+
+
+def test_identity_is_the_same_in_every_mode_and_never_the_serial(tmp_path):
+    from mira.adapters.linux_usb import device_identity, read_device
+
+    mtp = make_device(tmp_path, "/a/1-1", product="Pixel 8", manufacturer="Google", vendor=GOOGLE,
+                      product_id="4ee1", serial="SERIAL0123", interfaces=[MTP], listed=False)
+    charging = make_device(tmp_path, "/b/1-1", product="Pixel 8", manufacturer="Google", vendor=GOOGLE,
+                           product_id="4ee7", serial="SERIAL0123", interfaces=[VENDOR], listed=False)
+
+    assert device_identity(read_device(mtp)) == device_identity(read_device(charging)) == "usb:18d1:Google:Pixel 8"
+    assert device_identity(read_device(make_device(tmp_path, "/c/1-1", product="X", listed=False))) is None
 
 
 def test_a_device_with_unreadable_interfaces_is_classified_from_what_is_left(tmp_path):

@@ -18,6 +18,7 @@ from mira.core.notice_producers import (
     DEVICE_REPEAT_MS,
     DEVICE_SETTLE_MS,
     NOTICE_EVENT,
+    USB_REENUMERATION_MS,
     SystemNoticeProducer,
     TaskNoticeProducer,
     connectivity_notice,
@@ -138,7 +139,7 @@ def test_a_settled_classified_arrival_and_removal_keep_their_device():
     source.listener(phone)
     scheduler.advance(DEVICE_SETTLE_MS)
     source.listener(plug(DeviceChange.DISCONNECTED, name="Pixel 8", category=DeviceCategory.SMARTPHONE))
-    scheduler.advance(DEVICE_SETTLE_MS)
+    scheduler.advance(USB_REENUMERATION_MS)
     producer.shutdown()
 
     assert [(notice.text, notice.device) for notice in notices] == [
@@ -168,7 +169,7 @@ def test_disconnect_and_reconnect_are_both_announced_once_settled(system):
     system.handle(plug())
     system.scheduler.advance(DEVICE_SETTLE_MS)
     system.handle(plug(DeviceChange.DISCONNECTED))
-    system.scheduler.advance(DEVICE_SETTLE_MS)
+    system.scheduler.advance(USB_REENUMERATION_MS)  # a USB device may be coming straight back
     system.handle(plug())
     system.scheduler.advance(DEVICE_SETTLE_MS)
 
@@ -296,3 +297,162 @@ def test_producers_know_no_platform_or_toolkit():
     }
     assert not any(name.startswith(("PySide6", "mira.adapters", "mira.ui", "socket", "subprocess", "ctypes"))
                    for name in imported)
+
+
+# --- USB re-enumeration: mode switches, replugs, port moves ------------------------------
+
+PIXEL = "usb:18d1:Google:Pixel 8"
+
+
+def phone(change=DeviceChange.CONNECTED, category=DeviceCategory.SMARTPHONE, key="3-2", identity=PIXEL):
+    return DeviceEvent(DeviceKind.USB, change, "Pixel 8", key, category=category, identity=identity)
+
+
+def texts(system):
+    return [(notice.text, notice.device.category if notice.device else None) for notice in system.notices]
+
+
+def plugged_in(system, event):
+    system.handle(event)
+    system.scheduler.advance(DEVICE_SETTLE_MS)
+    system.notices.clear()
+
+
+def test_a_usb_unplug_is_announced_once_the_reenumeration_window_has_passed(system):
+    plugged_in(system, phone())
+
+    system.handle(phone(DeviceChange.DISCONNECTED))
+    system.scheduler.advance(USB_REENUMERATION_MS - 1)
+    assert system.notices == []
+    system.scheduler.advance(1)
+
+    assert texts(system) == [("Pixel 8 disconnected", DeviceCategory.SMARTPHONE)]
+
+
+@pytest.mark.parametrize("gap_ms", [100, DEVICE_SETTLE_MS, USB_REENUMERATION_MS - 1])
+def test_a_mode_switch_between_phone_modes_says_nothing(system, gap_ms):
+    # File transfer -> PTP -> debugging: the phone is removed and added again each time.
+    plugged_in(system, phone())
+
+    for _ in range(3):
+        system.handle(phone(DeviceChange.DISCONNECTED))
+        system.scheduler.advance(gap_ms)
+        system.handle(phone())
+    system.scheduler.advance(10_000)
+
+    assert system.notices == []
+
+
+def test_a_phone_that_becomes_identifiable_is_announced_once(system):
+    # Charge-only (nothing identifies a phone) -> file transfer.
+    plugged_in(system, phone(category=DeviceCategory.UNKNOWN))
+
+    system.handle(phone(DeviceChange.DISCONNECTED, category=DeviceCategory.UNKNOWN))
+    system.scheduler.advance(1500)
+    system.handle(phone())
+    system.scheduler.advance(10_000)
+
+    assert texts(system) == [("Pixel 8 connected", DeviceCategory.SMARTPHONE)]
+
+
+def test_a_phone_switched_to_charge_only_says_nothing_and_leaves_as_it_now_is(system):
+    plugged_in(system, phone())
+
+    system.handle(phone(DeviceChange.DISCONNECTED))
+    system.scheduler.advance(1500)
+    system.handle(phone(category=DeviceCategory.UNKNOWN))
+    system.scheduler.advance(10_000)
+    assert system.notices == []
+
+    system.handle(phone(DeviceChange.DISCONNECTED, category=DeviceCategory.UNKNOWN))
+    system.scheduler.advance(USB_REENUMERATION_MS)
+    assert texts(system) == [("Pixel 8 disconnected", DeviceCategory.UNKNOWN)]
+
+
+def test_replugging_after_the_window_is_a_real_disconnect_and_reconnect(system):
+    plugged_in(system, phone())
+
+    system.handle(phone(DeviceChange.DISCONNECTED))
+    system.scheduler.advance(USB_REENUMERATION_MS)
+    system.handle(phone())
+    system.scheduler.advance(DEVICE_SETTLE_MS)
+
+    assert texts(system) == [
+        ("Pixel 8 disconnected", DeviceCategory.SMARTPHONE),
+        ("Pixel 8 connected", DeviceCategory.SMARTPHONE),
+    ]
+
+
+def test_another_device_in_the_same_port_announces_the_first_one_leaving_at_once(system):
+    plugged_in(system, phone())
+
+    system.handle(phone(DeviceChange.DISCONNECTED))
+    system.scheduler.advance(500)
+    system.handle(DeviceEvent(DeviceKind.USB, DeviceChange.CONNECTED, "Stick", "3-2",
+                              category=DeviceCategory.STORAGE, identity="usb:0781:SanDisk:Stick"))
+    assert texts(system) == [("Pixel 8 disconnected", DeviceCategory.SMARTPHONE)]
+    system.scheduler.advance(DEVICE_SETTLE_MS)
+
+    assert texts(system)[-1] == ("Stick connected", DeviceCategory.STORAGE)
+    assert len(system.notices) == 2
+
+
+def test_the_same_device_moved_to_another_port_says_nothing_and_leaves_from_there(system):
+    plugged_in(system, phone(key="3-2"))
+
+    system.handle(phone(DeviceChange.DISCONNECTED, key="3-2"))
+    system.scheduler.advance(1200)
+    system.handle(phone(key="3-4"))
+    system.scheduler.advance(10_000)
+    assert system.notices == []
+
+    system.handle(phone(DeviceChange.DISCONNECTED, key="3-4"))
+    system.scheduler.advance(USB_REENUMERATION_MS)
+    assert texts(system) == [("Pixel 8 disconnected", DeviceCategory.SMARTPHONE)]
+
+
+def test_rapid_flapping_settles_on_the_final_state_once(system):
+    plugged_in(system, phone())
+
+    for _ in range(20):
+        system.handle(phone(DeviceChange.DISCONNECTED))
+        system.scheduler.advance(50)
+        system.handle(phone())
+        system.scheduler.advance(50)
+    system.handle(phone(DeviceChange.DISCONNECTED))
+    system.scheduler.advance(10_000)
+
+    assert texts(system) == [("Pixel 8 disconnected", DeviceCategory.SMARTPHONE)]
+    assert len(system._pending) == 0
+
+
+def test_audio_devices_keep_their_short_settle(system):
+    speaker = DeviceEvent(DeviceKind.AUDIO_OUTPUT, DeviceChange.DISCONNECTED, "Speaker", "alsa.speaker")
+
+    system.handle(speaker)
+    system.scheduler.advance(DEVICE_SETTLE_MS)
+
+    assert [notice.text for notice in system.notices] == ["Speaker disconnected"]
+
+
+def test_shutdown_during_a_pending_unplug_announces_nothing_later(system):
+    plugged_in(system, phone())
+    system.handle(phone(DeviceChange.DISCONNECTED))
+
+    system.shutdown()
+    system.scheduler.advance(10_000)
+    system.handle(phone())
+    system.scheduler.advance(10_000)
+
+    assert system.notices == []
+
+
+def test_the_producer_can_be_started_again_after_shutdown(system):
+    system.shutdown()
+    system.start()
+    system.start()
+
+    system.source.listener(phone())
+    system.scheduler.advance(DEVICE_SETTLE_MS)
+
+    assert system.source.started == 2 and texts(system) == [("Pixel 8 connected", DeviceCategory.SMARTPHONE)]

@@ -9,6 +9,8 @@ on a `ManualScheduler`; no USB device, display or event loop is needed.
 
 from __future__ import annotations
 
+import sys
+
 import pytest
 
 from mira.application.device_config import DeviceMonitorConfiguration, parse_device_monitor_configuration
@@ -20,13 +22,26 @@ pytest.importorskip("PySide6")
 from PySide6.QtCore import QCoreApplication, QEvent
 
 from mira.application.composition import build_application
-from mira.core.notice_producers import DEVICE_SETTLE_MS
+from mira.core.notice_producers import DEVICE_SETTLE_MS, USB_REENUMERATION_MS
 from mira.domain.embodiment_cue import EmbodimentCue
 from mira.domain.scheduler import ManualScheduler
 from mira.ui.desktop_shell import DesktopShell, Surface
 from mira.ui.notch.presence import NotchPresence
 from mira.ui.notch.presentation import NotchContent, NotchSymbol, notice_content
-from usb_doubles import ADB, GOOGLE, HID, MASS_STORAGE, MTP, FakeKernel, configure, make_device, uevent
+from usb_doubles import (
+    ADB,
+    GOOGLE,
+    HID,
+    MASS_STORAGE,
+    MTP,
+    PTP,
+    VENDOR,
+    FakeKernel,
+    configure,
+    make_device,
+    uevent,
+    unplug,
+)
 
 
 # --- Configuration ---------------------------------------------------------------------
@@ -170,7 +185,7 @@ def test_a_device_unplugged_while_its_arrival_shows_replaces_it_without_a_greeti
     runtime.desktop.controller.clear_cue()
 
     runtime.deliver(uevent("remove", PHONE))
-    runtime.settle()
+    runtime.application.scheduler.advance(USB_REENUMERATION_MS)
 
     assert presentation(runtime).content == NotchContent(NotchSymbol.KEYBOARD, "Keyboard disconnected")
     assert runtime.desktop.controller.active_cue is None
@@ -212,3 +227,74 @@ def test_shutdown_stops_watching_the_kernel(runtime):
     runtime.application.shutdown()
 
     assert not runtime.source.watching
+
+
+def test_switching_a_phone_between_modes_shows_nothing(runtime):
+    device = make_device(runtime.kernel.sysfs, PHONE, product="Pixel 8", manufacturer="Google", vendor=GOOGLE,
+                         interfaces=[MTP], listed=False)
+    runtime.deliver(uevent("add", PHONE))
+    runtime.settle()
+    runtime.application.scheduler.advance(10_000)
+    runtime.desktop.controller.clear_cue()
+    notices = []
+    runtime.application.event_bus.subscribe("notice", notices.append)
+
+    for interfaces in ([PTP], [MTP, ADB], [MTP]):
+        runtime.deliver(uevent("remove", PHONE))
+        unplug(runtime.kernel.sysfs, PHONE)
+        runtime.application.scheduler.advance(1200)
+        device = make_device(runtime.kernel.sysfs, PHONE, product="Pixel 8", manufacturer="Google",
+                             vendor=GOOGLE, configured=False, listed=False)
+        runtime.deliver(uevent("add", PHONE))
+        configure(device, interfaces)
+        runtime.deliver(uevent("bind", PHONE))
+    runtime.application.scheduler.advance(10_000)
+
+    assert notices == [] and presentation(runtime).notice is None
+    assert runtime.desktop.controller.active_cue is None
+
+
+def test_a_charging_phone_switched_to_file_transfer_is_shown_as_a_phone(runtime):
+    make_device(runtime.kernel.sysfs, PHONE, product="Pixel 8", manufacturer="Google", vendor=GOOGLE,
+                interfaces=[VENDOR], listed=False)
+    runtime.deliver(uevent("add", PHONE))
+    runtime.settle()
+    assert presentation(runtime).content == NotchContent(NotchSymbol.USB, "Google Pixel 8 connected")
+
+    runtime.deliver(uevent("remove", PHONE))
+    unplug(runtime.kernel.sysfs, PHONE)
+    runtime.application.scheduler.advance(1500)
+    make_device(runtime.kernel.sysfs, PHONE, product="Pixel 8", manufacturer="Google", vendor=GOOGLE,
+                interfaces=[MTP], listed=False)
+    runtime.deliver(uevent("add", PHONE))
+    runtime.settle()
+
+    assert presentation(runtime).content == NotchContent(NotchSymbol.PHONE, "Google Pixel 8 connected")
+    assert runtime.desktop.controller.active_cue is EmbodimentCue.GREETING
+
+
+def test_closing_mira_while_a_device_is_settling_shows_nothing_and_releases_the_socket(runtime):
+    make_device(runtime.kernel.sysfs, PHONE, product="Stick", interfaces=[MASS_STORAGE], listed=False)
+    runtime.deliver(uevent("add", PHONE))  # pending: not shown yet
+    socket = runtime.source._socket
+
+    runtime.desktop.shutdown()      # the order `aboutToQuit` uses
+    runtime.application.shutdown()
+    with pytest.raises(OSError):  # nothing is listening any more
+        runtime.kernel.send(uevent("remove", PHONE))
+    runtime.application.scheduler.advance(10_000)
+
+    assert presentation(runtime).notice is None
+    assert socket.fileno() == -1 and not runtime.source.watching
+
+
+@pytest.mark.skipif(not sys.platform.startswith("linux"), reason="Linux desktop adapters")
+def test_with_monitoring_disabled_nothing_watches_usb(qt_application):
+    from mira.adapters.linux_usb import LinuxUsbDeviceSource
+    from mira.application.composition import desktop_system_event_sources
+
+    sources = desktop_system_event_sources(DeviceMonitorConfiguration(enabled=False))
+    application = build_application(scheduler=ManualScheduler(), system_event_sources=sources)
+
+    assert not any(isinstance(source, LinuxUsbDeviceSource) for source in application.system_notices.sources)
+    application.shutdown()

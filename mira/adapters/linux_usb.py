@@ -26,7 +26,10 @@ interface, its class triple and description string. Never ``serial``: no
 persistent hardware identifier reaches an event or a log line. Everything is
 remembered on arrival, because the attributes are gone by the time the
 removal arrives. Devices present at start are read once so their removal can
-be named, and announce nothing themselves.
+be named, and announce nothing themselves. An event's ``identity`` is the
+vendor id with the manufacturer and product strings — the same for a phone
+in every USB mode, unlike its product id — so the producer can tell a phone
+re-enumerating from another device plugged into the same port.
 
 **Classification** (`classify_usb_device`) uses only what the device
 declares, first match wins, and prefers UNKNOWN to a guess:
@@ -261,6 +264,11 @@ def describe_device(device: Path) -> str | None:
     return None if info is None else device_name(info.product, info.manufacturer)
 
 
+def device_identity(info: UsbDeviceInfo) -> str | None:
+    """What stays the same when this device re-enumerates; never the serial."""
+    return f"usb:{info.vendor_id}:{info.manufacturer}:{info.product}" if info.vendor_id else None
+
+
 def _is_phone_function(interface: UsbInterface) -> bool:
     return (
         interface.description.strip().upper() == "MTP"
@@ -447,7 +455,7 @@ class LinuxUsbDeviceSource:
             )
         return DeviceEvent(
             DeviceKind.USB, DeviceChange.CONNECTED, name, devpath,
-            category=category, manufacturer=info.manufacturer or None,
+            category=category, manufacturer=info.manufacturer or None, identity=device_identity(info),
         )
 
     def _device_path(self, devpath: str) -> Path:

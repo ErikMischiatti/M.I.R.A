@@ -49,6 +49,12 @@ class DeviceEvent:
     source that classifies but cannot tell says `DeviceCategory.UNKNOWN`.
     ``kind`` is the facility it was seen through, so for USB it is also the
     connection. ``key`` is for correlation only and is never a serial number.
+
+    ``identity`` says which device it is when ``key`` names only *where* it
+    is: what stays the same when the same device re-enumerates (a phone
+    switching USB mode), so a producer can tell that from a different device
+    in the same port. Never a serial number; None when the source cannot
+    tell, and then every device at one ``key`` counts as the same.
     """
 
     kind: DeviceKind
@@ -57,6 +63,7 @@ class DeviceEvent:
     key: str
     category: DeviceCategory | None = None
     manufacturer: str | None = None
+    identity: str | None = None
 
 
 class Connectivity(StrEnum):
