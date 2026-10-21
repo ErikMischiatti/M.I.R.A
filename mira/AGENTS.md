@@ -44,6 +44,9 @@ Main modules:
   - notices: `Notice`, `NoticeCategory`, `NoticeTone`, `NoticeDevice`
     (`mira/domain/notice.py`)
   - device kinds: `DeviceCategory` (`mira/domain/devices.py`)
+  - device information: `DeviceInfo`, `ChargingState`, `InfoResult`, the
+    `DeviceInfoProvider` port, `DeviceInfoUpdate` and its text
+    (`mira/domain/device_info.py`); fields are what was read, never guessed
   - system changes: `DeviceEvent`, `ConnectivityEvent`, the
     `SystemEventSource` port (`mira/domain/system_events.py`)
   - voice: detector ports, `ListeningSession`, `Utterance`
@@ -67,6 +70,10 @@ Main modules:
     never reads serials; supervised and resynchronised after lost
     messages), `PipeWireAudioSource`
     (`pw-dump --monitor`), `NetworkManagerConnectivitySource` (QtDBus)
+  - device information providers, each a bounded, read-only query run off
+    the UI thread: `AdbDeviceInfoProvider` (`adb`, optional; matched by USB
+    port, never by serial), `UPowerPhoneProvider` (`upower --dump`, kind
+    `phone` only), `UsbStorageInfoProvider` (sysfs disk size)
   - may import `mira.domain`; never imported by the domain
 
 - `mira/application`
@@ -92,6 +99,9 @@ Main modules:
   - embodied behavior
   - notice producers (`mira/core/notice_producers.py`): task and system
     events → `"notice"` on the bus, with the noise policy
+  - device information (`mira/core/device_info.py`): follows
+    `"device_changed"`, asks providers through `Scheduler.submit`, drops
+    stale answers, publishes `"device_info"`
   - running tasks (`mira/core/task_activity.py`): executor run ids →
     `"tasks_changed"`; shown as the TASK_RUNNING condition
   - audio input (`mira/core/audio_input.py`): the runtime's one

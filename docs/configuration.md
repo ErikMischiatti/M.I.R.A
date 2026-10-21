@@ -28,6 +28,8 @@ environment.
 | `MIRA_CAMERA_FPS` | device default | Requested frame rate. Non-numeric, non-finite or non-positive values are ignored. |
 | `MIRA_DEVICE_MONITOR` | unset (enabled) | `0`, `false`, `no` or `off` (case-insensitive) stops watching USB devices; anything else keeps it on. Audio-device and connectivity notices are not affected. |
 | `MIRA_DEVICE_MONITOR_DEBUG` | unset (disabled) | `1`, `true`, `yes` or `on` logs the USB devices present at start and every arrival and removal to stderr (`[devices] …`) with its category, vendor:product id and interface classes. Serial numbers are never read. |
+| `MIRA_DEVICE_INFO` | unset (enabled) | `0`, `false`, `no` or `off` turns device information off: no provider is built and nothing beyond the connection is shown. Providers only ask a phone that already offers USB debugging (adb) or Apple's multiplexer (UPower), and read a storage device's size from sysfs. |
+| `MIRA_DEVICE_INFO_REFRESH_S` | unset (no refresh) | Re-read a connected device's battery every that many seconds, held to `30`–`3600`. `0`, blank or non-integer: each connection is read once. |
 | `MIRA_NOTCH_CONFIG` | `$XDG_CONFIG_HOME/mira/notch.json` | Notch configuration file used by `MIRA`, `MIRA-NOTCH` and `MIRA-TUNE`. `--config PATH` overrides it for the notch tools. |
 
 The four `MIRA_OLLAMA_*`/`MIRA_LLM_*` variables only matter in LLM mode, and
@@ -203,6 +205,16 @@ long a notice shows is `notice_duration_ms`, and whether it expands the
 notch is `automatic_expansion.device`. `MIRA_DEVICE_MONITOR=0` turns USB
 watching off; if the kernel socket fails while running, USB watching pauses
 and resumes by itself.
+
+**Device information.** After a device's arrival is shown, MIRA may learn
+more and the same notice grows: an Android phone's model, battery and
+charging state through `adb` (installed separately, with USB debugging on
+and the computer authorized on the phone), an iPhone's battery through
+UPower (the iPhone must trust the computer), a USB stick's capacity from
+sysfs — "Pixel 8 — Battery 84% — Charging", "SanDisk Ultra — 64 GB".
+Only what was read is shown; nothing is changed on the device, and serial
+numbers are never used or logged. `MIRA_DEVICE_INFO=0` turns it off;
+`MIRA_DEVICE_INFO_REFRESH_S` re-reads batteries periodically.
 
 **Older versions.** Version 4 is version 3 with the readable floor above.
 Older files still load, in memory, and are made readable without tuning;

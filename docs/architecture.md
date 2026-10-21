@@ -674,10 +674,102 @@ kernel uevent (add … bind / remove)
   kernel still closes the socket.
 - **Next.** M2 — device information providers behind their own source or
   enrichment step (ADB for model and battery, `usbmuxd` for iPhones, UPower,
-  storage capacity), adding fields to `NoticeDevice`/`DeviceEvent` rather
-  than new paths; nothing is shown that was not read. M3 — notice priority
+  storage capacity) — done for adb, UPower and sysfs storage, see "Device
+  information"; nothing is shown that was not read. M3 — notice priority
   and queuing in `NotchPresenter` (so a device never covers listening),
   device-specific cues, several devices at once, user-configurable reactions.
+
+### Device information
+
+```text
+SystemNoticeProducer ── "device_changed" (announced arrivals/departures, silent re-enumerations)
+        ▼
+DeviceInfoService (core)  registry: one generation per connection, ≤ 1 query in flight per device
+        │ Scheduler.submit (worker thread)            on_complete (UI thread)
+        ▼                                                   │
+DeviceInfoProvider.query  (adapters)                        │ stale generation → discarded
+  AdbDeviceInfoProvider   "adb" in services   adb devices -l; adb -t <id> shell getprop …; dumpsys battery
+  UPowerPhoneProvider     "usbmux" in services upower --dump (kind "phone" only)
+  UsbStorageInfoProvider  category STORAGE     sysfs …/block/<disk>/size
+        ▼ InfoResult(DeviceInfo | problem, retry)
+"device_info" (DeviceInfoUpdate: device, info, announce)
+        ▼
+DesktopShell ─▶ NotchPresenter.refine: replaces the arrival notice of the same device (NoticeDevice.key),
+                                         or shows it alone if announce; never an eye cue
+```
+
+- **Lifecycle.** The service follows `"device_changed"`, i.e. the devices
+  the user was told about: nothing is asked while an arrival settles or for
+  a bounce. On an arrival it picks the first provider whose `supports`
+  accepts the device and submits one query. Every connection gets a new
+  generation; an answer for an older one (the device left or came back
+  meanwhile) and anything after `shutdown` is discarded. A disconnect
+  cancels the device's timers; a query already running answers to nobody.
+- **What is published.** Only information that was read, only when it
+  differs from what was last published for that device. `announce` is True
+  for a connection's first information and for a change of charging state;
+  a moving percentage only refines a notice that is already showing. A
+  device that re-enumerates as itself (same `identity`) keeps what was
+  known, so a USB mode switch announces nothing new.
+- **Retries and refresh.** A retryable problem (phone not authorized yet,
+  adb not listing it yet, a timeout) is asked again after 2, 4, 8, 16 and
+  30 s, then left until the device reconnects. With
+  `MIRA_DEVICE_INFO_REFRESH_S` (30–3600 s, default off) a device that
+  reported a battery is asked again at that interval, one query at a time,
+  only after the previous answer.
+- **Text.** `device_info_text`: the model if a provider read one, else the
+  USB name; then `Battery N%`, the charging state (Charging, Discharging,
+  Not charging, Full) and a capacity, each only if read: "Pixel 8 — Battery
+  84% — Charging", "SanDisk Ultra — 64 GB". On a battery line the maker is
+  dropped from a USB name ("iPhone"), for room. The notch elides a label
+  longer than its content band.
+- **Android (adb).** Needs `adb` installed, *USB debugging* enabled and the
+  computer *authorized* on the phone; only a device whose descriptors offer
+  the debug interface (`ff/42/01`) is asked, so no command runs otherwise.
+  The phone is matched by its USB port (adb's `usb:3-2`) and addressed by
+  `transport_id`; its serial (first column of `adb devices -l`) is dropped
+  while parsing and never used, stored or logged, and adb's own messages are
+  never logged. The battery comes from `dumpsys battery` on the phone
+  (`level`/`scale`, `status`, `present`), so the computer's battery cannot be
+  read by mistake. States: not installed, not listed (retry), unauthorized
+  (retry), offline (retry), no permissions (udev), recovery and other modes,
+  no `transport_id` (adb too old), several entries on one port, timeout
+  (retry), gone. Timeouts: 8 s to list (it may start adb's server), 5 s for
+  the shell command. The first query starts adb's server if needed, as any
+  adb use does; nothing on the phone is changed.
+- **iPhone (UPower).** UPower reads a *paired* iPhone's battery through
+  libimobiledevice and usbmuxd and lists it as kind `phone`; the provider
+  reads `upower --dump` and nothing else, so MIRA links no iOS library.
+  Only `phone` blocks are read — never `battery` (this computer's),
+  `line-power` or the display device — and a percentage counts only with a
+  determined state (charging, discharging, fully-charged, pending-charge).
+  Matching is by elimination: asked only for a device offering Apple's
+  multiplexer, and only if UPower lists exactly one phone. Untrusted phone:
+  UPower lists none, retried while the user may still accept the prompt.
+- **USB storage (sysfs).** The disk under the USB device's own sysfs tree
+  and its `size` in 512-byte sectors; nothing mounted, opened or listed, so
+  no file, name or label is seen. No disk yet: retried; size 0 (card reader
+  without a card) or several disks: nothing claimed.
+- **Threading.** Queries run on Qt's global thread pool through
+  `Scheduler.submit` and are bounded by their timeouts; answers, bus events
+  and every widget change happen on the UI thread. Providers never raise
+  (`_safe_query` turns an exception into a problem).
+- **Configuration.** `MIRA_DEVICE_INFO=0` builds no providers;
+  `MIRA_DEVICE_INFO_REFRESH_S` as above; problems are logged once per
+  connection with `MIRA_DEVICE_MONITOR_DEBUG=1` (`[devices] adb: no
+  information on 'Google Pixel 8': …`).
+- **Limitations.** Android was validated only with scripted adb output;
+  the UPower iPhone path only with scripted output and against this
+  computer's real UPower (which correctly lists no phone and never the host
+  battery). Devices present when MIRA starts are not asked (no arrival was
+  announced). With two iPhones connected neither gets a battery. A phone
+  model that adb or UPower does not report falls back to the USB name.
+  Peripherals UPower knows (wireless mice, headsets) are not matched to USB
+  devices. Long lines are elided.
+- **Next.** A persistent device panel in the notch (battery visible on
+  hover, not only in a notice); low-battery alerts; Bluetooth devices
+  through UPower or BlueZ; libimobiledevice directly if UPower proves too
+  coarse; ADB over Wi-Fi is out of scope (no USB arrival).
 
 **Desktop application notifications (investigated, not implemented).**
 GNOME's notification server (gnome-shell, `org.freedesktop.Notifications` on

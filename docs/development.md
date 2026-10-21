@@ -196,6 +196,7 @@ Tests are grouped by boundary rather than by file:
 | Embodiment | `test_embodiment_*.py`, `test_micro_motion*.py`, `test_face_*.py`, `test_expression_store.py` |
 | Camera | `test_camera_*.py`, `test_opencv_camera.py` |
 | System events and notices | `test_system_event_adapters.py`, `test_notice_producers.py`, `test_usb_device_notices.py` |
+| Device information | `test_device_info_service.py`, `test_adb_provider.py`, `test_device_info_providers.py`, `test_device_info_notch.py` |
 | Memory and messaging | `test_memory_contracts.py`, `test_messaging_contracts.py` |
 
 Shared test doubles live in `tests/doubles.py` (covered by
@@ -242,6 +243,52 @@ happens, and a notice stays `notice_duration_ms` (4 s by default).
 
 Without hardware, MIRA-TUNE's *Phone connected*, *Phone disconnected* and
 *Storage connected* previews go through the same presenter and eye path.
+
+**Device information (optional, M2).** The providers are tested with
+scripted `adb` and `upower` output and a fake sysfs (`tests/adb_doubles.py`,
+`tests/usb_doubles.py`); a real phone needs a manual check. Start MIRA with
+the debug log as above; the `[devices] adb: …` / `[devices] upower: …`
+lines say what each provider read or why it read nothing. Nothing here is
+required: without it MIRA shows the connection notice only.
+
+*Android, battery through adb.* Needs, on the computer, `adb`
+(`sudo apt install adb`; MIRA never installs it) and permission to the
+phone's USB device (Ubuntu's `adb` package ships the udev rules; otherwise
+adb lists the phone with "no permissions"); on the phone, *Developer
+options → USB debugging* on, and the computer authorized ("Allow USB
+debugging?" → Allow).
+
+1. Without USB debugging: the phone offers no debug interface, MIRA runs
+   no command and shows only "<name> connected".
+2. With debugging but not yet authorized: "<name> connected", and the log
+   says the phone has not authorized this computer. Tap *Allow* within
+   about a minute: the notch shows "<model> — Battery N% — <state>".
+   After a minute without *Allow*, MIRA stops asking until the next plug.
+3. Verify the reading against the phone itself (status bar, or Settings →
+   Battery) and against adb directly:
+   `adb shell dumpsys battery | grep -E '^ +(level|scale|status|present|AC powered|USB powered):'`
+   (status 2 charging, 3 discharging, 4 not charging, 5 full). Use
+   `adb devices` without `-l` and do not share its output: the first
+   column is the serial.
+4. Charging and discharging: with `MIRA_DEVICE_INFO_REFRESH_S=30`, watch
+   the state change. On most phones a laptop port charges ("Charging");
+   *Settings → Battery → Charging optimization / limit to 80 %* or a full
+   battery gives "Not charging" or "Full". A change of charging state is
+   shown on its own; a percentage that only moves is not.
+5. Two Android phones at once: each gets its own reading, matched by port.
+
+*iPhone, battery through UPower.* Needs nothing beyond Ubuntu's own
+`upower` and `usbmuxd`; the iPhone unlocked and trusting this computer
+("Trust This Computer?" → Trust, then the passcode). Check what UPower
+itself reads, without serials:
+`upower --dump | grep -A12 '^ *phone$' | grep -E 'phone|present|state|percentage'`.
+MIRA's notice should match it. Untrusted: UPower lists no phone and MIRA
+shows only the connection.
+
+*USB storage capacity.* Plug in a stick: "<name> connected", then
+"<name> — <size>" once the disk appears (about a second). Compare with
+`lsblk -d -o NAME,SIZE,TRAN | grep usb` (which shows sizes in binary units:
+"58.6G" for a "64 GB" stick).
 
 **Diagnostics without serial numbers.** MIRA's `[devices]` lines carry the
 port, category, name, vendor:product id and interface classes, never a
