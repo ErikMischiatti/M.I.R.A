@@ -1,4 +1,4 @@
-"""The UPower and USB storage providers, and what an update says.
+"""The UPower and USB storage providers, what an update says, and how the notch takes it.
 
 No iPhone, no USB stick: a scripted ``upower`` and a temporary sysfs tree.
 """
@@ -23,7 +23,9 @@ from mira.domain.device_info import (
 )
 from mira.domain.devices import DeviceCategory
 from mira.domain.notice import Notice, NoticeCategory, NoticeDevice, NoticeTone
-from mira.domain.system_events import DeviceChange, DeviceEvent, DeviceKind
+from mira.domain.scheduler import ManualScheduler
+from mira.domain.system_events import DeviceChange, DeviceEvent, DeviceKind, device_notice
+from mira.ui.notch.presentation import NotchBehaviour, NotchPresenter
 
 IPHONE = DeviceEvent(
     DeviceKind.USB, DeviceChange.CONNECTED, "Apple Inc. iPhone", "/d/usb3/3-2",
@@ -217,3 +219,61 @@ def test_an_update_is_a_notice_about_the_same_device():
 
     assert notice == Notice(NoticeCategory.DEVICE, NoticeTone.INFO, "iPhone — Battery 84%",
                             NoticeDevice(DeviceCategory.SMARTPHONE, connected=True, key=IPHONE.key))
+
+
+# --- The notch refines its notice ------------------------------------------------------------
+
+
+@pytest.fixture
+def presenter():
+    presenter = NotchPresenter(ManualScheduler(), NotchBehaviour(notice_duration_ms=4000))
+    presenter.show()
+    return presenter
+
+
+def enriched(device=IPHONE, announce=False):
+    return device_info_notice(DeviceInfoUpdate(device, DeviceInfo(battery_percent=84), announce))
+
+
+def test_information_replaces_the_arrival_it_belongs_to_and_gets_the_full_time(presenter):
+    presenter.present(device_notice(IPHONE))
+    presenter._scheduler.advance(3000)
+
+    presenter.refine(enriched(), announce=False)
+    presenter._scheduler.advance(3000)
+
+    assert presenter.presentation.notice.text == "iPhone — Battery 84%"
+    presenter._scheduler.advance(1000)
+    assert presenter.presentation.notice is None
+
+
+def test_information_about_another_device_does_not_replace_a_notice(presenter):
+    other = DeviceEvent(DeviceKind.USB, DeviceChange.CONNECTED, "Stick", "/d/usb3/3-4",
+                        category=DeviceCategory.STORAGE)
+    presenter.present(device_notice(other))
+
+    presenter.refine(enriched(), announce=False)
+
+    assert presenter.presentation.notice.text == "Stick connected"
+
+
+def test_a_departure_showing_is_never_refined(presenter):
+    from dataclasses import replace
+
+    presenter.present(device_notice(replace(IPHONE, change=DeviceChange.DISCONNECTED)))
+
+    presenter.refine(enriched(), announce=False)
+
+    assert presenter.presentation.notice.text == "Apple Inc. iPhone disconnected"
+
+
+def test_information_worth_announcing_is_shown_on_its_own(presenter):
+    presenter.refine(enriched(announce=True), announce=True)
+
+    assert presenter.presentation.notice.text == "iPhone — Battery 84%"
+
+
+def test_information_not_worth_announcing_waits_for_a_notice_to_refine(presenter):
+    presenter.refine(enriched(), announce=False)
+
+    assert presenter.presentation.notice is None

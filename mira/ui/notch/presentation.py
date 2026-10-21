@@ -423,6 +423,22 @@ class NotchPresenter:
         )
         self._publish()
 
+    def refine(self, notice: Notice, *, announce: bool) -> None:
+        """Better information about the device a notice is about.
+
+        It replaces the showing notice when that one announced the same
+        device's arrival (same `NoticeDevice.key`), with the full duration
+        again, so information that arrives a moment later reads as the same
+        notice growing. Otherwise it is shown only if ``announce``.
+        """
+        showing = self._notice
+        same_device = (
+            showing is not None and showing.device is not None and notice.device is not None
+            and showing.device.connected and showing.device.key == notice.device.key
+        )
+        if same_device or announce:
+            self.present(notice)
+
     def dismiss_notice(self) -> None:
         self._cancel_expiry()
         self._notice = None

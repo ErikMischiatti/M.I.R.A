@@ -59,6 +59,7 @@ from PySide6.QtWidgets import QApplication
 
 from mira.application.composition import Application
 from mira.application.voice import configure_listening, wake_word_available
+from mira.domain.device_info import DeviceInfoUpdate, device_info_notice
 from mira.domain.embodiment import ActivityState
 from mira.domain.listening import ActivationSource
 from mira.domain.notice import Notice
@@ -139,6 +140,8 @@ class DesktopShell:
         application.event_bus.subscribe("state_changed", self.on_state_changed)
         # Every notice, from whichever producer (`mira.core.notice_producers`).
         application.event_bus.subscribe("notice", self.on_notice)
+        # What providers learned about a device (`mira.core.device_info`).
+        application.event_bus.subscribe("device_info", self.on_device_info)
         # Running work (`mira.core.task_activity`): persistent, not a notice.
         application.event_bus.subscribe("tasks_changed", self.on_tasks_changed)
         # Voice listening (`mira.core.listening`): the notch opens and shows
@@ -276,6 +279,11 @@ class DesktopShell:
     def on_notice(self, notice: Notice) -> None:
         """The notch shows it; MIRA's eyes react, on every surface."""
         deliver_notice(notice, presenter=self.presenter, controller=self.controller)
+
+    def on_device_info(self, update: DeviceInfoUpdate) -> None:
+        """The notch's device notice grows; the eyes already reacted to the arrival."""
+        if self.presenter is not None:
+            self.presenter.refine(device_info_notice(update), announce=update.announce)
 
     # --- Notch actions ----------------------------------------------------------
 

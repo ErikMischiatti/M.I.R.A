@@ -231,6 +231,7 @@ def test_subscribers_are_registered_exactly_once_in_a_fixed_order(graph):
         "audio_status_changed": ["ListeningController.on_audio_status"],
         "notice": ["DesktopShell.on_notice"],
         "device_changed": ["DeviceInfoService.on_device_changed"],
+        "device_info": ["DesktopShell.on_device_info"],
         "processing_started": ["InteractionManager.on_processing_started"],
         "response_ready": [
             "InteractionManager.on_response_ready",
