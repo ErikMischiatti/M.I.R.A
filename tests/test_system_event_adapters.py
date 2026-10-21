@@ -10,10 +10,10 @@ from __future__ import annotations
 
 import json
 import os
-import socket
 import stat
 import sys
 import time
+from dataclasses import replace
 
 import pytest
 
@@ -21,12 +21,37 @@ pytest.importorskip("PySide6")
 
 from PySide6.QtCore import QCoreApplication, QEvent, QEventLoop, QTimer
 
-from mira.adapters.linux_usb import LinuxUsbDeviceSource, describe_device, parse_uevent
+from mira.adapters.linux_usb import (
+    LinuxUsbDeviceSource,
+    UsbInterface,
+    classify_usb_device,
+    describe_device,
+    is_configured,
+    parse_uevent,
+    read_interfaces,
+)
 from mira.adapters.networkmanager import NetworkManagerConnectivitySource, connectivity_from_nm
 from mira.adapters.pipewire_audio import JsonArrayStream, PipeWireAudioSource, PipeWireTracker
 from mira.application.composition import build_application, desktop_system_event_sources
+from mira.domain.devices import DeviceCategory
 from mira.domain.scheduler import ManualScheduler
 from mira.domain.system_events import Connectivity, ConnectivityEvent, DeviceChange, DeviceEvent, DeviceKind
+from usb_doubles import (
+    ADB,
+    AUDIO_CONTROL,
+    AUDIO_STREAMING,
+    HID,
+    MASS_STORAGE,
+    MTP,
+    PTP,
+    VENDOR,
+    VIDEO_CONTROL,
+    VIDEO_STREAMING,
+    FakeKernel,
+    configure,
+    make_device,
+    uevent,
+)
 
 
 @pytest.fixture(scope="module", autouse=True)
@@ -46,35 +71,24 @@ def spin(milliseconds: int) -> None:
 # --- USB: kernel uevents ----------------------------------------------------------
 
 
-def uevent(action: str, devpath: str, **fields) -> bytes:
-    fields = {"ACTION": action, "DEVPATH": devpath, "SUBSYSTEM": "usb", "DEVTYPE": "usb_device", **fields}
-    return f"{action}@{devpath}".encode() + b"\0" + b"\0".join(f"{k}={v}".encode() for k, v in fields.items())
-
-
-def make_device(sysfs, devpath, *, product="", manufacturer="", device_class="00", listed=True):
-    device = sysfs / devpath.lstrip("/")
-    device.mkdir(parents=True)
-    for name, value in (("product", product), ("manufacturer", manufacturer), ("bDeviceClass", device_class)):
-        if value:
-            (device / name).write_text(value + "\n")
-    if listed:
-        bus = sysfs / "bus" / "usb" / "devices"
-        bus.mkdir(parents=True, exist_ok=True)
-        (bus / device.name).symlink_to(device)
-    return device
+@pytest.fixture
+def kernel(tmp_path):
+    kernel = FakeKernel(tmp_path / "sys")
+    yield kernel
+    kernel.close()
 
 
 @pytest.fixture
-def usb(tmp_path):
-    sysfs = tmp_path / "sys"
-    (sysfs / "bus" / "usb" / "devices").mkdir(parents=True)
-    kernel, ours = socket.socketpair(socket.AF_UNIX, socket.SOCK_DGRAM)
-    ours.setblocking(False)
-    source = LinuxUsbDeviceSource(sysfs=sysfs, open_socket=lambda: ours)
-    source.sysfs, source.kernel, source.events = sysfs, kernel, []
+def usb(kernel):
+    source = kernel.source()
+    source.sysfs, source.kernel, source.events = kernel.sysfs, kernel, []
     yield source
     source.shutdown()
-    kernel.close()
+
+
+def deliver(usb, *messages):
+    usb.kernel.send(*messages)
+    usb.on_readable()
 
 
 def test_a_uevent_is_split_into_its_fields():
@@ -91,7 +105,7 @@ def test_devices_are_named_from_sysfs_and_hubs_are_not_devices(tmp_path):
         == "Logitech USB Receiver"
     assert describe_device(make_device(tmp_path, "/a/1-2", product="Logitech Webcam C920", manufacturer="Logitech")) \
         == "Logitech Webcam C920"
-    assert describe_device(make_device(tmp_path, "/a/1-3")) == "USB device"
+    assert describe_device(make_device(tmp_path, "/a/1-3")) == ""  # it names itself nothing
     assert describe_device(make_device(tmp_path, "/a/1-4", product="Hub", device_class="09")) is None
     assert describe_device(make_device(tmp_path, "/a/usb2", product="xHCI Host Controller")) is None
 
@@ -99,43 +113,44 @@ def test_devices_are_named_from_sysfs_and_hubs_are_not_devices(tmp_path):
 def test_arrival_and_removal_become_device_events(usb):
     devpath = "/devices/pci0/usb1/1-2"
     assert usb.start(usb.events.append)
-    make_device(usb.sysfs, devpath, product="Keyboard", listed=False)
+    make_device(usb.sysfs, devpath, product="Keyboard", manufacturer="Cherry", interfaces=[HID], listed=False)
 
-    usb.kernel.send(uevent("add", devpath))
-    usb.on_readable()
-    usb.kernel.send(uevent("remove", devpath))
-    usb.on_readable()
+    deliver(usb, uevent("add", devpath))
+    deliver(usb, uevent("remove", devpath))
 
-    assert usb.events == [
-        DeviceEvent(DeviceKind.USB, DeviceChange.CONNECTED, "Keyboard", devpath),
-        DeviceEvent(DeviceKind.USB, DeviceChange.DISCONNECTED, "Keyboard", devpath),
-    ]
+    arrival = DeviceEvent(
+        DeviceKind.USB, DeviceChange.CONNECTED, "Cherry Keyboard", devpath,
+        category=DeviceCategory.INPUT, manufacturer="Cherry",
+    )
+    assert usb.events == [arrival, replace(arrival, change=DeviceChange.DISCONNECTED)]
 
 
 def test_a_device_present_at_start_is_named_on_removal_but_not_announced(usb):
     devpath = "/devices/pci0/usb1/1-4"
-    make_device(usb.sysfs, devpath, product="Headset")
+    make_device(usb.sysfs, devpath, product="Headset", interfaces=[AUDIO_CONTROL, AUDIO_STREAMING, HID])
     usb.start(usb.events.append)
     assert usb.events == []
 
-    usb.kernel.send(uevent("remove", devpath))
-    usb.on_readable()
+    deliver(usb, uevent("remove", devpath))
 
-    assert usb.events == [DeviceEvent(DeviceKind.USB, DeviceChange.DISCONNECTED, "Headset", devpath)]
+    assert usb.events == [DeviceEvent(
+        DeviceKind.USB, DeviceChange.DISCONNECTED, "Headset", devpath, category=DeviceCategory.AUDIO,
+    )]
 
 
 def test_interfaces_hubs_other_subsystems_and_other_actions_are_ignored(usb):
     usb.start(usb.events.append)
     make_device(usb.sysfs, "/d/usb1/1-5", product="Hub", device_class="09", listed=False)
-    for message in (
+    deliver(
+        usb,
         uevent("add", "/d/usb1/1-5"),                                   # a hub
+        uevent("bind", "/d/usb1/1-5"),
         uevent("add", "/d/usb1/1-6:1.0", DEVTYPE="usb_interface"),      # an interface
         uevent("add", "/d/block/sda", SUBSYSTEM="block", DEVTYPE="disk"),
-        uevent("bind", "/d/usb1/1-6"),
+        uevent("bind", "/d/usb1/1-6"),                                  # never added
+        uevent("change", "/d/usb1/1-5"),
         uevent("remove", "/d/usb1/1-9"),                                # never known
-    ):
-        usb.kernel.send(message)
-    usb.on_readable()
+    )
 
     assert usb.events == []
 
@@ -143,7 +158,7 @@ def test_interfaces_hubs_other_subsystems_and_other_actions_are_ignored(usb):
 def test_the_notifier_delivers_kernel_messages_without_polling(usb):
     devpath = "/devices/pci0/usb1/1-7"
     usb.start(usb.events.append)
-    make_device(usb.sysfs, devpath, product="Mouse", listed=False)
+    make_device(usb.sysfs, devpath, product="Mouse", interfaces=[HID], listed=False)
 
     usb.kernel.send(uevent("add", devpath))
     spin(50)
@@ -167,6 +182,189 @@ def test_a_socket_that_cannot_open_means_unavailable(tmp_path):
         raise PermissionError("netlink")
 
     assert LinuxUsbDeviceSource(sysfs=tmp_path, open_socket=refuse).start(lambda event: None) is False
+
+
+# --- USB: one physical connection, one event --------------------------------------
+
+
+def test_a_device_not_yet_configured_is_announced_at_its_bind_with_every_interface(usb):
+    # What the kernel really sends: the device's add before its configuration,
+    # then one add per interface, then the device's bind.
+    devpath = "/devices/pci0/usb1/1-3"
+    usb.start(usb.events.append)
+    device = make_device(usb.sysfs, devpath, product="Pixel 8", manufacturer="Google", configured=False, listed=False)
+
+    deliver(usb, uevent("add", devpath))
+    assert usb.events == []
+
+    configure(device, [MTP, ADB])
+    deliver(
+        usb,
+        uevent("add", f"{devpath}/1-3:1.0", DEVTYPE="usb_interface", INTERFACE="6/1/1"),
+        uevent("add", f"{devpath}/1-3:1.1", DEVTYPE="usb_interface", INTERFACE="255/66/1"),
+        uevent("bind", f"{devpath}/1-3:1.0", DEVTYPE="usb_interface"),
+        uevent("bind", devpath),
+    )
+
+    assert usb.events == [DeviceEvent(
+        DeviceKind.USB, DeviceChange.CONNECTED, "Google Pixel 8", devpath,
+        category=DeviceCategory.SMARTPHONE, manufacturer="Google",
+    )]
+
+
+def test_a_composite_device_configured_by_the_time_it_is_read_is_announced_once(usb):
+    devpath = "/devices/pci0/usb1/1-3"
+    usb.start(usb.events.append)
+    make_device(usb.sysfs, devpath, product="C920", interfaces=[VIDEO_CONTROL, VIDEO_STREAMING,
+                                                               AUDIO_CONTROL, AUDIO_STREAMING], listed=False)
+
+    deliver(
+        usb,
+        uevent("add", devpath),
+        *(uevent("add", f"{devpath}/1-3:1.{n}", DEVTYPE="usb_interface") for n in range(4)),
+        uevent("bind", devpath),
+        uevent("add", devpath + "/1-3:1.0/video4linux/video0", SUBSYSTEM="video4linux", DEVTYPE=""),
+    )
+
+    assert [(event.change, event.category) for event in usb.events] == [
+        (DeviceChange.CONNECTED, DeviceCategory.CAMERA),
+    ]
+
+
+def test_a_device_removed_before_it_was_configured_announces_nothing(usb):
+    devpath = "/devices/pci0/usb1/1-3"
+    usb.start(usb.events.append)
+    make_device(usb.sysfs, devpath, product="Flaky", configured=False, listed=False)
+
+    deliver(usb, uevent("add", devpath), uevent("remove", devpath), uevent("bind", devpath))
+
+    assert usb.events == []
+
+
+def test_rapid_reconnection_reports_each_arrival_and_removal_in_order(usb):
+    devpath = "/devices/pci0/usb1/1-3"
+    usb.start(usb.events.append)
+    make_device(usb.sysfs, devpath, product="Stick", interfaces=[MASS_STORAGE], listed=False)
+
+    for _ in range(3):
+        deliver(usb, uevent("add", devpath), uevent("bind", devpath), uevent("remove", devpath))
+
+    assert [event.change for event in usb.events] == [DeviceChange.CONNECTED, DeviceChange.DISCONNECTED] * 3
+    assert {event.category for event in usb.events} == {DeviceCategory.STORAGE}
+
+
+def test_an_add_for_a_device_still_known_there_is_a_new_arrival(usb):
+    # The removal was lost (the kernel dropped it): the new device is news.
+    devpath = "/devices/pci0/usb1/1-3"
+    make_device(usb.sysfs, devpath, product="Old", interfaces=[HID])
+    usb.start(usb.events.append)
+
+    deliver(usb, uevent("add", devpath))
+
+    assert [(event.change, event.name) for event in usb.events] == [(DeviceChange.CONNECTED, "Old")]
+
+
+def test_a_device_with_no_strings_is_unnamed_and_unknown_not_guessed(usb):
+    devpath = "/devices/pci0/usb1/1-3"
+    usb.start(usb.events.append)
+    make_device(usb.sysfs, devpath, interfaces=[VENDOR], listed=False)
+
+    deliver(usb, uevent("add", devpath))
+
+    assert usb.events == [DeviceEvent(
+        DeviceKind.USB, DeviceChange.CONNECTED, "", devpath, category=DeviceCategory.UNKNOWN,
+    )]
+
+
+def test_interfaces_listed_on_the_bus_are_not_devices_present_at_start(usb):
+    make_device(usb.sysfs, "/d/usb1/1-2", product="Keyboard", interfaces=[HID, HID])
+
+    usb.start(usb.events.append)
+
+    assert list(usb._present) == ["/d/usb1/1-2"]
+
+
+def test_a_serial_number_never_reaches_an_event_or_the_debug_log(kernel, capsys):
+    devpath = "/devices/pci0/usb1/1-3"
+    source = kernel.source(debug=True)
+    events = []
+    source.start(events.append)
+    make_device(kernel.sysfs, devpath, product="Pixel 8", manufacturer="Google", vendor="18d1",
+                product_id="4ee7", serial="SERIAL0123456789", interfaces=[MTP], listed=False)
+
+    kernel.send(uevent("add", devpath), uevent("remove", devpath))
+    source.on_readable()
+    source.shutdown()
+
+    log = capsys.readouterr().err
+    assert "SERIAL0123456789" not in log and "SERIAL0123456789" not in repr(events)
+    assert "[devices] connected 1-3: smartphone 'Google Pixel 8' (18d1:4ee7, interfaces 06/01/01)" in log
+    assert "[devices] disconnected 1-3" in log
+
+
+def test_without_debug_ordinary_device_events_are_not_logged(usb, capsys):
+    devpath = "/devices/pci0/usb1/1-3"
+    usb.start(usb.events.append)
+    make_device(usb.sysfs, devpath, product="Mouse", interfaces=[HID], listed=False)
+
+    deliver(usb, uevent("add", devpath), uevent("remove", devpath))
+
+    assert len(usb.events) == 2 and "[devices]" not in capsys.readouterr().err
+
+
+# --- USB: classification ------------------------------------------------------------
+
+
+def interfaces(*specs: str) -> list[UsbInterface]:
+    result = []
+    for spec in specs:
+        triple, _, description = spec.partition(" ")
+        cls, subclass, protocol = (int(part, 16) for part in triple.split("/"))
+        result.append(UsbInterface(cls, subclass, protocol, description))
+    return result
+
+
+@pytest.mark.parametrize(("specs", "category"), [
+    ((MTP, ADB), DeviceCategory.SMARTPHONE),                    # Android, file transfer + debugging
+    ((MTP,), DeviceCategory.SMARTPHONE),                        # Android, file transfer
+    ((VENDOR, "ff/42/01"), DeviceCategory.SMARTPHONE),          # Android, debugging only
+    (("ff/42/03",), DeviceCategory.SMARTPHONE),                 # fastboot
+    ((MASS_STORAGE,), DeviceCategory.STORAGE),
+    ((VIDEO_CONTROL, VIDEO_STREAMING, AUDIO_CONTROL, AUDIO_STREAMING), DeviceCategory.CAMERA),
+    ((PTP,), DeviceCategory.CAMERA),                            # a still camera (or a phone in PTP mode)
+    ((AUDIO_CONTROL, AUDIO_STREAMING, HID), DeviceCategory.AUDIO),
+    ((HID, HID), DeviceCategory.INPUT),
+    ((VENDOR,), DeviceCategory.UNKNOWN),
+    (("e0/01/01", "e0/01/01"), DeviceCategory.UNKNOWN),         # a Bluetooth adapter
+    ((), DeviceCategory.UNKNOWN),
+])
+def test_devices_are_classified_from_their_own_interfaces(specs, category):
+    assert classify_usb_device(interfaces(*specs)) is category
+
+
+def test_a_device_level_class_counts_and_an_iphone_is_a_smartphone():
+    assert classify_usb_device([], device_class=0x08) is DeviceCategory.STORAGE
+    assert classify_usb_device([], device_class=0xEF) is DeviceCategory.UNKNOWN
+    assert classify_usb_device(interfaces(PTP, VENDOR), product="iPhone") is DeviceCategory.SMARTPHONE
+
+
+def test_a_device_with_unreadable_interfaces_is_classified_from_what_is_left(tmp_path):
+    device = make_device(tmp_path, "/a/1-1", interfaces=[HID, MASS_STORAGE])
+    (device / "1-1:1.1" / "bInterfaceClass").write_text("not hex\n")
+
+    assert read_interfaces(device) == (UsbInterface(0x03, 0x01, 0x01),)
+    assert is_configured(device)
+
+
+def test_configuration_is_complete_only_with_every_interface(tmp_path):
+    device = make_device(tmp_path, "/a/1-1", configured=False)
+    assert not is_configured(device)
+
+    (device / "bNumInterfaces").write_text(" 2\n")
+    interface = device / "1-1:1.0"
+    interface.mkdir()
+    (interface / "bInterfaceClass").write_text("08\n")
+    assert not is_configured(device)
 
 
 # --- Audio: PipeWire ------------------------------------------------------------------
