@@ -261,8 +261,11 @@ running). Expected, by eye:
 
 Also check: an error preview (*Task failed*) during *Listening* (Activity
 row) takes the band and shows the cross eyes; *Idle* afterwards brings back
-anything that waited. With hover or the controls open, notices still queue
-and restore the same way.
+anything that waited; *Thinking* holds notices back like *Listening*. Right
+click to open the controls, then play *Connect, then info*: nothing shows
+under the controls, and the phone appears when they close (use one, right
+click again, or move the pointer away for 1.5 s). Hover alone changes
+nothing.
 
 **Device information (optional, M2).** The providers are tested with
 scripted `adb` and `upower` output and a fake sysfs (`tests/adb_doubles.py`,

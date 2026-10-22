@@ -458,7 +458,7 @@ NotchWindow ── hover_changed ───────┤
   controls are open), LISTENING (MIRA is listening) — and COMPACT otherwise.
   The content band shows, in this order of precedence: controls > notice >
   listening (the real waveform) > task running > activity — where a notice
-  below INTERACTION does not show while MIRA listens or speaks (see "Notice
+  below INTERACTION does not show during a turn of conversation (see "Notice
   priority").
 - **Integrated controls.** Right click toggles the notch's own controls
   (Settings, Quit M.I.R.A.), drawn as pills in the content band and clicked
@@ -568,16 +568,21 @@ ordinary device events are not.
 also where notices are arbitrated; there is no second controller. Every
 notice has a `NoticePriority` (`mira/domain/notice.py`, `notice_priority`):
 
-| Priority | Notices | While MIRA listens or speaks |
+| Priority | Notices | During a turn (listening, thinking, speaking) |
 |---|---|---|
 | CRITICAL | errors (any category), alerts | shown at once |
-| INTERACTION | — (MIRA listening or speaking to the user) | — |
+| INTERACTION | — (a turn of conversation) | — |
 | FEEDBACK | task results | wait |
 | PASSIVE | device and connectivity changes | wait |
 
-The *floor* is the highest of the showing notice's priority and, while MIRA
-listens or speaks (the LISTENING reason, or activity LISTENING/SPEAKING),
-INTERACTION.
+The *floor* is the highest of: the showing notice's priority; INTERACTION
+during a turn — the LISTENING reason, or activity LISTENING, THINKING or
+SPEAKING (`INTERACTION_ACTIVITIES`), which the activity authority commits
+for one exchange (attend → deliberate → conclude), so nothing slips in
+between its steps; and, while something the user opened takes the content
+band (the integrated controls), a level above every priority, since a
+notice drawn under it could not be seen (`_band_taken`). Running tasks are
+not a turn.
 
 | Rule | Behaviour |
 |---|---|
@@ -585,8 +590,8 @@ INTERACTION.
 | Deferral | Below the floor, or at it about another subject: waits. At most 3 wait; when full, the lowest-priority, oldest is dropped. |
 | Coalescing | A newer notice about the same subject replaces the waiting one; an arrival and the same device's departure while waiting cancel out. The same notice as the one showing only restarts its time. |
 | Expiration | A waiting notice is dropped 10 s after it was deferred. |
-| Yielding | When MIRA starts listening or speaking, a showing notice below INTERACTION goes back to wait: the conversation has the band from its first moment. |
-| Restoration | When the floor drops (expiry, dismissal, listening/speaking ends) the best waiting notice (highest priority, oldest among equals) is shown in the same resolution step, so the notch stays expanded from one to the next instead of collapsing between them. One at a time. |
+| Yielding | When a turn starts, a showing notice below INTERACTION goes back to wait: the conversation has the band from its first moment. When the controls open, any showing notice does. Either way it returns later with its full time and no second reaction. |
+| Restoration | When the floor drops (expiry, dismissal, the turn ends, the controls close) the best waiting notice (highest priority, oldest among equals) is shown in the same resolution step, so the notch stays expanded from one to the next instead of collapsing between them. One at a time. |
 | Refinement | Device information (`refine`) updates the notice about its device in place, showing or waiting; the first information or a charging change restarts a showing notice's time, a moving percentage does not. Shown on its own only if announced, never with a reaction; dropped if the device's latest notice is its departure. |
 
 - **Reactions.** The eyes react when a notice *starts showing*
@@ -604,9 +609,10 @@ INTERACTION.
   and drops the waiting notices, and nothing is published or reacted to
   afterwards. Device information arrives on the UI thread (the service's
   `Scheduler.submit` completion), so no Qt object is touched off it.
-- **Not covered.** THINKING is not an interaction (a notice may show while
-  MIRA prepares an answer). The waiting queue is not persisted. Priorities
-  are fixed, not user-configurable.
+- **Not covered.** A waiting notice expires 10 s after it was deferred,
+  however long the turn: a long utterance (up to 30 s) or a slow LLM answer
+  (up to 10 s) can outlast it. The waiting queue is not persisted.
+  Priorities are fixed, not user-configurable.
 
 ### USB device notices
 
@@ -692,7 +698,7 @@ kernel uevent (add … bind / remove)
   play `EmbodimentCue.GREETING` (the success smile, 0.6 s, lowest priority:
   it never interrupts another cue) for an arrival, when its notice is
   shown; a removal gets none. A removal while the arrival still shows
-  replaces it; a device arriving while MIRA listens or speaks waits (see
+  replaces it; a device arriving during a turn of conversation waits (see
   "Notice priority").
 - **Threading and resources.** The uevent socket is read by a
   `QSocketNotifier` on the Qt main thread, at most 64 messages per wake-up

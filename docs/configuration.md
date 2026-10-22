@@ -183,10 +183,12 @@ actions MIRA ran), `connectivity` (network lost, limited, back online) —
 saying whether such a notice expands the notch by itself. A notice of a
 disabled category still becomes the content (visible on hover) and MIRA's eyes
 still react to it; it only does not expand the notch. `notice_duration_ms`
-(1000–30000) is how long a notice stays. While MIRA listens or speaks, only
-errors and alerts are shown; device, connectivity and task notices wait
-(up to 10 s, at most three) and appear when the conversation ends, and two
-devices connecting together are shown one after the other. Defaults: alerts, devices and
+(1000–30000) is how long a notice stays. While MIRA listens, thinks about
+what it heard or answers, only errors and alerts are shown; device,
+connectivity and task notices wait (up to 10 s, at most three) and appear
+when the exchange ends. While the notch's controls are open every notice
+waits, errors too, and appears when they close. Two devices connecting
+together are shown one after the other. Defaults: alerts, devices and
 connectivity expand, task results do not.
 
 **System notices.** The runtime watches USB devices (kernel uevents), audio
