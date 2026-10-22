@@ -25,6 +25,7 @@ from mira.ui.face.face_controller import FaceController
 from mira.ui.notch.presence import NotchPresence
 from mira.ui.notch.presentation import (
     DEFERRED_NOTICE_TTL_MS,
+    INTERACTION_ACTIVITIES,
     MAX_DEFERRED_NOTICES,
     NotchAction,
     NotchBehaviour,
@@ -144,14 +145,33 @@ def test_when_listening_ends_the_waiting_notice_is_shown_without_collapsing_firs
     assert notch.presences == [C]
 
 
-@pytest.mark.parametrize("activity", [ActivityState.SPEAKING, ActivityState.LISTENING])
-def test_a_device_connecting_while_mira_speaks_waits_for_the_answer_to_end(notch, activity):
+@pytest.mark.parametrize("activity", [ActivityState.LISTENING, ActivityState.THINKING, ActivityState.SPEAKING])
+def test_a_device_connecting_during_a_turn_waits_for_the_turn_to_end(notch, activity):
     notch.presenter.set_activity(activity)
 
     assert notch.presenter.present(arrived()) is NoticeOutcome.DEFERRED
-    notch.presenter.set_activity(ActivityState.THINKING)  # still busy, but not talking with the user
+    notch.presenter.set_activity(ActivityState.IDLE)
 
     assert notch.showing == arrived()
+
+
+def test_a_device_never_slips_in_between_the_steps_of_one_turn(notch):
+    notch.presenter.set_activity(ActivityState.LISTENING)
+    notch.presenter.present(arrived())
+    seen = []
+    notch.presenter.subscribe(lambda presentation: seen.append(presentation.notice))
+
+    for activity in (ActivityState.THINKING, ActivityState.SPEAKING, ActivityState.IDLE):
+        notch.presenter.set_activity(activity)
+
+    assert seen[:-1] == [None] * (len(seen) - 1) and seen[-1] == arrived()
+    assert notch.reactions == [arrived()]
+
+
+def test_mira_working_on_a_task_is_not_a_turn(notch):
+    notch.presenter.set_tasks_running(True)
+
+    assert notch.presenter.present(arrived()) is NoticeOutcome.SHOWN
 
 
 def test_a_device_notice_showing_steps_aside_when_listening_starts_and_comes_back(notch):
@@ -476,8 +496,7 @@ def test_a_long_random_sequence_keeps_the_presenter_consistent():
         shown = presenter.presentation.notice
         if shown is not None:
             assert notch.scheduler.pending_timers() >= 1  # it will expire
-        interacting = presenter.presentation.listening or \
-            presenter.presentation.activity in (ActivityState.LISTENING, ActivityState.SPEAKING)
+        interacting = presenter.presentation.listening or presenter.presentation.activity in INTERACTION_ACTIVITIES
         if interacting and shown is not None:
             assert notice_priority(shown) is NoticePriority.CRITICAL  # nothing else covers a conversation
         if presenter.presentation.controls:
@@ -545,7 +564,8 @@ def test_a_greeting_never_replaces_a_stronger_cue(notch, eyes):
     (ActivityState.SPEAKING, DONE, None),
     (ActivityState.LISTENING, ERROR, EmbodimentCue.ERROR),
     (ActivityState.IDLE, arrived(), EmbodimentCue.GREETING),
-    (ActivityState.THINKING, DONE, EmbodimentCue.SUCCESS),
+    (ActivityState.THINKING, DONE, None),
+    (ActivityState.IDLE, DONE, EmbodimentCue.SUCCESS),
 ])
 def test_without_a_notch_the_eyes_follow_the_same_priority(eyes, activity, notice, cue):
     eyes.set_intent(EmbodimentIntent(activity))

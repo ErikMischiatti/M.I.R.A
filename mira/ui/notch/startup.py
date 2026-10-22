@@ -11,13 +11,12 @@ from __future__ import annotations
 import sys
 
 from mira.domain.embodiment_cue import EmbodimentCondition, cue_for_notice
-from mira.domain.embodiment import ActivityState
 from mira.domain.notice import Notice, NoticePriority, notice_priority
 from mira.ui.face.face_animator import FaceAnimator
 from mira.ui.face.face_controller import FaceController
 from mira.ui.notch.config_store import NotchSettings
 from mira.ui.notch.notch_window import NotchWindow
-from mira.ui.notch.presentation import NotchPresenter
+from mira.ui.notch.presentation import INTERACTION_ACTIVITIES, NotchPresenter
 from mira.ui.notch.visual_config import InvalidVisualConfig
 
 
@@ -78,7 +77,7 @@ def deliver_notice(notice: Notice, *, presenter: NotchPresenter | None, controll
     previews exercise the real path.
 
     Without a notch nothing waits: the eyes react at once, by the same rule
-    — below `NoticePriority.INTERACTION`, not while MIRA listens or speaks.
+    — below `NoticePriority.INTERACTION`, not during a turn of conversation.
     """
 
     if presenter is not None:
@@ -86,7 +85,7 @@ def deliver_notice(notice: Notice, *, presenter: NotchPresenter | None, controll
         return
     if controller is None:
         return
-    interacting = controller.intent.activity in (ActivityState.LISTENING, ActivityState.SPEAKING)
+    interacting = controller.intent.activity in INTERACTION_ACTIVITIES
     if interacting and notice_priority(notice) < NoticePriority.INTERACTION:
         return
     react_to_notice(notice, controller)

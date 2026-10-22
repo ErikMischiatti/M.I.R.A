@@ -40,10 +40,14 @@ expand automatically still becomes the content for its lifetime (visible if
 the notch is open for another reason), but adds no expansion reason.
 
 **Priority.** Every notice has a `NoticePriority` (`mira.domain.notice`):
-PASSIVE (devices, connectivity) < FEEDBACK (task results) < INTERACTION (MIRA
-listening or speaking; no notice has it) < CRITICAL (errors, alerts). The
+PASSIVE (devices, connectivity) < FEEDBACK (task results) < INTERACTION (a
+turn of conversation; no notice has it) < CRITICAL (errors, alerts). A turn
+is MIRA listening, thinking about what it heard, or speaking
+(`INTERACTION_ACTIVITIES`): the activity authority commits all three for one
+exchange — LISTENING on input, THINKING once processing starts, SPEAKING or
+an affect with the response — so a notice never slips in between them. The
 *floor* is the highest of: the showing notice's priority; INTERACTION
-while MIRA listens or speaks; and, while something else takes the content
+during a turn; and, while something else takes the content
 band — the integrated controls — a level above every priority, since a
 notice drawn under them could not be seen.
 
@@ -324,8 +328,8 @@ ReactionListener = Callable[[Notice], None]
 MAX_DEFERRED_NOTICES = 3
 DEFERRED_NOTICE_TTL_MS = 10_000
 
-# Activities during which MIRA is in an exchange with the user.
-_INTERACTION_ACTIVITIES = frozenset({ActivityState.LISTENING, ActivityState.SPEAKING})
+# The activities of one turn of conversation; see the module.
+INTERACTION_ACTIVITIES = frozenset({ActivityState.LISTENING, ActivityState.THINKING, ActivityState.SPEAKING})
 
 # Above every notice priority: the content band belongs to something the
 # user opened, and a notice drawn under it would not be seen.
@@ -607,7 +611,7 @@ class NotchPresenter:
     # --- Arbitration ---------------------------------------------------------
 
     def _interacting(self) -> bool:
-        return self._listening or self._activity in _INTERACTION_ACTIVITIES
+        return self._listening or self._activity in INTERACTION_ACTIVITIES
 
     def _band_taken(self) -> bool:
         """Whether something the user opened has the content band."""
