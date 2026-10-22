@@ -217,8 +217,9 @@ def test_a_name_that_does_not_start_with_its_maker_is_kept_whole():
 def test_an_update_is_a_notice_about_the_same_device():
     notice = device_info_notice(DeviceInfoUpdate(IPHONE, DeviceInfo(battery_percent=84), announce=True))
 
-    assert notice == Notice(NoticeCategory.DEVICE, NoticeTone.INFO, "iPhone — Battery 84%",
-                            NoticeDevice(DeviceCategory.SMARTPHONE, connected=True, key=IPHONE.key))
+    assert notice == Notice(NoticeCategory.DEVICE, NoticeTone.INFO, "iPhone",
+                            NoticeDevice(DeviceCategory.SMARTPHONE, connected=True, key=IPHONE.key),
+                            detail="84%")
 
 
 # --- The notch refines its notice ------------------------------------------------------------
@@ -239,10 +240,10 @@ def test_information_replaces_the_arrival_it_belongs_to_and_gets_the_full_time(p
     presenter.present(device_notice(IPHONE))
     presenter._scheduler.advance(3000)
 
-    presenter.refine(enriched(), announce=False)
+    presenter.refine(enriched(announce=True), announce=True)
     presenter._scheduler.advance(3000)
 
-    assert presenter.presentation.notice.text == "iPhone — Battery 84%"
+    assert (presenter.presentation.notice.text, presenter.presentation.notice.detail) == ("iPhone", "84%")
     presenter._scheduler.advance(1000)
     assert presenter.presentation.notice is None
 
@@ -270,7 +271,7 @@ def test_a_departure_showing_is_never_refined(presenter):
 def test_information_worth_announcing_is_shown_on_its_own(presenter):
     presenter.refine(enriched(announce=True), announce=True)
 
-    assert presenter.presentation.notice.text == "iPhone — Battery 84%"
+    assert presenter.presentation.notice.text == "iPhone"
 
 
 def test_information_not_worth_announcing_waits_for_a_notice_to_refine(presenter):

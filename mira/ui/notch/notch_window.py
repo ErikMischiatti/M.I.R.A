@@ -1,3 +1,5 @@
+from dataclasses import dataclass
+
 from PySide6.QtCore import QElapsedTimer, QEasingCurve, QRect, QRectF, Qt, QTimer, QVariantAnimation, Signal
 from PySide6.QtGui import (
     QColor,
@@ -29,6 +31,7 @@ from mira.ui.notch.expanded_layout import (
     NotchContentStyle,
     content_row,
     control_cells,
+    label_room,
     reveal_fraction,
     waveform_bars,
 )
@@ -112,6 +115,8 @@ EYE_COLOR = QColor(245, 245, 245)
 # Symbols and labels: the eyes' colour, slightly receded so the eyes stay the
 # primary visual.
 CONTENT_COLOR = QColor(245, 245, 245, 210)
+# A label's detail ("84% · Charging"): the same ink, quieter.
+DETAIL_COLOR = QColor(245, 245, 245, 150)
 
 
 def eye_canvas(layout: NotchEyeLayout) -> QRectF:
@@ -148,6 +153,17 @@ ACTION_LABELS = {
 # The controls' pill: a quiet outline, filled under the pointer.
 CONTROL_COLOR = QColor(245, 245, 245, 40)
 CONTROL_HOVER_COLOR = QColor(245, 245, 245, 70)
+
+
+@dataclass(frozen=True)
+class ContentLayout:
+    """The expanded content as drawn: the symbol's square, then the texts that fit."""
+
+    symbol: QRectF
+    label: str
+    label_rect: QRectF
+    detail: str
+    detail_rect: QRectF
 
 
 class NotchWindow(QWidget):
@@ -816,26 +832,62 @@ class NotchWindow(QWidget):
             painter.setPen(CONTENT_COLOR)
             painter.drawText(rect, Qt.AlignCenter, label)
 
-    def _paint_content(self, painter: QPainter, content: NotchContent, row: ContentRow):
-        """Symbol, then the label if any, centred as one group in the row."""
+    def content_layout(self, content: NotchContent, row: ContentRow | None = None) -> ContentLayout:
+        """Where ``content``'s symbol, label and detail go, and what fits of each.
 
-        font = QFont(self.font())
-        font.setPixelSize(max(round(row.label_px), 1))
+        The symbol, the label and the detail form one group, centred in the
+        row, left to right and never overlapping; the label and the detail
+        share the width the symbol leaves (`expanded_layout.label_room`) and
+        are elided to their shares.
+        """
+        row = self.content_row if row is None else row
+        font = self._content_font(row)
         metrics = QFontMetricsF(font)
         area = row.area
-        label = content.label or ""
+        label, detail = content.label or "", content.detail or ""
         line = max(row.symbol_px, metrics.height())
-        room = area.width - row.symbol_px - (row.gap_px if label else 0.0)
-        label = metrics.elidedText(label, Qt.ElideRight, max(room, 0.0)) if label else ""
+        texts = label or detail
+        room = area.width - row.symbol_px - (row.gap_px if texts else 0.0)
+        share = label_room(
+            room,
+            metrics.horizontalAdvance(label) if label else 0.0,
+            metrics.horizontalAdvance(detail) if detail else 0.0,
+            row.label_px,
+        )
+        label = metrics.elidedText(label, Qt.ElideRight, share.label) if label and share.label > 0 else ""
+        detail = metrics.elidedText(detail, Qt.ElideRight, share.detail) if detail and share.detail > 0 else ""
         label_width = metrics.horizontalAdvance(label) if label else 0.0
-        group = row.symbol_px + (row.gap_px + label_width if label else 0.0)
+        detail_width = metrics.horizontalAdvance(detail) if detail else 0.0
+        gap = share.gap if label and detail else 0.0
+        text_width = label_width + gap + detail_width
+        group = row.symbol_px + (row.gap_px + text_width if text_width else 0.0)
         left = area.x + (area.width - group) / 2.0
-        top = row.center_y - row.symbol_px / 2.0
+        text_top = row.center_y - line / 2.0
+        symbol = QRectF(left, row.center_y - row.symbol_px / 2.0, row.symbol_px, row.symbol_px)
+        label_left = left + row.symbol_px + row.gap_px
+        return ContentLayout(
+            symbol=symbol,
+            label=label,
+            label_rect=QRectF(label_left, text_top, label_width, line),
+            detail=detail,
+            detail_rect=QRectF(label_left + label_width + gap, text_top, detail_width, line),
+        )
 
+    def _content_font(self, row: ContentRow) -> QFont:
+        font = QFont(self.font())
+        font.setPixelSize(max(round(row.label_px), 1))
+        return font
+
+    def _paint_content(self, painter: QPainter, content: NotchContent, row: ContentRow):
+        """Symbol, then the label and its detail if any, centred as one group in the row."""
+
+        layout = self.content_layout(content, row)
         phase = self._clock.elapsed() / 1000.0
-        paint_symbol(painter, content.symbol, QRectF(left, top, row.symbol_px, row.symbol_px), CONTENT_COLOR, phase)
-        if label:
-            painter.setFont(font)
-            painter.setPen(CONTENT_COLOR)
-            text_rect = QRectF(left + row.symbol_px + row.gap_px, row.center_y - line / 2.0, label_width + 1.0, line)
-            painter.drawText(text_rect, Qt.AlignVCenter | Qt.AlignLeft, label)
+        paint_symbol(painter, content.symbol, layout.symbol, CONTENT_COLOR, phase)
+        painter.setFont(self._content_font(row))
+        for text, rect, color in ((layout.label, layout.label_rect, CONTENT_COLOR),
+                                  (layout.detail, layout.detail_rect, DETAIL_COLOR)):
+            if text:
+                painter.setPen(color)
+                # One pixel of slack: the advance can round below what is drawn.
+                painter.drawText(rect.adjusted(0.0, 0.0, 1.0, 0.0), Qt.AlignVCenter | Qt.AlignLeft, text)

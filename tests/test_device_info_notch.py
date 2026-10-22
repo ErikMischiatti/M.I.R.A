@@ -76,7 +76,11 @@ def runtime(qt_application, tmp_path):
         notice = desktop.presenter.presentation.notice
         return None if notice is None else notice.text
 
-    runtime.text = text
+    def detail():
+        notice = desktop.presenter.presentation.notice
+        return None if notice is None else notice.detail
+
+    runtime.text, runtime.detail = text, detail
     yield runtime
     desktop.shutdown()
     application.shutdown()
@@ -102,7 +106,7 @@ def test_a_phone_with_debugging_grows_its_notice_with_model_and_battery(runtime)
 
     runtime.scheduler.run_all()  # the adb query, off the UI thread in production
 
-    assert runtime.text() == "Pixel 8 — Battery 84% — Charging"
+    assert (runtime.text(), runtime.detail()) == ("Pixel 8", "84% · Charging")
     assert runtime.desktop.notch.presence is NotchPresence.EXPANDED
     assert runtime.desktop.controller.active_cue is None  # greeted once, at the arrival
     runtime.scheduler.advance(runtime.desktop.presenter.behaviour.notice_duration_ms)
@@ -158,7 +162,7 @@ def test_a_phone_authorized_after_a_moment_is_announced_then(runtime):
     runtime.scheduler.advance(RETRY_DELAYS_MS[0])
     runtime.scheduler.run_all()
 
-    assert runtime.text() == "Pixel 8 — Battery 84% — Charging"
+    assert (runtime.text(), runtime.detail()) == ("Pixel 8", "84% · Charging")
     assert runtime.desktop.notch.presence is NotchPresence.EXPANDED
 
 
@@ -173,7 +177,7 @@ def test_a_usb_sticks_capacity_joins_its_notice(runtime):
 
     runtime.scheduler.run_all()
 
-    assert runtime.text() == "SanDisk Ultra — 64 GB"
+    assert (runtime.text(), runtime.detail()) == ("SanDisk Ultra", "64 GB")
 
 
 def test_closing_mira_during_a_query_shows_nothing_more(runtime):

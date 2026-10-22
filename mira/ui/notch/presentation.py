@@ -118,10 +118,16 @@ class NotchAction(StrEnum):
 
 @dataclass(frozen=True, slots=True)
 class NotchContent:
-    """What the expanded notch shows under the eyes: a symbol, a short label."""
+    """What the expanded notch shows under the eyes: a symbol, a short label.
+
+    ``detail`` is secondary information about what the label names
+    ("84% · Charging" after "Pixel 8"), drawn after it, less prominently;
+    the label is shortened before the detail is.
+    """
 
     symbol: NotchSymbol
     label: str | None = None
+    detail: str | None = None
 
 
 _ACTIVITY_CONTENT = {
@@ -171,7 +177,8 @@ def notice_content(notice: Notice) -> NotchContent:
     if symbol is None:
         symbol = _CATEGORY_SYMBOL[notice.category]
     text = (notice.text or "").strip() or None
-    return NotchContent(symbol, text if text is not None else _TONE_LABEL.get(notice.tone))
+    detail = (notice.detail or "").strip() or None
+    return NotchContent(symbol, text if text is not None else _TONE_LABEL.get(notice.tone), detail)
 
 
 TASK_RUNNING_CONTENT = NotchContent(NotchSymbol.TASK, "Working")

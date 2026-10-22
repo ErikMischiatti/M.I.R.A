@@ -121,13 +121,33 @@ def _short_name(device: DeviceEvent) -> str:
     return name
 
 
-def device_info_text(device: DeviceEvent, info: DeviceInfo) -> str:
-    """"Pixel 8 — Battery 84% — Charging", with only the parts that were read."""
+def device_info_name(device: DeviceEvent, info: DeviceInfo) -> str:
+    """What to call the device: the model a provider read, else its USB name.
 
-    # A battery line is long, and a phone's model reads well alone; anything
-    # else keeps the maker, which is often what tells it apart ("SanDisk Ultra").
+    Next to a battery reading the maker is dropped ("iPhone", "Pixel 8"): a
+    phone's model reads well alone. Anything else keeps it, which is often
+    what tells it apart ("SanDisk Ultra").
+    """
     name = _short_name(device) if info.battery_percent is not None else device.name.strip()
-    parts = [(info.model or "").strip() or name or "Device"]
+    return (info.model or "").strip() or name or "Device"
+
+
+def device_info_detail(info: DeviceInfo) -> str | None:
+    """"84% · Charging", "64 GB": only the readings there are; None without any."""
+    parts = []
+    if info.battery_percent is not None:
+        parts.append(f"{info.battery_percent}%")
+    if info.charging is not None:
+        parts.append(_CHARGING_TEXT[info.charging])
+    if info.capacity_bytes is not None:
+        parts.append(format_capacity(info.capacity_bytes))
+    return " · ".join(parts) or None
+
+
+def device_info_text(device: DeviceEvent, info: DeviceInfo) -> str:
+    """"Pixel 8 — Battery 84% — Charging" in one line, with only the parts that were read."""
+
+    parts = [device_info_name(device, info)]
     if info.battery_percent is not None:
         parts.append(f"Battery {info.battery_percent}%")
     if info.charging is not None:
@@ -138,11 +158,11 @@ def device_info_text(device: DeviceEvent, info: DeviceInfo) -> str:
 
 
 def device_info_notice(update: DeviceInfoUpdate) -> Notice:
-    """The device notice an update refines: same device, richer text."""
+    """The device notice an update refines: the same device, named, with its readings as detail."""
 
-    device = update.device
+    device, info = update.device, update.info
     category = device.category or DeviceCategory.UNKNOWN
     return Notice(
-        NoticeCategory.DEVICE, NoticeTone.INFO, device_info_text(device, update.info),
-        NoticeDevice(category, connected=True, key=device.key),
+        NoticeCategory.DEVICE, NoticeTone.INFO, device_info_name(device, info),
+        NoticeDevice(category, connected=True, key=device.key), detail=device_info_detail(info),
     )

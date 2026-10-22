@@ -21,7 +21,10 @@ are added when something emits them. `text` is optional and short: an
 embodiment that cannot show text, or a notice whose tone says enough, needs
 none. `device` is optional too: a DEVICE notice whose source could tell what
 kind of device it is about, and whether it arrived or left, says so, and an
-embodiment may show it (the notch draws a phone for a phone).
+embodiment may show it (the notch draws a phone for a phone). `detail` is
+secondary information about the subject named by `text` — "84% · Charging"
+for "Pixel 8" — which an embodiment may show less prominently, or join to
+the text; it is never needed to understand the notice.
 """
 
 from __future__ import annotations
@@ -77,3 +80,4 @@ class Notice:
     tone: NoticeTone = NoticeTone.INFO
     text: str | None = None
     device: NoticeDevice | None = None
+    detail: str | None = None

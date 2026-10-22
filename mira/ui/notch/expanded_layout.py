@@ -21,7 +21,15 @@ with them. The group is centred horizontally.
 Whether a style fits is `content_problems`: the group must end inside the
 expanded notch's safe region, and the symbol must fit between the rounded
 lower corners at the group's height. The label never makes a style invalid:
-it is elided to the width left. A style that does not fit is rejected by
+it is elided to the width left.
+
+A label may come with a *detail* — secondary information about what it
+names ("Pixel 8", then "84% · Charging") — drawn after it on the same line,
+so the content stays one row and every valid geometry stays valid. When
+both do not fit, `label_room` shares the width: the detail first, since it
+carries the reading, and the label the rest, but never less than
+`MIN_LABEL_EMS` text sizes while the detail could be shortened instead.
+Both are elided from the end, so a detail keeps its percentage longest. A style that does not fit is rejected by
 `visual_config`, like eyes that would clip, and the notch keeps its last
 valid configuration.
 
@@ -47,6 +55,11 @@ MAX_EYE_GAP_PX = 200.0
 
 # A label's box is taller than its pixel size: ascent plus descent.
 LINE_HEIGHT_SHARE = 1.25
+
+# A name keeps at least this many text sizes of width before its detail
+# is shortened for it; between the two, this much space.
+MIN_LABEL_EMS = 3.0
+DETAIL_GAP_EMS = 0.6
 
 # Kept clear between the content and the notch outline at the sides.
 SIDE_PADDING_PX = 8.0
@@ -102,6 +115,34 @@ class ContentRow:
     @property
     def center_y(self) -> float:
         return self.area.y + self.area.height / 2.0
+
+
+@dataclass(frozen=True, slots=True)
+class LabelRoom:
+    """How wide the label and its detail may be drawn; 0 means not drawn."""
+
+    label: float
+    detail: float
+    gap: float
+
+
+def label_room(room: float, label_width: float, detail_width: float, text_px: float) -> LabelRoom:
+    """Share ``room`` px between a label and its detail; see the module.
+
+    ``label_width`` and ``detail_width`` are their full widths (0 when there
+    is none). Never more than either needs, never more than ``room`` in all.
+    """
+
+    room = max(room, 0.0)
+    if detail_width <= 0:
+        return LabelRoom(min(label_width, room), 0.0, 0.0)
+    gap = DETAIL_GAP_EMS * text_px if label_width > 0 else 0.0
+    if label_width + gap + detail_width <= room:
+        return LabelRoom(label_width, detail_width, gap)
+    label_floor = min(label_width, MIN_LABEL_EMS * text_px)
+    detail = min(detail_width, max(room - gap - label_floor, 0.0))
+    label = min(label_width, max(room - gap - detail, 0.0))
+    return LabelRoom(label, detail, gap if label > 0 and detail > 0 else 0.0)
 
 
 def corner_inset(size: NotchSize, top: float, bottom: float) -> float:
