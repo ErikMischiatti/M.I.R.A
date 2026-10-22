@@ -28,7 +28,7 @@ from pathlib import Path
 from PySide6.QtCore import QSocketNotifier, QTimer
 from PySide6.QtWidgets import QApplication
 
-from mira.application.audio import desktop_audio_backend
+from mira.application.audio import desktop_audio_backend, desktop_sound_output
 from mira.application.voice import configure_listening
 from mira.application.composition import build_application, desktop_system_event_sources
 from mira.application.instance import (
@@ -152,7 +152,9 @@ def main(argv: list[str] | None = None, *, claim=claim_runtime):
     # and this is the thread that runs the event loop below. One runtime, so
     # one set of system watchers, whichever surfaces it shows.
     application = build_application(
-        system_event_sources=desktop_system_event_sources(), audio_backend=desktop_audio_backend()
+        system_event_sources=desktop_system_event_sources(),
+        audio_backend=desktop_audio_backend(),
+        sound_output=desktop_sound_output(),
     )
 
     # The runtime's own preferences (not the notch's): how listening starts.
@@ -174,6 +176,8 @@ def main(argv: list[str] | None = None, *, claim=claim_runtime):
     # anything is shown, never when the user first asks MIRA to listen. The
     # microphone is not opened.
     application.audio.prepare()
+    # The sounds load now too, so the first chime never waits for them.
+    application.sound.prepare()
     # Wake monitoring (if chosen) starts here, before anything is shown; it
     # captures, but MIRA stays idle until the wake word is heard.
     settings = listening.settings

@@ -237,6 +237,10 @@ def test_subscribers_are_registered_exactly_once_in_a_fixed_order(graph):
         ],
         "state_changed": ["DesktopShell.on_state_changed"],
         "tasks_changed": ["DesktopShell.on_tasks_changed"],
+        # The countdown's state, a finished one included, goes to the shell.
+        "timer_changed": ["DesktopShell.on_timer_changed"],
+        # Its end is heard once, whoever shows it.
+        "timer_finished": ["SoundCues.on_timer_finished"],
         "user_input_received": ["InteractionManager.on_user_input_received"],
     }
 

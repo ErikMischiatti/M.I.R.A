@@ -62,6 +62,7 @@ from mira.application.voice import configure_listening, wake_word_available
 from mira.domain.embodiment import ActivityState
 from mira.domain.listening import ActivationSource
 from mira.domain.notice import Notice
+from mira.domain.timer import TimerSnapshot
 from mira.ui.face.face_animator import FaceAnimator
 from mira.ui.listening_keys import KeyboardActivation
 from mira.ui.listening_settings import ListeningSession, ListeningSettings
@@ -71,8 +72,8 @@ from mira.ui.notch.config_store import ConfigSession, NotchSettings
 from mira.ui.notch.debug_window import NotchDebugWindow
 from mira.ui.notch.notch_window import NotchWindow
 from mira.ui.notch.presence import NotchPresence
-from mira.ui.notch.presentation import NotchAction, NotchPresenter
-from mira.ui.notch.startup import bind_presenter, build_notch, deliver_notice, deliver_tasks
+from mira.ui.notch.presentation import NotchAction, NotchPresenter, TimerButton, TimerCommand
+from mira.ui.notch.startup import bind_presenter, build_notch, deliver_notice, deliver_tasks, deliver_timer
 
 
 class Surface(StrEnum):
@@ -83,7 +84,9 @@ class Surface(StrEnum):
 
 
 # The intents the notch offers; the shell honours each of them.
-NOTCH_ACTIONS = frozenset({NotchAction.OPEN_MAIN_WINDOW, NotchAction.OPEN_SETTINGS, NotchAction.QUIT})
+NOTCH_ACTIONS = frozenset(
+    {NotchAction.OPEN_MAIN_WINDOW, NotchAction.OPEN_SETTINGS, NotchAction.QUIT, NotchAction.TIMER}
+)
 
 
 class DesktopShell:
@@ -144,6 +147,9 @@ class DesktopShell:
         # Voice listening (`mira.core.listening`): the notch opens and shows
         # the real waveform; the eyes show LISTENING through the activity.
         application.event_bus.subscribe("listening_changed", self.on_listening_changed)
+        # The countdown (`mira.core.countdown_timer`): its state changes; the
+        # time left is pulled by the notch. FINISHED lasts until the user's OK.
+        application.event_bus.subscribe("timer_changed", self.on_timer_changed)
 
         self.window: MainWindow | None = None
         self.notch: NotchWindow | None = None
@@ -153,6 +159,7 @@ class DesktopShell:
         self._activity = ActivityState.IDLE
         self._tasks_running = False
         self._listening = (False, False)
+        self._timer = application.timer.snapshot
         self._stopped = False
         self.listening_session = listening_session
         self.keyboard: KeyboardActivation | None = None
@@ -199,11 +206,16 @@ class DesktopShell:
         self.presenter.set_activity(self._activity)
         self.presenter.set_tasks_running(self._tasks_running)
         self.presenter.set_listening(*self._listening)
+        self.presenter.set_timer(self._timer)
         # Real captured audio, pulled by the notch on its own repaints.
         audio = self._application.audio
         self.notch.set_waveform_source(lambda: audio.waveform)
+        # Likewise the countdown's time left.
+        timer = self._application.timer
+        self.notch.set_timer_source(lambda: timer.snapshot)
         bind_presenter(self.notch, self.presenter)
         self.notch.action_requested.connect(self.on_notch_action)
+        self.notch.timer_requested.connect(self.on_timer_requested)
         # From now on the notch keeps the runtime alive: closing the main
         # window only hides it.
         application = QApplication.instance()
@@ -312,11 +324,37 @@ class DesktopShell:
         self._tasks_running = bool(getattr(running, "active", False))
         deliver_tasks(self._tasks_running, presenter=self.presenter, controller=self.controller)
 
+    def on_timer_changed(self, timer: TimerSnapshot) -> None:
+        """A finished countdown waits, on every surface, until the timer is acknowledged."""
+        self._timer = timer
+        deliver_timer(timer, presenter=self.presenter, controller=self.controller)
+
+    def on_timer_requested(self, button: TimerButton) -> None:
+        """A timer panel button: the countdown's commands go to the application's timer."""
+        timer = self._application.timer
+        command = button.command
+        if command is TimerCommand.START:
+            if self.presenter is not None:
+                timer.start(self.presenter.timer_selection_s)
+        elif command is TimerCommand.PAUSE:
+            timer.pause()
+        elif command is TimerCommand.RESUME:
+            timer.resume()
+        elif command is TimerCommand.RESET:
+            timer.reset()
+        elif command is TimerCommand.ACKNOWLEDGE:
+            timer.acknowledge()
+        elif self.presenter is not None:
+            self.presenter.choose_timer(button)
+
     def on_notch_action(self, action: str) -> None:
         # A used control has done its job: the controls close.
         if self.presenter is not None and action in (NotchAction.OPEN_SETTINGS, NotchAction.QUIT):
             self.presenter.close_controls()
-        if action == NotchAction.OPEN_MAIN_WINDOW:
+        if action == NotchAction.TIMER:
+            if self.presenter is not None:
+                self.presenter.open_timer_panel()
+        elif action == NotchAction.OPEN_MAIN_WINDOW:
             self.open_main_window()
         elif action == NotchAction.OPEN_SETTINGS:
             self.open_settings()

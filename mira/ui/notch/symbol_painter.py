@@ -142,6 +142,15 @@ def _network(painter: QPainter, square: QRectF, color: QColor, phase: float) -> 
     _dot(painter, centre, square.width() * 0.07, color)
 
 
+def _timer(painter: QPainter, square: QRectF, color: QColor, phase: float) -> None:
+    # A stopwatch: a dial below a crown, one hand towards eleven minutes.
+    painter.drawEllipse(_unit_rect(square, 0.14, 0.2, 0.72, 0.72))
+    painter.drawLine(_at(square, 0.42, 0.06), _at(square, 0.58, 0.06))
+    painter.drawLine(_at(square, 0.5, 0.06), _at(square, 0.5, 0.2))
+    painter.drawLine(_at(square, 0.5, 0.56), _at(square, 0.5, 0.36))
+    painter.drawLine(_at(square, 0.5, 0.56), _at(square, 0.63, 0.63))
+
+
 _DRAW: dict[NotchSymbol, Callable[[QPainter, QRectF, QColor, float], None]] = {
     NotchSymbol.LISTENING: _listening,
     NotchSymbol.THINKING: _thinking,
@@ -152,4 +161,5 @@ _DRAW: dict[NotchSymbol, Callable[[QPainter, QRectF, QColor, float], None]] = {
     NotchSymbol.TASK: _task,
     NotchSymbol.DEVICE: _device,
     NotchSymbol.NETWORK: _network,
+    NotchSymbol.TIMER: _timer,
 }
