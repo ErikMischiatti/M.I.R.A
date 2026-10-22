@@ -34,7 +34,8 @@ would be stale.
 
 Ongoing states are not cues but *conditions* (`EmbodimentCondition`): true
 for as long as something lasts, with no timeout — TASK_RUNNING while any
-action is executing. A condition has its own restrained treatment
+action is executing, TIMER_FINISHED while a finished countdown awaits the
+user's acknowledgement. A condition has its own restrained treatment
 (`CONDITION_SHAPES`), eased in and out by `ConditionPlayback`. The frame
 resolves the layers in a fixed order:
 
@@ -179,18 +180,30 @@ class EmbodimentCondition(StrEnum):
     """An ongoing state of MIRA shown for exactly as long as it holds."""
 
     TASK_RUNNING = "task running"
+    TIMER_FINISHED = "timer finished"
+    """A countdown ran out and the user has not acknowledged it yet."""
 
 
-CONDITION_SHAPES = {EmbodimentCondition.TASK_RUNNING: EyeShape.FOCUSED}
+CONDITION_SHAPES = {
+    EmbodimentCondition.TASK_RUNNING: EyeShape.FOCUSED,
+    # The success cue's smiling eyes, held instead of flashed.
+    EmbodimentCondition.TIMER_FINISHED: EyeShape.CHEVRON,
+}
 
-# Highest first, for when several hold at once.
-CONDITION_PRIORITY = (EmbodimentCondition.TASK_RUNNING,)
+# Highest first, for when several hold at once: waiting for the user wins.
+CONDITION_PRIORITY = (EmbodimentCondition.TIMER_FINISHED, EmbodimentCondition.TASK_RUNNING)
 
 CONDITION_TRANSITION_S = 0.3
-# The working eyes "breathe": a slow, small swing of how narrowed they are,
-# between BREATH_LOW and 1 of the full treatment. Restrained on purpose.
+# A held condition "breathes": a slow, small swing of how far its treatment
+# is drawn, between its floor and 1. Restrained on purpose: the working eyes
+# narrow a little more and less (BREATH_LOW); a held shape, which grows from
+# its centre, only swells slightly.
 BREATH_PERIOD_S = 2.4
 BREATH_LOW = 0.8
+CONDITION_BREATH_LOW = {
+    EmbodimentCondition.TASK_RUNNING: BREATH_LOW,
+    EmbodimentCondition.TIMER_FINISHED: 0.92,
+}
 
 
 class ConditionPlayback:
@@ -229,7 +242,8 @@ class ConditionPlayback:
         if self._shown is None or self._blend <= 0.0:
             return 0.0
         breath = 0.5 + 0.5 * math.sin(2 * math.pi * self._phase_s / BREATH_PERIOD_S)
-        return self._blend * (BREATH_LOW + (1.0 - BREATH_LOW) * breath)
+        low = CONDITION_BREATH_LOW[self._shown]
+        return self._blend * (low + (1.0 - low) * breath)
 
     def advance(self, dt_seconds: float) -> None:
         dt = max(dt_seconds, 0.0)

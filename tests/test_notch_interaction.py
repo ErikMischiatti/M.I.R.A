@@ -190,8 +190,8 @@ def test_right_click_opens_the_notchs_own_controls_not_a_native_menu(desktop):
     rects = open_controls(desktop.notch)
 
     assert native_menus() == []
-    assert list(rects) == [NotchAction.OPEN_SETTINGS, NotchAction.QUIT]
-    assert [ACTION_LABELS[action] for action in rects] == ["Settings", "Quit M.I.R.A."]
+    assert list(rects) == [NotchAction.TIMER, NotchAction.OPEN_SETTINGS, NotchAction.QUIT]
+    assert [ACTION_LABELS[action] for action in rects] == ["Timer", "Settings", "Quit M.I.R.A."]
     # Opening the main window is the double click, not a control.
     assert NotchAction.OPEN_MAIN_WINDOW not in rects
     assert desktop.notch.presence is NotchPresence.EXPANDED
