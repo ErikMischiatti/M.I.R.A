@@ -186,8 +186,10 @@ still react to it; it only does not expand the notch. `notice_duration_ms`
 (1000–30000) is how long a notice stays. While MIRA listens, thinks about
 what it heard or answers, only errors and alerts are shown; device,
 connectivity and task notices wait (up to 10 s, at most three) and appear
-when the exchange ends. While the notch's controls are open every notice
-waits, errors too, and appears when they close. Two devices connecting
+when the exchange ends, however long it took (up to a minute). While the
+notch's controls are open, notices wait and appear when they close; an
+error or alert closes the controls instead, so it can be seen. Two devices
+connecting
 together are shown one after the other. Defaults: alerts, devices and
 connectivity expand, task results do not.
 

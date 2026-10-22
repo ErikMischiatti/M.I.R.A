@@ -265,7 +265,15 @@ anything that waited; *Thinking* holds notices back like *Listening*. Right
 click to open the controls, then play *Connect, then info*: nothing shows
 under the controls, and the phone appears when they close (use one, right
 click again, or move the pointer away for 1.5 s). Hover alone changes
-nothing.
+nothing. With the controls open, *Task failed* closes them and shows the
+error with the cross eyes. A long *Listening* (half a minute) followed by
+*Idle* still brings back a device that connected at its start.
+
+**Shutdown.** Start `MIRA`, then from another terminal `kill -TERM <pid>`:
+the log ends like Ctrl+C (no traceback), the process exits with status 0,
+`$XDG_RUNTIME_DIR/mira/runtime.sock` is gone and `pgrep -x pw-dump` shows
+no orphan. With an adb phone connected, stopping MIRA right after plugging
+it in returns at once rather than after adb's timeout.
 
 **Device information (optional, M2).** The providers are tested with
 scripted `adb` and `upower` output and a fake sysfs (`tests/adb_doubles.py`,

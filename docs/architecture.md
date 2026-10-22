@@ -127,9 +127,17 @@ own (`mira/application/instance.py`, `mira/ui/instance_server.py`):
   the application (producers first), then the server (the socket file is
   removed), then the lock. A forwarding launcher exits as soon as its
   request is answered.
-- **SIGTERM** is not handled: the process ends without the orderly shutdown
-  and leaves the socket file, which the next launcher removes (as after a
-  crash). Use Quit or Ctrl+C.
+- **SIGTERM** (a logout, a service manager) takes the same orderly path as
+  Ctrl+C: `quit_on_interrupt` handles both, its Python handler only posts
+  `app.quit` (the wakeup fd wakes the loop), and everything else runs in
+  `aboutToQuit` — the shell, then the application: listening and audio,
+  device queries (their child processes killed, `DeviceInfoService`
+  cancels its providers), the system watchers (the USB socket, `pw-dump`),
+  the camera, the scheduler and its timers — then the server (socket file
+  removed) and the lock. A second signal of the same kind ends a shutdown
+  that hangs. SIGKILL cannot be handled: the kernel still closes every
+  descriptor and the lock, and the next launcher removes the stale socket
+  file; an orphaned `pw-dump` ends at its next write (SIGPIPE).
 - **Not here:** no network listener, no generic remote control. Requests are
   limited to showing a surface. `MIRA-TUNE` is a separate development tool,
   not part of the runtime.
@@ -579,19 +587,29 @@ The *floor* is the highest of: the showing notice's priority; INTERACTION
 during a turn — the LISTENING reason, or activity LISTENING, THINKING or
 SPEAKING (`INTERACTION_ACTIVITIES`), which the activity authority commits
 for one exchange (attend → deliberate → conclude), so nothing slips in
-between its steps; and, while something the user opened takes the content
-band (the integrated controls), a level above every priority, since a
-notice drawn under it could not be seen (`_band_taken`). Running tasks are
-not a turn.
+between its steps; and CRITICAL while something else has the content band
+(`_band_taken`), since a notice drawn under it could not be seen. Running
+tasks are not a turn.
+
+**The content band.** Owners are of two kinds:
+
+| Owner | Examples | A notice below CRITICAL | A critical notice |
+|---|---|---|---|
+| Transient (`_transient_band`) | the integrated controls; the timer's panel once integrated | waits | arriving: closes the owner and shows — an error must be seen and acted on |
+| Persistent (`_persistent_band`) | a finished timer awaiting OK, once integrated | waits | shows; the owner is *suspended* while it shows, never dismissed, and returns when it ends |
+
+Opening a transient owner is the user's own gesture: it pushes any showing
+notice aside, critical or not, and that notice returns when the owner
+closes. No notice is ever drawn, timed or reacted to underneath an owner.
 
 | Rule | Behaviour |
 |---|---|
 | Preemption | Above the floor: shown at once, full duration. At the floor and about the same subject (same `NoticeDevice.key`, else same category): replaces (a device leaving replaces its arrival). A preempted notice of another subject goes back to wait, without a second reaction. |
 | Deferral | Below the floor, or at it about another subject: waits. At most 3 wait; when full, the lowest-priority, oldest is dropped. |
 | Coalescing | A newer notice about the same subject replaces the waiting one; an arrival and the same device's departure while waiting cancel out. The same notice as the one showing only restarts its time. |
-| Expiration | A waiting notice is dropped 10 s after it was deferred. |
-| Yielding | When a turn starts, a showing notice below INTERACTION goes back to wait: the conversation has the band from its first moment. When the controls open, any showing notice does. Either way it returns later with its full time and no second reaction. |
-| Restoration | When the floor drops (expiry, dismissal, the turn ends, the controls close) the best waiting notice (highest priority, oldest among equals) is shown in the same resolution step, so the notch stays expanded from one to the next instead of collapsing between them. One at a time. |
+| Expiration | Validity, eligible waiting and display are kept apart. *Validity*: a notice no longer true is gone at once (superseded by a newer one about its subject; an arrival cancelled by the departure); nothing waits longer than `MAX_NOTICE_AGE_MS` (60 s) in all, whatever holds it back. *Eligible waiting*: time spent waiting although only the queue holds it back — not counted during a turn or under an owner it cannot pass; it may last as long as every notice ahead needs at the configured pace plus `ELIGIBLE_GRACE_MS` (3 × 4 s + 2 s = 14 s by default), counted in 500 ms steps on the scheduler. *Display*: `notice_duration_ms` once shown. |
+| Yielding | When a turn starts, a showing notice below INTERACTION goes back to wait: the conversation has the band from its first moment. When a persistent owner appears, a showing notice below CRITICAL does. When the user opens a transient owner, any showing notice does. Either way it returns later with its full time and no second reaction. |
+| Restoration | When the floor drops (expiry, dismissal, the turn ends, an owner closes or is answered) the best waiting notice (highest priority, oldest among equals) is shown in the same resolution step, so the notch stays expanded from one to the next instead of collapsing between them. One at a time. |
 | Refinement | Device information (`refine`) updates the notice about its device in place, showing or waiting; the first information or a charging change restarts a showing notice's time, a moving percentage does not. Shown on its own only if announced, never with a reaction; dropped if the device's latest notice is its departure. |
 
 - **Reactions.** The eyes react when a notice *starts showing*
@@ -604,15 +622,14 @@ not a turn.
 - **Expansion.** Unchanged and reason-based: a notice ending while LISTENING
   holds never collapses the notch, and a restored notice takes over the
   NOTICE reason in the same step.
-- **Lifecycle.** Notice, deferral and controls timers all run on the
-  injected `Scheduler`, guarded by generations; `shutdown` cancels every one
-  and drops the waiting notices, and nothing is published or reacted to
-  afterwards. Device information arrives on the UI thread (the service's
+- **Lifecycle.** Notice, age, eligibility and controls timers all run on
+  the injected `Scheduler`, guarded by generations; `shutdown` cancels
+  every one and drops the waiting notices, and nothing is published or
+  reacted to afterwards. Device information arrives on the UI thread (the service's
   `Scheduler.submit` completion), so no Qt object is touched off it.
-- **Not covered.** A waiting notice expires 10 s after it was deferred,
-  however long the turn: a long utterance (up to 30 s) or a slow LLM answer
-  (up to 10 s) can outlast it. The waiting queue is not persisted.
-  Priorities are fixed, not user-configurable.
+- **Not covered.** A turn longer than `MAX_NOTICE_AGE_MS` (60 s; a voice
+  turn lasts at most about 42 s) drops what waited for it. The waiting
+  queue is not persisted. Priorities are fixed, not user-configurable.
 
 ### USB device notices
 
@@ -724,9 +741,7 @@ kernel uevent (add … bind / remove)
   than 2.5 s is announced as disconnected and connected again. A device
   whose product string changes between modes is treated as another device.
   Names come
-  from the device's own strings; no vendor database is consulted. SIGTERM
-  ends the runtime without the orderly shutdown (see Single runtime); the
-  kernel still closes the socket.
+  from the device's own strings; no vendor database is consulted.
 - **Next.** M2 — device information providers behind their own source or
   enrichment step (ADB for model and battery, `usbmuxd` for iPhones, UPower,
   storage capacity) — done for adb, UPower and sysfs storage, see "Device
@@ -814,6 +829,15 @@ DesktopShell ─▶ NotchPresenter.refine: replaces the arrival notice of the sa
   `Scheduler.submit` and are bounded by their timeouts; answers, bus events
   and every widget change happen on the UI thread. Providers never raise
   (`_safe_query` turns an exception into a problem).
+- **Cancellation.** `DeviceInfoService.shutdown` calls every provider's
+  `cancel` first. The adb and UPower providers run their commands through
+  `CancellableRunner` (`mira/adapters/subprocesses.py`), which kills
+  exactly the child processes it started — never adb's server or another
+  program's process — and refuses new ones, so a query in progress ends at
+  once ("MIRA is shutting down") instead of waiting out its timeout (up to
+  13 s for a hung adb), and the workers are done before the scheduler
+  stops. Starting a child and cancelling share a lock; a child finishing as
+  it is killed is harmless; every child is reaped.
 - **Configuration.** `MIRA_DEVICE_INFO=0` builds no providers;
   `MIRA_DEVICE_INFO_REFRESH_S` as above; problems are logged once per
   connection with `MIRA_DEVICE_MONITOR_DEBUG=1` (`[devices] adb: no
