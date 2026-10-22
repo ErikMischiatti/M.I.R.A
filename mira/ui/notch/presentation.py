@@ -47,9 +47,17 @@ is MIRA listening, thinking about what it heard, or speaking
 exchange — LISTENING on input, THINKING once processing starts, SPEAKING or
 an affect with the response — so a notice never slips in between them. The
 *floor* is the highest of: the showing notice's priority; INTERACTION
-during a turn; and, while something else takes the content
-band — the integrated controls — a level above every priority, since a
-notice drawn under them could not be seen.
+during a turn; and CRITICAL while something else has the content band,
+since a notice drawn under it could not be seen.
+
+**The content band.** Its owners are of two kinds. *Transient* ones are
+the user's own gestures — the integrated controls: opening them pushes any
+showing notice aside, critical or not, to come back when they close; but a
+critical notice *arriving* closes them, since an error must be seen and
+acted on. *Persistent* ones wait for the user (`_persistent_band`): a
+critical notice suspends them while it shows — they are never dismissed —
+and they return when it ends. Only CRITICAL passes either; everything else
+waits.
 
 - *Preemption.* A notice above the floor is shown at once and gets the
   full duration; so is one at the floor about the *same subject* as the
@@ -346,10 +354,6 @@ ELIGIBILITY_TICK_MS = 500
 # The activities of one turn of conversation; see the module.
 INTERACTION_ACTIVITIES = frozenset({ActivityState.LISTENING, ActivityState.THINKING, ActivityState.SPEAKING})
 
-# Above every notice priority: the content band belongs to something the
-# user opened, and a notice drawn under it would not be seen.
-_BAND_TAKEN = NoticePriority.CRITICAL + 1
-
 
 class NoticeOutcome(StrEnum):
     """What became of a notice handed to the presenter."""
@@ -509,7 +513,9 @@ class NotchPresenter:
             return
         self._controls_open = True
         self._cancel_controls_timer()
-        self._yield_to_context()
+        # The user's own gesture: even a critical notice steps aside, and
+        # comes back when the controls close.
+        self._yield_to_context(everything=True)
         self._publish()
 
     def close_controls(self) -> None:
@@ -634,14 +640,30 @@ class NotchPresenter:
     def _interacting(self) -> bool:
         return self._listening or self._activity in INTERACTION_ACTIVITIES
 
-    def _band_taken(self) -> bool:
-        """Whether something the user opened has the content band."""
+    def _transient_band(self) -> bool:
+        """Something the user opened has the content band (the controls)."""
         return self._controls_open
+
+    def _persistent_band(self) -> bool:
+        """Something waiting for the user has the content band; see the module.
+
+        Nothing does yet; a state that must outlive a critical notice (a
+        finished timer awaiting OK) belongs here, and is suspended — never
+        dismissed — while a critical notice shows.
+        """
+        return False
+
+    def _band_taken(self) -> bool:
+        return self._transient_band() or self._persistent_band()
+
+    def _close_transient_band(self) -> None:
+        self._controls_open = False
+        self._cancel_controls_timer()
 
     def _context_floor(self) -> int:
         """What the situation alone demands of a notice, apart from the one showing."""
         if self._band_taken():
-            return _BAND_TAKEN
+            return NoticePriority.CRITICAL  # only what must be seen may take the band
         if self._interacting():
             return NoticePriority.INTERACTION
         return 0
@@ -654,6 +676,8 @@ class NotchPresenter:
         return floor
 
     def _show(self, notice: Notice, priority: NoticePriority, react: bool) -> None:
+        if priority >= NoticePriority.CRITICAL and self._transient_band():
+            self._close_transient_band()  # the error must be seen, and acted on
         self._notice, self._notice_priority = notice, priority
         self._start_expiry()
         self._publish()
@@ -715,9 +739,14 @@ class NotchPresenter:
             entry.timer.cancel()
             entry.timer = None
 
-    def _yield_to_context(self) -> None:
-        """A conversation starting, or the controls opening, takes the band from a lesser notice."""
-        if self._notice is None or self._notice_priority >= self._context_floor():
+    def _yield_to_context(self, *, everything: bool = False) -> None:
+        """A conversation starting, or a band owner arriving, takes the band from a lesser notice.
+
+        ``everything``: the user opened something; any notice steps aside.
+        """
+        if self._notice is None:
+            return
+        if not everything and self._notice_priority >= self._context_floor():
             return
         notice, priority = self._notice, self._notice_priority
         self._cancel_expiry()

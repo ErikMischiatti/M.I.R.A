@@ -197,8 +197,8 @@ def test_task_feedback_waits_for_a_conversation_but_an_error_interrupts_it(notch
 # --- The controls take the band ------------------------------------------------------------
 
 
-@pytest.mark.parametrize("incoming", [arrived(), ERROR])
-def test_while_the_controls_are_open_every_notice_waits(notch, incoming):
+@pytest.mark.parametrize("incoming", [arrived(), DONE, ONLINE])
+def test_while_the_controls_are_open_non_critical_notices_wait(notch, incoming):
     notch.presenter.open_controls()
 
     assert notch.presenter.present(incoming) is NoticeOutcome.DEFERRED
@@ -207,6 +207,29 @@ def test_while_the_controls_are_open_every_notice_waits(notch, incoming):
     notch.presenter.close_controls()
 
     assert notch.showing == incoming and notch.reactions == [incoming]
+
+
+@pytest.mark.parametrize("critical", [ERROR, ALERT])
+def test_a_critical_notice_arriving_closes_the_controls_so_it_can_be_seen(notch, critical):
+    notch.presenter.open_controls()
+    notch.presenter.present(arrived())  # waits under the controls
+
+    assert notch.presenter.present(critical) is NoticeOutcome.SHOWN
+    assert notch.presenter.presentation.controls == () and notch.showing == critical
+    assert notch.reactions == [critical]
+
+    notch.advance(DURATION)  # the band is free again: the device follows
+    assert notch.showing == arrived()
+
+
+def test_opening_the_controls_pushes_even_a_critical_notice_aside_until_they_close(notch):
+    notch.presenter.present(ERROR)
+
+    notch.presenter.open_controls()  # the user's own gesture
+    assert notch.showing is None and notch.presenter.deferred == (ERROR,)
+    notch.presenter.close_controls()
+
+    assert notch.showing == ERROR and notch.reactions == [ERROR]  # back, without a second reaction
 
 
 def test_a_showing_notice_steps_aside_for_the_controls_and_returns_without_a_second_reaction(notch):
