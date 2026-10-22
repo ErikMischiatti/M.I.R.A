@@ -30,6 +30,10 @@ does not parse, is left unread rather than guessed.
 The first ``adb`` call starts adb's server on this computer if it is not
 running (and it keeps running, as it does for any adb use); nothing is ever
 changed on the phone.
+
+At shutdown `cancel` kills the provider's own ``adb`` client process, if a
+query is waiting for one (`CancellableRunner`), so nobody waits out its
+timeout; adb's server and any other adb process are left alone.
 """
 
 from __future__ import annotations
@@ -39,6 +43,7 @@ import subprocess
 from collections.abc import Callable
 from dataclasses import dataclass
 
+from mira.adapters.subprocesses import CancellableRunner, Cancelled
 from mira.domain.device_info import ChargingState, DeviceInfo, InfoResult
 from mira.domain.system_events import DeviceEvent
 
@@ -67,6 +72,7 @@ NO_TRANSPORT = "this adb is too old to address a phone without its serial (no tr
 TIMED_OUT = "adb did not answer in time"
 FAILED = "adb failed"
 GONE = "the phone is no longer connected"
+CANCELLED = "MIRA is shutting down"
 NOTHING_READ = "the phone reported nothing readable"
 
 
@@ -159,14 +165,21 @@ class AdbDeviceInfoProvider:
 
     name = "adb"
 
-    def __init__(self, *, which: Callable[[str], str | None] = shutil.which, run: Runner = subprocess.run):
+    def __init__(self, *, which: Callable[[str], str | None] = shutil.which, run: Runner | None = None):
         self._which = which
-        self._run = run
+        self._runner = CancellableRunner()
+        # A scripted stand-in in tests; the cancellable runner otherwise.
+        self._run = self._runner if run is None else run
 
     def supports(self, device: DeviceEvent) -> bool:
         return "adb" in device.services
 
+    def cancel(self) -> None:
+        self._runner.cancel()
+
     def query(self, device: DeviceEvent) -> InfoResult:
+        if self._runner.cancelled:
+            return InfoResult(problem=CANCELLED)
         adb = self._which("adb")
         if adb is None:
             return InfoResult(problem=NOT_INSTALLED)
@@ -190,6 +203,8 @@ class AdbDeviceInfoProvider:
             return InfoResult(problem=f"the phone is in {entry.state!r} mode")
         if not entry.transport_id or not entry.transport_id.isdigit():
             return InfoResult(problem=NO_TRANSPORT)
+        if self._runner.cancelled:
+            return InfoResult(problem=CANCELLED)
         output = self._call([adb, "-t", entry.transport_id, "shell", PROPERTIES_AND_BATTERY], QUERY_TIMEOUT_S)
         if isinstance(output, InfoResult):
             return output
@@ -205,6 +220,8 @@ class AdbDeviceInfoProvider:
             completed = self._run(
                 command, capture_output=True, text=True, timeout=timeout, stdin=subprocess.DEVNULL, check=False,
             )
+        except Cancelled:
+            return InfoResult(problem=CANCELLED)
         except subprocess.TimeoutExpired:
             return InfoResult(problem=TIMED_OUT, retry=True)
         except OSError:

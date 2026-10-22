@@ -31,6 +31,7 @@ import shutil
 import subprocess
 from collections.abc import Callable
 
+from mira.adapters.subprocesses import CancellableRunner, Cancelled
 from mira.domain.device_info import ChargingState, DeviceInfo, InfoResult
 from mira.domain.system_events import DeviceEvent
 
@@ -49,6 +50,7 @@ AMBIGUOUS = "UPower lists more than one phone; cannot tell which one this is"
 TIMED_OUT = "upower did not answer in time"
 FAILED = "upower failed"
 NOTHING_READ = "UPower reported nothing readable for the phone"
+CANCELLED = "MIRA is shutting down"
 
 # The only keys read; serial and native-path are among those ignored.
 _KEPT = frozenset({"vendor", "model", "percentage", "state", "present"})
@@ -109,14 +111,20 @@ class UPowerPhoneProvider:
 
     name = "upower"
 
-    def __init__(self, *, which: Callable[[str], str | None] = shutil.which, run=subprocess.run):
+    def __init__(self, *, which: Callable[[str], str | None] = shutil.which, run=None):
         self._which = which
-        self._run = run
+        self._runner = CancellableRunner()
+        self._run = self._runner if run is None else run
 
     def supports(self, device: DeviceEvent) -> bool:
         return "usbmux" in device.services
 
+    def cancel(self) -> None:
+        self._runner.cancel()
+
     def query(self, device: DeviceEvent) -> InfoResult:
+        if self._runner.cancelled:
+            return InfoResult(problem=CANCELLED)
         upower = self._which("upower")
         if upower is None:
             return InfoResult(problem=NOT_INSTALLED)
@@ -125,6 +133,8 @@ class UPowerPhoneProvider:
                 [upower, "--dump"], capture_output=True, text=True, timeout=TIMEOUT_S,
                 stdin=subprocess.DEVNULL, check=False,
             )
+        except Cancelled:
+            return InfoResult(problem=CANCELLED)
         except subprocess.TimeoutExpired:
             return InfoResult(problem=TIMED_OUT, retry=True)
         except OSError:

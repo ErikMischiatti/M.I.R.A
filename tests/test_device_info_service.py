@@ -38,6 +38,10 @@ class FakeProvider:
         self.service = service
         self.answers = list(answers or [InfoResult(CHARGING)])
         self.asked: list[DeviceEvent] = []
+        self.cancelled = 0
+
+    def cancel(self):
+        self.cancelled += 1
 
     def supports(self, device):
         return self.service in device.services
@@ -169,10 +173,12 @@ def test_an_answer_for_an_earlier_connection_is_discarded(make):
 
 
 def test_after_shutdown_nothing_is_asked_or_published(make):
-    service = make(FakeProvider())
+    provider = FakeProvider()
+    service = make(provider)
     service.changed(PIXEL)
 
     service.shutdown()
+    assert provider.cancelled == 1  # a query in progress is told to stop
     service.scheduler.run_all()
     service.changed(PIXEL)
 

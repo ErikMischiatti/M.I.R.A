@@ -72,6 +72,11 @@ class DeviceInfoProvider(Protocol):
     within a bounded time, and must not raise: every failure is an
     `InfoResult` with a ``problem``. It only reads; it never changes the
     device or the system.
+
+    `cancel` is for shutdown: a query in progress returns promptly (with a
+    problem) instead of waiting out its timeout, and later queries return
+    at once. It is called on the UI thread while a query may be running on
+    a worker; it is idempotent.
     """
 
     name: str
@@ -79,6 +84,8 @@ class DeviceInfoProvider(Protocol):
     def supports(self, device: DeviceEvent) -> bool: ...
 
     def query(self, device: DeviceEvent) -> InfoResult: ...
+
+    def cancel(self) -> None: ...
 
 
 @dataclass(frozen=True, slots=True)

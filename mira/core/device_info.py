@@ -109,7 +109,13 @@ class DeviceInfoService:
         self._running = True
 
     def shutdown(self) -> None:
+        """Stop asking: queries in progress end promptly, answers are dropped."""
         self._running = False
+        for provider in self._providers:
+            try:
+                provider.cancel()
+            except Exception as error:  # noqa: BLE001 - one provider must not keep the others running
+                self._log(f"{provider.name} failed to cancel: {error}")
         for key in list(self._devices):
             self._forget(key)
 

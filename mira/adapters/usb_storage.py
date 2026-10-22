@@ -40,6 +40,9 @@ class UsbStorageInfoProvider:
     def __init__(self, *, sysfs: Path = Path("/sys")):
         self._sysfs = sysfs
 
+    def cancel(self) -> None:
+        """Nothing to stop: a few small sysfs reads end at once."""
+
     def supports(self, device: DeviceEvent) -> bool:
         return device.kind is DeviceKind.USB and device.category is DeviceCategory.STORAGE
 
