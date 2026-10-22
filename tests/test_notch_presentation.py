@@ -193,7 +193,8 @@ def test_an_automatic_notice_expands_then_expires_back_to_compact(presenter, sch
 
 
 def test_the_latest_notice_replaces_the_previous_one_with_a_full_duration(presenter, scheduler):
-    presenter.present(WARNING)
+    # The same subject (device changes, no device key): the latest replaces.
+    presenter.present(Notice(NoticeCategory.DEVICE, NoticeTone.INFO, "Keyboard"))
     scheduler.advance(2000)
 
     presenter.present(DEVICE)

@@ -248,6 +248,17 @@ def test_information_replaces_the_arrival_it_belongs_to_and_gets_the_full_time(p
     assert presenter.presentation.notice is None
 
 
+def test_a_reading_that_only_moved_keeps_the_notices_remaining_time(presenter):
+    presenter.present(device_notice(IPHONE))
+    presenter._scheduler.advance(3000)
+
+    presenter.refine(enriched(), announce=False)  # a refresh: 84% instead of 83%
+    assert presenter.presentation.notice.detail == "84%"
+    presenter._scheduler.advance(1000)
+
+    assert presenter.presentation.notice is None  # no longer open than the arrival
+
+
 def test_information_about_another_device_does_not_replace_a_notice(presenter):
     other = DeviceEvent(DeviceKind.USB, DeviceChange.CONNECTED, "Stick", "/d/usb3/3-4",
                         category=DeviceCategory.STORAGE)

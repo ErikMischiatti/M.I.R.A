@@ -22,6 +22,8 @@ session those buttons are disabled.
 
 from __future__ import annotations
 
+import dataclasses
+
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QGuiApplication
 from PySide6.QtWidgets import (
@@ -41,10 +43,12 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from mira.domain.device_info import ChargingState, DeviceInfo, DeviceInfoUpdate, device_info_notice
 from mira.domain.devices import DeviceCategory
 from mira.domain.embodiment import ActivityState, EmbodimentIntent, ExpressionKey
 from mira.domain.embodiment_cue import EmbodimentCue
 from mira.domain.notice import Notice, NoticeCategory, NoticeTone
+from mira.domain.scheduler import Scheduler
 from mira.domain.system_events import (
     Connectivity,
     DeviceChange,
@@ -131,6 +135,63 @@ PREVIEW_NOTICES = {
 }
 
 
+# Scripted device scenarios, for checking notice priority and device
+# information by eye without hardware. Each step is (milliseconds after the
+# previous step, action, argument), run on the presenter's scheduler through
+# the calls the running application makes: a notice through `deliver_notice`,
+# information through `NotchPresenter.refine`, listening as the activity
+# preview sets it.
+_SCENARIO_PHONE = DeviceEvent(DeviceKind.USB, DeviceChange.CONNECTED, "Google Pixel 8", "scenario-phone",
+                              category=DeviceCategory.SMARTPHONE, manufacturer="Google")
+_SCENARIO_STICK = DeviceEvent(DeviceKind.USB, DeviceChange.CONNECTED, "SanDisk Ultra", "scenario-stick",
+                              category=DeviceCategory.STORAGE, manufacturer="SanDisk")
+_SCENARIO_LONG = DeviceEvent(DeviceKind.USB, DeviceChange.CONNECTED, "Samsung Galaxy S24 Ultra Enterprise Edition",
+                             "scenario-long", category=DeviceCategory.SMARTPHONE, manufacturer="Samsung")
+_CHARGING = DeviceInfo("Google", "Pixel 8", 84, ChargingState.CHARGING)
+
+
+def _arrived(device: DeviceEvent) -> Notice:
+    return device_notice(device)
+
+
+def _left(device: DeviceEvent) -> Notice:
+    return device_notice(dataclasses.replace(device, change=DeviceChange.DISCONNECTED))
+
+
+def _informed(device: DeviceEvent, info: DeviceInfo) -> Notice:
+    return device_info_notice(DeviceInfoUpdate(device, info, announce=True))
+
+
+DEVICE_SCENARIOS = {
+    "Connect, then info": [
+        (0, "notice", _arrived(_SCENARIO_PHONE)),
+        (1200, "refine", _informed(_SCENARIO_PHONE, _CHARGING)),
+    ],
+    "Battery after expiry": [
+        (0, "notice", _arrived(_SCENARIO_PHONE)),
+        (5000, "refine", _informed(_SCENARIO_PHONE, _CHARGING)),
+    ],
+    "Connect, then unplug": [
+        (0, "notice", _arrived(_SCENARIO_PHONE)),
+        (1500, "notice", _left(_SCENARIO_PHONE)),
+    ],
+    "Device while listening": [
+        (0, "activity", ActivityState.LISTENING),
+        (800, "notice", _arrived(_SCENARIO_PHONE)),
+        (1200, "refine", _informed(_SCENARIO_PHONE, _CHARGING)),
+        (2500, "activity", ActivityState.IDLE),
+    ],
+    "Two devices": [
+        (0, "notice", _arrived(_SCENARIO_PHONE)),
+        (300, "notice", _arrived(_SCENARIO_STICK)),
+    ],
+    "Long name": [
+        (0, "notice", _arrived(_SCENARIO_LONG)),
+        (1000, "refine", _informed(_SCENARIO_LONG, DeviceInfo(battery_percent=57, charging=ChargingState.DISCHARGING))),
+    ],
+}
+
+
 class NotchDebugWindow(QWidget):
     """Live controls for one notch, the controller its eyes show and its file.
 
@@ -158,6 +219,7 @@ class NotchDebugWindow(QWidget):
         apply_listening=None,
         listening=None,
         wake_available: bool = False,
+        scheduler: Scheduler | None = None,
     ):
         super().__init__()
         self.setWindowTitle("M.I.R.A. notch settings")
@@ -165,6 +227,9 @@ class NotchDebugWindow(QWidget):
         self.controller = controller
         self.session = session
         self.presenter = presenter
+        # Times the device scenarios; without it they are not offered.
+        self.scheduler = scheduler
+        self._scenario_timers: list = []
         # Without a presenter nothing applies a behaviour; it is kept so Save
         # never drops the one that was loaded.
         self._behaviour = session.startup_settings.behaviour if session is not None else NotchBehaviour()
@@ -378,9 +443,20 @@ class NotchDebugWindow(QWidget):
             button.clicked.connect(lambda _=False, c=cue: self.preview_cue(c))
             self.preview_buttons[f"cue {cue.value}"] = button
             cues.addWidget(button)
+        scenario_rows = [QHBoxLayout() for _ in range((len(DEVICE_SCENARIOS) + 2) // 3)]
+        for index, name in enumerate(DEVICE_SCENARIOS):
+            button = QPushButton(name)
+            button.setEnabled(self.presenter is not None and self.scheduler is not None)
+            button.setToolTip("A scripted sequence of device notices, through the real presenter and eyes")
+            button.clicked.connect(lambda _=False, n=name: self.play_scenario(n))
+            self.preview_buttons[f"scenario {name}"] = button
+            scenario_rows[index // 3].addWidget(button)
         form.addRow("Activity", activities)
         form.addRow("Notice", notice_rows[0])
         for row in notice_rows[1:]:
+            form.addRow("", row)
+        form.addRow("Device scenario", scenario_rows[0])
+        for row in scenario_rows[1:]:
             form.addRow("", row)
         self.task_running_button = QPushButton("Task running")
         self.task_running_button.setCheckable(True)
@@ -760,6 +836,31 @@ class NotchDebugWindow(QWidget):
         if notice.category is NoticeCategory.TASK and running is not None and running.isChecked():
             running.setChecked(False)
         deliver_notice(notice, presenter=self.presenter, controller=self.controller)
+
+    def play_scenario(self, name: str):
+        """Run ``DEVICE_SCENARIOS[name]`` from now, replacing one still running."""
+        if self.presenter is None or self.scheduler is None:
+            return
+        self.stop_scenario()
+        due = 0
+        for delay, action, argument in DEVICE_SCENARIOS[name]:
+            due += delay
+            self._scenario_timers.append(
+                self.scheduler.call_later(due, lambda a=action, x=argument: self._scenario_step(a, x))
+            )
+
+    def stop_scenario(self):
+        for timer in self._scenario_timers:
+            timer.cancel()
+        self._scenario_timers = []
+
+    def _scenario_step(self, action: str, argument):
+        if action == "notice":
+            self.preview_notice(argument)
+        elif action == "refine":
+            self.presenter.refine(argument, announce=True)
+        elif action == "activity":
+            self.preview_activity(argument)
 
     def preview_task_running(self, running: bool):
         """Through `deliver_tasks`, the path the running application uses."""

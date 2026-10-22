@@ -25,12 +25,24 @@ embodiment may show it (the notch draws a phone for a phone). `detail` is
 secondary information about the subject named by `text` — "84% · Charging"
 for "Pixel 8" — which an embodiment may show less prominently, or join to
 the text; it is never needed to understand the notice.
+
+**Priority.** `notice_priority` ranks a notice against the others and
+against an interaction with the user in progress (`NoticePriority`):
+
+    CRITICAL     errors, and alerts           shown even while MIRA listens or speaks
+    INTERACTION  (no notice) MIRA listening or speaking to the user
+    FEEDBACK     results of what the user asked (tasks)
+    PASSIVE      the system changing by itself (devices, connectivity)
+
+so a background device event never interrupts a conversation. What a
+lower-priority notice does while a higher priority holds — wait, merge,
+expire — is the embodiment's policy (`mira.ui.notch.presentation`).
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from enum import StrEnum
+from enum import IntEnum, StrEnum
 
 from mira.domain.devices import DeviceCategory
 
@@ -81,3 +93,21 @@ class Notice:
     text: str | None = None
     device: NoticeDevice | None = None
     detail: str | None = None
+
+
+class NoticePriority(IntEnum):
+    """How strongly a notice claims attention; higher wins. See the module."""
+
+    PASSIVE = 1
+    FEEDBACK = 2
+    INTERACTION = 3
+    """No notice has it: the level of MIRA listening or speaking to the user."""
+    CRITICAL = 4
+
+
+def notice_priority(notice: Notice) -> NoticePriority:
+    if notice.tone is NoticeTone.ERROR or notice.category is NoticeCategory.ALERT:
+        return NoticePriority.CRITICAL
+    if notice.category is NoticeCategory.TASK:
+        return NoticePriority.FEEDBACK
+    return NoticePriority.PASSIVE

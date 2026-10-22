@@ -35,11 +35,57 @@ only collapses when the last reason goes.
 Notices have a lifetime. `present` shows a notice for
 `NotchBehaviour.notice_duration_ms`, timed by the injected `Scheduler` port —
 the application's own scheduler in production, a `ManualScheduler` in tests —
-so there is exactly one timer and nothing else ever collapses the notch.
-Replacement policy: the latest notice replaces the one showing and gets the
-full duration; there is no queue. A notice whose category does not expand
-automatically still becomes the content for its lifetime (visible if the
-notch is open for another reason), but adds no expansion reason.
+and nothing else ever collapses the notch. A notice whose category does not
+expand automatically still becomes the content for its lifetime (visible if
+the notch is open for another reason), but adds no expansion reason.
+
+**Priority.** Every notice has a `NoticePriority` (`mira.domain.notice`):
+PASSIVE (devices, connectivity) < FEEDBACK (task results) < INTERACTION (MIRA
+listening or speaking; no notice has it) < CRITICAL (errors, alerts). The
+*floor* is the highest of: the showing notice's priority, and INTERACTION
+while MIRA listens or speaks.
+
+- *Preemption.* A notice above the floor is shown at once and gets the
+  full duration; so is one at the floor about the *same subject* as the
+  showing notice (a device leaving replaces its own arrival). One at the
+  floor about another subject waits its turn instead, so two devices
+  connecting together are both seen, one after the other. A notice that is
+  preempted by a higher one goes back to wait (without a second reaction)
+  and returns after it, if still relevant: an error does not swallow the
+  device notice it interrupted.
+- *Deferral.* A notice below the floor waits instead of being lost — a USB
+  device connecting while MIRA listens does not cover the waveform. At most
+  `MAX_DEFERRED_NOTICES` wait; when full, the lowest-priority, oldest one is
+  dropped.
+- *Coalescing.* A newer notice about the same subject (the same device by
+  `NoticeDevice.key`, else the same category) replaces the waiting one; a
+  device that arrived and left while its arrival waited cancels out, since
+  nothing changed for the user. The same notice as the one showing only
+  restarts its time: no new animation, no reaction.
+- *Expiration.* A waiting notice is dropped `DEFERRED_NOTICE_TTL_MS` after
+  it was deferred: it would no longer be news.
+- *Yielding.* When MIRA starts listening or speaking, a showing notice
+  below INTERACTION steps aside: it goes back to wait, without a second
+  reaction, and the conversation has the band from its first moment.
+- *Restoration.* When the floor drops — the showing notice expires or is
+  dismissed, listening or speaking ends — the waiting notice with the
+  highest priority (the oldest among equals) is shown, in the same
+  resolution step, so the notch stays expanded from one to the next instead
+  of collapsing between them. One at a time: the next waits for that one to
+  expire.
+
+**Reactions.** Listeners of `subscribe_reactions` hear about a notice when it
+starts showing — at once, or when restored — never while it waits, never
+for a refinement or a repeat. The eyes' cue is played from there
+(`startup.bind_presenter`), so MIRA does not react to what it does not
+show, and does not greet a device twice.
+
+**Refinement.** `refine` brings later information about a device (from the
+device information service): it updates the notice about that device in
+place, whether it is showing (keeping its remaining time, unless the update
+is worth announcing) or waiting; it is shown on its own only if it is worth
+announcing, and then as any other notice, without a reaction. Information
+about a device whose latest notice is its departure is dropped.
 
 Activity alone never expands the notch. It only chooses the content shown
 when the notch is already expanded and no notice is showing.
@@ -73,7 +119,7 @@ from enum import StrEnum
 
 from mira.domain.devices import DeviceCategory
 from mira.domain.embodiment import ActivityState
-from mira.domain.notice import Notice, NoticeCategory, NoticeTone
+from mira.domain.notice import Notice, NoticeCategory, NoticePriority, NoticeTone, notice_priority
 from mira.domain.scheduler import Scheduler, TimerHandle
 from mira.ui.notch.presence import NotchPresence
 
@@ -269,6 +315,50 @@ class NotchBehaviour:
 
 
 Listener = Callable[[NotchPresentation], None]
+ReactionListener = Callable[[Notice], None]
+
+MAX_DEFERRED_NOTICES = 3
+DEFERRED_NOTICE_TTL_MS = 10_000
+
+# Activities during which MIRA is in an exchange with the user.
+_INTERACTION_ACTIVITIES = frozenset({ActivityState.LISTENING, ActivityState.SPEAKING})
+
+
+class NoticeOutcome(StrEnum):
+    """What became of a notice handed to the presenter."""
+
+    SHOWN = "shown"
+    DEFERRED = "deferred"
+    REFRESHED = "refreshed"
+    """The same notice was already showing; its time restarted."""
+    UPDATED = "updated"
+    """A refinement changed the notice about its device (showing or waiting)."""
+    UNCHANGED = "unchanged"
+    DROPPED = "dropped"
+
+
+@dataclass(eq=False)
+class _Deferred:
+    notice: Notice
+    priority: NoticePriority
+    react: bool
+    order: int
+    timer: TimerHandle | None = None
+
+
+def _subject(notice: Notice) -> tuple:
+    """What a notice is about, for coalescing: its device, else its category."""
+    if notice.device is not None and notice.device.key is not None:
+        return ("device", notice.device.key)
+    return ("category", notice.category)
+
+
+def _cancel_out(waiting: Notice, newer: Notice) -> bool:
+    """An arrival still waiting, followed by the same device leaving."""
+    return (
+        waiting.device is not None and newer.device is not None
+        and waiting.device.connected and not newer.device.connected
+    )
 
 
 class NotchPresenter:
@@ -304,6 +394,10 @@ class NotchPresenter:
         self._listening = False
         self._capturing = False
         self._notice: Notice | None = None
+        self._notice_priority = NoticePriority.PASSIVE
+        self._deferred: list[_Deferred] = []
+        self._deferred_order = 0
+        self._reactions: list[ReactionListener] = []
         self._expiry: TimerHandle | None = None
         # Identifies the notice the pending expiry belongs to, so a callback
         # that outlives its cancellation can never expire a newer notice.
@@ -330,8 +424,17 @@ class NotchPresenter:
     def pinned(self) -> bool:
         return self._pinned
 
+    @property
+    def deferred(self) -> tuple[Notice, ...]:
+        """The notices waiting to be shown, oldest first."""
+        return tuple(entry.notice for entry in sorted(self._deferred, key=lambda entry: entry.order))
+
     def subscribe(self, listener: Listener) -> None:
         self._listeners.append(listener)
+
+    def subscribe_reactions(self, listener: ReactionListener) -> None:
+        """Hear about each notice when it starts showing; see the module."""
+        self._reactions.append(listener)
 
     # --- Inputs ------------------------------------------------------------
 
@@ -350,6 +453,8 @@ class NotchPresenter:
 
     def set_activity(self, activity: ActivityState) -> None:
         self._activity = activity
+        self._yield_to_interaction()
+        self._restore()
         self._publish()
 
     def set_hovered(self, hovered: bool) -> None:
@@ -401,6 +506,8 @@ class NotchPresenter:
         """Whether MIRA listens, and whether real audio is arriving for it."""
         self._listening = bool(listening)
         self._capturing = bool(listening and capturing)
+        self._yield_to_interaction()
+        self._restore()
         self._publish()
 
     def set_tasks_running(self, running: bool) -> None:
@@ -417,44 +524,146 @@ class NotchPresenter:
         self._behaviour = behaviour
         self._publish()
 
-    def present(self, notice: Notice) -> None:
-        """Show ``notice`` for the configured duration, replacing any other."""
-        if self._stopped:
-            return
-        self._cancel_expiry()
-        self._notice = notice
-        self._generation += 1
-        generation = self._generation
-        self._expiry = self._scheduler.call_later(
-            self._behaviour.notice_duration_ms, lambda: self._expire(generation)
-        )
-        self._publish()
+    def present(self, notice: Notice, *, react: bool = True) -> NoticeOutcome:
+        """Show ``notice`` now, or let it wait, by priority; see the module.
 
-    def refine(self, notice: Notice, *, announce: bool) -> None:
-        """Better information about the device a notice is about.
-
-        It replaces the showing notice when that one announced the same
-        device's arrival (same `NoticeDevice.key`), with the full duration
-        again, so information that arrives a moment later reads as the same
-        notice growing. Otherwise it is shown only if ``announce``.
+        ``react`` False shows it without telling the reaction listeners (it
+        refines something MIRA already reacted to).
         """
+        if self._stopped:
+            return NoticeOutcome.DROPPED
+        if notice == self._notice:
+            self._start_expiry()
+            return NoticeOutcome.REFRESHED
+        waiting = self._take_deferred(_subject(notice))
+        if waiting is not None and _cancel_out(waiting.notice, notice):
+            return NoticeOutcome.DROPPED
+        if waiting is not None:
+            react = react or waiting.react  # its arrival has not been reacted to yet
+        priority = notice_priority(notice)
+        floor = self._floor()
         showing = self._notice
-        same_device = (
-            showing is not None and showing.device is not None and notice.device is not None
-            and showing.device.connected and showing.device.key == notice.device.key
-        )
-        if same_device or announce:
-            self.present(notice)
+        same_subject = showing is not None and _subject(showing) == _subject(notice)
+        if priority > floor or (priority == floor and (showing is None or same_subject)):
+            if showing is not None and not same_subject and priority > self._notice_priority:
+                self._defer(showing, self._notice_priority, react=False)  # interrupted: back later
+            self._show(notice, priority, react)
+            return NoticeOutcome.SHOWN
+        self._defer(notice, priority, react)
+        return NoticeOutcome.DEFERRED
+
+    def refine(self, notice: Notice, *, announce: bool) -> NoticeOutcome:
+        """Later information about the device ``notice`` is about; see the module."""
+        if self._stopped or notice.device is None:
+            return NoticeOutcome.DROPPED
+        key = notice.device.key
+        showing = self._notice
+        if showing is not None and showing.device is not None and showing.device.key == key:
+            if not showing.device.connected:
+                return NoticeOutcome.DROPPED  # it left: nothing more to say about it
+            if notice == showing:
+                return NoticeOutcome.UNCHANGED
+            self._notice = notice
+            if announce:
+                self._start_expiry()
+            self._publish()
+            return NoticeOutcome.UPDATED
+        for entry in self._deferred:
+            if entry.notice.device is not None and entry.notice.device.key == key:
+                if not entry.notice.device.connected:
+                    return NoticeOutcome.DROPPED
+                entry.notice = notice  # keeps its place, its time and its reaction
+                return NoticeOutcome.UPDATED
+        if announce:
+            return self.present(notice, react=False)
+        return NoticeOutcome.DROPPED
 
     def dismiss_notice(self) -> None:
         self._cancel_expiry()
         self._notice = None
+        self._restore()
         self._publish()
 
     def shutdown(self) -> None:
         self._cancel_expiry()
         self._cancel_controls_timer()
+        for entry in self._deferred:
+            if entry.timer is not None:
+                entry.timer.cancel()
+        self._deferred.clear()
         self._stopped = True
+
+    # --- Arbitration ---------------------------------------------------------
+
+    def _interacting(self) -> bool:
+        return self._listening or self._activity in _INTERACTION_ACTIVITIES
+
+    def _floor(self) -> int:
+        """The priority a notice needs to be shown now; see the module."""
+        floor = 0
+        if self._interacting():
+            floor = NoticePriority.INTERACTION
+        if self._notice is not None:
+            floor = max(floor, self._notice_priority)
+        return floor
+
+    def _show(self, notice: Notice, priority: NoticePriority, react: bool) -> None:
+        self._notice, self._notice_priority = notice, priority
+        self._start_expiry()
+        self._publish()
+        if react and not self._stopped:
+            for listener in list(self._reactions):
+                listener(notice)
+
+    def _start_expiry(self) -> None:
+        self._cancel_expiry()
+        generation = self._generation
+        self._expiry = self._scheduler.call_later(
+            self._behaviour.notice_duration_ms, lambda: self._expire(generation)
+        )
+
+    def _defer(self, notice: Notice, priority: NoticePriority, react: bool) -> None:
+        self._deferred_order += 1
+        entry = _Deferred(notice, priority, react, self._deferred_order)
+        entry.timer = self._scheduler.call_later(DEFERRED_NOTICE_TTL_MS, lambda: self._drop_deferred(entry))
+        self._deferred.append(entry)
+        if len(self._deferred) > MAX_DEFERRED_NOTICES:
+            self._drop_deferred(min(self._deferred, key=lambda waiting: (waiting.priority, waiting.order)))
+
+    def _take_deferred(self, subject: tuple) -> _Deferred | None:
+        for entry in self._deferred:
+            if _subject(entry.notice) == subject:
+                self._drop_deferred(entry)
+                return entry
+        return None
+
+    def _drop_deferred(self, entry: _Deferred) -> None:
+        if entry in self._deferred:
+            self._deferred.remove(entry)
+        if entry.timer is not None:
+            entry.timer.cancel()
+            entry.timer = None
+
+    def _yield_to_interaction(self) -> None:
+        """A conversation starting takes the band from any lesser notice."""
+        if self._notice is None or not self._interacting():
+            return
+        if self._notice_priority >= NoticePriority.INTERACTION:
+            return
+        notice, priority = self._notice, self._notice_priority
+        self._cancel_expiry()
+        self._notice = None
+        self._defer(notice, priority, react=False)
+
+    def _restore(self) -> None:
+        """Show the best waiting notice if the floor now lets it; see the module."""
+        if self._stopped or not self._deferred:
+            return
+        best = max(self._deferred, key=lambda entry: (entry.priority, -entry.order))
+        if best.priority < self._floor():
+            return
+        self._drop_deferred(best)
+        self._show(best.notice, best.priority, best.react)
 
     # --- Resolution ----------------------------------------------------------
 
@@ -505,6 +714,7 @@ class NotchPresenter:
             return
         self._expiry = None
         self._notice = None
+        self._restore()
         self._publish()
 
     def _cancel_expiry(self) -> None:

@@ -884,10 +884,12 @@ def test_a_preview_notice_makes_the_real_eyes_react(env):
     env.debug.preview_buttons["Task failed"].click()
     assert env.controller.active_cue is EmbodimentCue.ERROR
 
+    env.presenter.dismiss_notice()  # devices would wait behind the error
     env.controller.clear_cue()
     env.debug.preview_buttons["Device disconnected"].click()
     assert env.controller.active_cue is None  # information gets no cue
 
+    env.presenter.dismiss_notice()  # another device would wait its turn
     env.debug.preview_buttons["Phone connected"].click()
     assert env.controller.active_cue is EmbodimentCue.GREETING  # an arrival is greeted
 

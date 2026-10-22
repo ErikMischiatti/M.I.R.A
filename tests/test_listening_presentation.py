@@ -82,11 +82,13 @@ def test_when_listening_ends_the_remaining_reasons_decide():
     assert p.presentation.presence is E and p.presentation.reasons == {ExpansionReason.CONTROLS}
 
 
-def test_a_notice_and_the_controls_take_the_band_from_the_waveform():
+def test_a_critical_notice_and_the_controls_take_the_band_from_the_waveform():
     p = presenter()
     p.set_listening(True, True)
-    p.present(Notice(NoticeCategory.TASK, NoticeTone.SUCCESS))
-    assert not p.presentation.shows_waveform and p.presentation.content.label == "Done"
+    p.present(Notice(NoticeCategory.TASK, NoticeTone.SUCCESS))  # feedback waits for the user
+    assert p.presentation.shows_waveform
+    p.present(Notice(NoticeCategory.TASK, NoticeTone.ERROR, "Failed"))
+    assert not p.presentation.shows_waveform and p.presentation.content.label == "Failed"
 
     p.dismiss_notice()
     p.open_controls()

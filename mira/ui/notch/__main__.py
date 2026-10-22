@@ -58,6 +58,8 @@ class NotchEnvironment:
         """Stop the clock, the notice timer and any microphone test; idempotent."""
         if self.audio is not None:
             self.audio.shutdown()
+        if self.debug is not None:
+            self.debug.stop_scenario()
         self.animator.stop()
         self.presenter.shutdown()
         self.scheduler.shutdown()
@@ -93,7 +95,7 @@ def build_notch_environment(
     notch = build_notch(settings, animator=animator)
     scheduler = build_scheduler() if scheduler is None else scheduler
     presenter = NotchPresenter(scheduler, settings.behaviour)
-    bind_presenter(notch, presenter)
+    bind_presenter(notch, presenter, controller)
     presenter.show()
 
     environment = NotchEnvironment(controller, animator, notch, session, presenter, scheduler)
@@ -103,7 +105,9 @@ def build_notch_environment(
         from mira.application.audio import standalone_audio_input
 
         environment.audio = standalone_audio_input()
-        environment.debug = NotchDebugWindow(notch, controller, session, presenter, audio=environment.audio)
+        environment.debug = NotchDebugWindow(
+            notch, controller, session, presenter, audio=environment.audio, scheduler=scheduler,
+        )
     return environment
 
 

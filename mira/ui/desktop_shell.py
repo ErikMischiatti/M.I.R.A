@@ -205,7 +205,7 @@ class DesktopShell:
         # Real captured audio, pulled by the notch on its own repaints.
         audio = self._application.audio
         self.notch.set_waveform_source(lambda: audio.waveform)
-        bind_presenter(self.notch, self.presenter)
+        bind_presenter(self.notch, self.presenter, self.controller)
         self.notch.action_requested.connect(self.on_notch_action)
         # From now on the notch keeps the runtime alive: closing the main
         # window only hides it.
