@@ -42,6 +42,10 @@ Main modules:
     numpy types
   - `UserInput`, `IntentResult`, `BrainResponse` (`mira/domain/models.py`)
   - notices: `Notice`, `NoticeCategory`, `NoticeTone` (`mira/domain/notice.py`)
+  - countdown: `TimerState`, `TimerSnapshot`, `format_remaining`
+    (`mira/domain/timer.py`)
+  - sounds: `Sound`, the `SoundOutput` port, `SilentSoundOutput`
+    (`mira/domain/sound.py`)
   - system changes: `DeviceEvent`, `ConnectivityEvent`, the
     `SystemEventSource` port (`mira/domain/system_events.py`)
   - voice: detector ports, `ListeningSession`, `Utterance`
@@ -58,6 +62,9 @@ Main modules:
     that imports `cv2`, lazily; OpenCV is the optional `camera` extra
   - `QtAudioCaptureBackend` (`mira/adapters/qt_audio.py`): microphone
     capture through Qt Multimedia's `QAudioSource`, default input
+  - `QtSoundOutput` (`mira/adapters/qt_sound.py`): short UI sounds through
+    Qt Multimedia's `QSoundEffect`; packaged WAVs in `mira/sounds/`, rendered
+    by `scripts/generate_sounds.py` (regenerate, never hand-edit)
   - `mira/adapters/sherpa_voice.py`: local keyword spotter and Silero VAD
     (optional `voice` extra and model files)
   - Linux system sources, all event-driven on the Qt loop and optional:
@@ -88,6 +95,13 @@ Main modules:
   - embodied behavior
   - notice producers (`mira/core/notice_producers.py`): task and system
     events → `"notice"` on the bus, with the noise policy
+  - countdown (`mira/core/countdown_timer.py`): the one `CountdownTimer`,
+    deadline-based on the Scheduler and an injected monotonic clock →
+    `"timer_changed"` and `"timer_finished"`; the notch pulls the time left;
+    FINISHED lasts until `acknowledge()` (shown as the TIMER_FINISHED
+    condition and the notch's OK panel)
+  - sound cues (`mira/core/sound_cues.py`): `"timer_finished"` → one
+    `Sound.TIMER_DONE` on the `SoundOutput`; failures are logged, never raised
   - running tasks (`mira/core/task_activity.py`): executor run ids →
     `"tasks_changed"`; shown as the TASK_RUNNING condition
   - audio input (`mira/core/audio_input.py`): the runtime's one
