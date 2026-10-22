@@ -1,4 +1,4 @@
-"""Which audio capture the desktop uses, apart from the application graph.
+"""Which audio capture and output the desktop uses, apart from the application graph.
 
 Small on purpose: `MIRA-TUNE`, a development tool outside the runtime, needs
 an audio service for its explicit microphone test without loading the whole
@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from mira.core.audio_input import AudioInputService
 from mira.domain.audio import AudioCaptureBackend
+from mira.domain.sound import SoundOutput
 from mira.messaging.events import EventBus
 
 
@@ -18,6 +19,14 @@ def desktop_audio_backend() -> AudioCaptureBackend:
     from mira.adapters.qt_audio import QtAudioCaptureBackend
 
     return QtAudioCaptureBackend()
+
+
+def desktop_sound_output() -> SoundOutput:
+    """The desktop's sound output: the packaged sounds on the default device."""
+
+    from mira.adapters.qt_sound import QtSoundOutput
+
+    return QtSoundOutput()
 
 
 def standalone_audio_input() -> AudioInputService:

@@ -23,6 +23,8 @@ Presence is resolved, never set from several places. The owner chooses a
     NOTICE    a notice whose category expands automatically is showing
     CONTROLS  the user opened the notch's own controls (right click)
     LISTENING MIRA is listening to the user (the microphone is open for it)
+    TIMER     the user opened the timer panel (the Timer control)
+    TIMER_DONE a countdown finished and awaits the user's OK
 
     base HIDDEN               -> HIDDEN, whatever the reasons
     base COMPACT, no reasons  -> COMPACT
@@ -51,13 +53,15 @@ during a turn; and CRITICAL while something else has the content band,
 since a notice drawn under it could not be seen.
 
 **The content band.** Its owners are of two kinds. *Transient* ones are
-the user's own gestures — the integrated controls: opening them pushes any
-showing notice aside, critical or not, to come back when they close; but a
-critical notice *arriving* closes them, since an error must be seen and
-acted on. *Persistent* ones wait for the user (`_persistent_band`): a
-critical notice suspends them while it shows — they are never dismissed —
-and they return when it ends. Only CRITICAL passes either; everything else
-waits.
+the user's own gestures — the integrated controls and the timer panel:
+opening them pushes any showing notice aside, critical or not, to come back
+when they close; but a critical notice *arriving* closes them, since an
+error must be seen and acted on (the panel's chosen duration is kept).
+*Persistent* ones wait for the user — a finished countdown awaiting OK
+(`_persistent_band`): a critical notice suspends it while it shows (the
+done panel is not drawn; the countdown stays FINISHED, the notch stays
+expanded by TIMER_DONE), and it returns when the notice ends. Only
+CRITICAL passes either; everything else waits.
 
 - *Preemption.* A notice above the floor is shown at once and gets the
   full duration; so is one at the floor about the *same subject* as the
@@ -121,11 +125,31 @@ native menu. They close when one is used, on another right click, or
 `CONTROLS_LINGER_MS` after the pointer leaves (re-entering in time keeps
 them), timed on the injected `Scheduler`.
 
-Running tasks are persistent state, not a notice: while any runs, the content
-of an open notch is "Working" (unless a notice is showing), and nothing
-expands it — a long task must never hold the notch open. Content precedence:
+The timer panel is opened by the Timer control and replaces the controls
+in the content band: the remaining time and the buttons the timer's state
+allows (`timer_buttons`) — a duration to choose and Start, or Pause/Resume
+and Reset. It closes like the controls do (another right click, or
+`CONTROLS_LINGER_MS` after the pointer leaves) and when the countdown
+finishes. The duration being chosen is the presenter's
+(`timer_selection_s`); the countdown itself belongs to the application and
+arrives as `TimerSnapshot` values through `set_timer`.
 
-    controls  >  notice  >  listening  >  task running  >  activity
+A finished countdown is not a notice: it has no lifetime. For exactly as
+long as the timer is FINISHED the notch is expanded (TIMER_DONE) and the
+band shows "Timer done!" with an OK button (`timer_buttons`), whatever the
+pointer does; the owner sends OK to the timer, and only the timer leaving
+FINISHED ends it. Right click still opens the controls over it, and closing
+them shows it again.
+
+Running tasks and a running countdown are persistent state, not notices:
+while either is under way, the content of an open notch shows it (unless a
+notice is showing), and nothing expands it — a long task or timer must never
+hold the notch open. Content precedence:
+
+    controls  >  timer panel  >  notice  >  listening  >  countdown  >  task running  >  activity
+
+A countdown's content is the time left when it last changed state; the
+window reads the live value from its timer source on every frame.
 
 Listening is the one activity that expands the notch, through its own
 LISTENING reason, because the microphone being open must never be
@@ -145,6 +169,7 @@ from mira.domain.devices import DeviceCategory
 from mira.domain.embodiment import ActivityState
 from mira.domain.notice import Notice, NoticeCategory, NoticePriority, NoticeTone, notice_priority
 from mira.domain.scheduler import Scheduler, TimerHandle
+from mira.domain.timer import TimerSnapshot, TimerState, format_remaining
 from mira.ui.notch.presence import NotchPresence
 
 
@@ -156,6 +181,8 @@ class ExpansionReason(StrEnum):
     NOTICE = "notice"
     CONTROLS = "controls"
     LISTENING = "listening"
+    TIMER = "timer"
+    TIMER_DONE = "timer done"
 
 
 class NotchSymbol(StrEnum):
@@ -176,6 +203,7 @@ class NotchSymbol(StrEnum):
     HEADPHONES = "headphones"
     KEYBOARD = "keyboard"
     USB = "usb"
+    TIMER = "timer"
 
 
 class NotchAction(StrEnum):
@@ -184,6 +212,34 @@ class NotchAction(StrEnum):
     OPEN_MAIN_WINDOW = "open main window"
     OPEN_SETTINGS = "open settings"
     QUIT = "quit"
+    TIMER = "timer"
+    """Open the timer panel."""
+
+
+class TimerCommand(StrEnum):
+    """What a button in the timer panel does."""
+
+    SHORTER = "shorter"
+    LONGER = "longer"
+    PRESET = "preset"
+    START = "start"
+    PAUSE = "pause"
+    RESUME = "resume"
+    RESET = "reset"
+    ACKNOWLEDGE = "acknowledge"
+
+
+# Choosing a duration is the presenter's own business; the rest are asked of
+# whoever owns the countdown.
+SELECTION_COMMANDS = frozenset({TimerCommand.SHORTER, TimerCommand.LONGER, TimerCommand.PRESET})
+
+
+@dataclass(frozen=True, slots=True)
+class TimerButton:
+    """One button of the timer panel; ``minutes`` only for a preset."""
+
+    command: TimerCommand
+    minutes: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -256,13 +312,66 @@ LISTENING_CONTENT = NotchContent(NotchSymbol.LISTENING, "Listening")
 
 # The integrated controls, in display order. Opening the main window is not
 # among them: the double click is that gesture.
-CONTROL_ORDER = (NotchAction.OPEN_SETTINGS, NotchAction.QUIT)
+CONTROL_ORDER = (NotchAction.TIMER, NotchAction.OPEN_SETTINGS, NotchAction.QUIT)
 
 CONTROLS_LINGER_MS = 1500
 
 
 def control_actions(actions: frozenset[NotchAction]) -> tuple[NotchAction, ...]:
     return tuple(action for action in CONTROL_ORDER if action in actions)
+
+
+TIMER_PRESET_MINUTES = (5, 10, 15, 25)
+DEFAULT_TIMER_SELECTION_S = 5 * 60
+MIN_TIMER_SELECTION_S = 60
+MAX_TIMER_SELECTION_S = 180 * 60
+# Shorter/longer move by a minute up to this many minutes, by five beyond, so
+# both a short and an hour-long countdown are a few clicks away.
+FINE_STEP_LIMIT_MIN = 10
+COARSE_STEP_MIN = 5
+
+_SETUP_BUTTONS = (
+    TimerButton(TimerCommand.SHORTER),
+    TimerButton(TimerCommand.LONGER),
+    *(TimerButton(TimerCommand.PRESET, minutes) for minutes in TIMER_PRESET_MINUTES),
+    TimerButton(TimerCommand.START),
+)
+_STATE_BUTTONS = {
+    TimerState.RUNNING: (TimerButton(TimerCommand.PAUSE), TimerButton(TimerCommand.RESET)),
+    TimerState.PAUSED: (TimerButton(TimerCommand.RESUME), TimerButton(TimerCommand.RESET)),
+    TimerState.FINISHED: (TimerButton(TimerCommand.ACKNOWLEDGE),),
+}
+
+
+def timer_buttons(timer: TimerSnapshot) -> tuple[TimerButton, ...]:
+    """The panel's buttons: choose and start, or what the countdown's state allows."""
+    return _STATE_BUTTONS.get(timer.state, _SETUP_BUTTONS)
+
+
+def adjusted_selection(selected_s: int, button: TimerButton) -> int:
+    """The duration chosen after ``button``, in whole minutes within bounds."""
+    minutes = selected_s // 60
+    if button.command is TimerCommand.PRESET:
+        minutes = button.minutes
+    elif button.command is TimerCommand.LONGER:
+        if minutes < FINE_STEP_LIMIT_MIN:
+            minutes += 1
+        else:
+            minutes = (minutes // COARSE_STEP_MIN + 1) * COARSE_STEP_MIN
+    elif button.command is TimerCommand.SHORTER:
+        if minutes <= FINE_STEP_LIMIT_MIN:
+            minutes -= 1
+        else:
+            minutes = (minutes - 1) // COARSE_STEP_MIN * COARSE_STEP_MIN
+    return min(max(minutes * 60, MIN_TIMER_SELECTION_S), MAX_TIMER_SELECTION_S)
+
+
+def timer_content(timer: TimerSnapshot) -> NotchContent:
+    """A countdown under way: the time left, and whether it is paused."""
+    label = format_remaining(timer.remaining_s)
+    if timer.state is TimerState.PAUSED:
+        label += " paused"
+    return NotchContent(NotchSymbol.TIMER, label)
 
 
 def activity_content(activity: ActivityState) -> NotchContent | None:
@@ -283,23 +392,32 @@ class NotchPresentation:
     controls: tuple[NotchAction, ...] = ()
     listening: bool = False
     capturing: bool = False
+    timer: TimerSnapshot = TimerSnapshot()
+    # The open timer panel's buttons; empty while it is closed.
+    timer_panel: tuple[TimerButton, ...] = ()
+    timer_selection_s: int = DEFAULT_TIMER_SELECTION_S
 
     @property
     def shows_waveform(self) -> bool:
         """Whether the content band shows the captured audio right now."""
-        return self.listening and self.capturing and not self.controls and self.notice is None
+        return (
+            self.listening and self.capturing and not self.controls and not self.timer_panel and self.notice is None
+        )
 
     @property
     def content(self) -> NotchContent | None:
-        """A showing notice, else listening, else running work, else the activity.
+        """A showing notice, else listening, a countdown, running work, the activity.
 
-        Not drawn while `controls` are open (they take the content band), and
-        replaced by the waveform when `shows_waveform` and samples exist.
+        Not drawn while `controls` or the `timer_panel` are open (they take the
+        content band), and replaced by the waveform when `shows_waveform` and
+        samples exist.
         """
         if self.notice is not None:
             return notice_content(self.notice)
         if self.listening:
             return LISTENING_CONTENT
+        if self.timer.active:
+            return timer_content(self.timer)
         if self.tasks_running:
             return TASK_RUNNING_CONTENT
         return activity_content(self.activity)
@@ -423,7 +541,11 @@ class NotchPresenter:
         self._pinned = False
         self._tasks_running = False
         self._controls_open = False
+        self._timer_open = False
+        # Closes the controls or the timer panel once the pointer has left.
         self._controls_timer: TimerHandle | None = None
+        self._timer = TimerSnapshot()
+        self._timer_selection_s = DEFAULT_TIMER_SELECTION_S
         self._listening = False
         self._capturing = False
         self._notice: Notice | None = None
@@ -482,6 +604,7 @@ class NotchPresenter:
         self._base = NotchPresence.HIDDEN
         self._hovered = False
         self._controls_open = False
+        self._timer_open = False
         self._cancel_controls_timer()
         self._restore()
         self._publish()
@@ -494,7 +617,7 @@ class NotchPresenter:
 
     def set_hovered(self, hovered: bool) -> None:
         self._hovered = bool(hovered)
-        if self._controls_open:
+        if self._controls_open or self._timer_open:
             if self._hovered:
                 self._cancel_controls_timer()
             elif self._controls_timer is None and not self._stopped:
@@ -525,8 +648,10 @@ class NotchPresenter:
         self._publish()
 
     def toggle_controls(self) -> None:
-        """The right-click gesture."""
-        if self._controls_open:
+        """The right-click gesture; it also closes the timer panel."""
+        if self._timer_open:
+            self.close_timer_panel()
+        elif self._controls_open:
             self.close_controls()
         else:
             self.open_controls()
@@ -534,7 +659,57 @@ class NotchPresenter:
     def _controls_lingered(self) -> None:
         self._controls_timer = None
         if not self._hovered:
+            self._timer_open = False
             self.close_controls()
+
+    # --- Timer --------------------------------------------------------------------
+
+    @property
+    def timer_selection_s(self) -> int:
+        """The duration the panel would start."""
+        return self._timer_selection_s
+
+    def open_timer_panel(self) -> None:
+        """Replace the controls with the timer panel, if this notch offers it."""
+        if self._stopped or self._base is NotchPresence.HIDDEN or NotchAction.TIMER not in self._actions:
+            return
+        self._controls_open = False
+        self._timer_open = True
+        self._cancel_controls_timer()
+        # The user's own gesture, like the controls: any notice steps aside.
+        self._yield_to_context(everything=True)
+        self._publish()
+
+    def close_timer_panel(self) -> None:
+        self._timer_open = False
+        self._cancel_controls_timer()
+        self._restore()
+        self._publish()
+
+    def set_timer(self, timer: TimerSnapshot) -> None:
+        """The countdown changed state.
+
+        One that finishes closes the panel the user had open: the done panel
+        then shows until the timer leaves FINISHED, and afterwards nothing
+        the user opened earlier holds the notch.
+        """
+        finished = timer.state is TimerState.FINISHED and self._timer.state is not TimerState.FINISHED
+        self._timer = timer
+        # Awaiting OK is a persistent band owner: a lesser notice steps aside
+        # now, and what waited comes back once the user has answered.
+        self._yield_to_context()
+        if finished and self._timer_open:
+            self.close_timer_panel()
+            return
+        self._restore()
+        self._publish()
+
+    def choose_timer(self, button: TimerButton) -> None:
+        """A duration button was used; commands are not the presenter's."""
+        if button.command not in SELECTION_COMMANDS:
+            return
+        self._timer_selection_s = adjusted_selection(self._timer_selection_s, button)
+        self._publish()
 
     def _cancel_controls_timer(self) -> None:
         if self._controls_timer is not None:
@@ -641,23 +816,27 @@ class NotchPresenter:
         return self._listening or self._activity in INTERACTION_ACTIVITIES
 
     def _transient_band(self) -> bool:
-        """Something the user opened has the content band (the controls)."""
-        return self._controls_open
+        """Something the user opened has the content band: the controls, the timer panel."""
+        return self._controls_open or self._timer_open
 
     def _persistent_band(self) -> bool:
         """Something waiting for the user has the content band; see the module.
 
-        Nothing does yet; a state that must outlive a critical notice (a
-        finished timer awaiting OK) belongs here, and is suspended — never
-        dismissed — while a critical notice shows.
+        A finished countdown awaiting OK: it must outlive a critical notice,
+        so it is suspended — never dismissed — while one shows.
         """
-        return False
+        return self._awaiting_ok
+
+    def _band_suspended(self) -> bool:
+        """A critical notice has the band over a persistent owner, for its lifetime."""
+        return self._notice is not None and self._notice_priority >= NoticePriority.CRITICAL
 
     def _band_taken(self) -> bool:
         return self._transient_band() or self._persistent_band()
 
     def _close_transient_band(self) -> None:
         self._controls_open = False
+        self._timer_open = False
         self._cancel_controls_timer()
 
     def _context_floor(self) -> int:
@@ -777,6 +956,10 @@ class NotchPresenter:
             reasons.add(ExpansionReason.CONTROLS)
         if self._listening:
             reasons.add(ExpansionReason.LISTENING)
+        if self._timer_open:
+            reasons.add(ExpansionReason.TIMER)
+        if self._awaiting_ok:
+            reasons.add(ExpansionReason.TIMER_DONE)
         return frozenset(reasons)
 
     def _resolve(self) -> NotchPresentation:
@@ -795,7 +978,18 @@ class NotchPresenter:
             controls=control_actions(self._actions) if self._controls_open else (),
             listening=self._listening,
             capturing=self._capturing,
+            timer=self._timer,
+            # Suspended, not dismissed, while a critical notice has the band.
+            timer_panel=(
+                timer_buttons(self._timer)
+                if (self._timer_open or self._awaiting_ok) and not self._band_suspended() else ()
+            ),
+            timer_selection_s=self._timer_selection_s,
         )
+
+    @property
+    def _awaiting_ok(self) -> bool:
+        return self._timer.state is TimerState.FINISHED
 
     def _publish(self) -> None:
         presentation = self._resolve()

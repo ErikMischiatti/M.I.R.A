@@ -456,13 +456,13 @@ def controls_presenter():
     return presenter, scheduler
 
 
-def test_controls_are_settings_and_quit_never_the_main_window():
+def test_controls_are_timer_settings_and_quit_never_the_main_window():
     from mira.ui.notch.presentation import ExpansionReason, NotchAction
 
     presenter, _ = controls_presenter()
     presenter.toggle_controls()
 
-    assert presenter.presentation.controls == (NotchAction.OPEN_SETTINGS, NotchAction.QUIT)
+    assert presenter.presentation.controls == (NotchAction.TIMER, NotchAction.OPEN_SETTINGS, NotchAction.QUIT)
     assert ExpansionReason.CONTROLS in presenter.presentation.reasons
 
 

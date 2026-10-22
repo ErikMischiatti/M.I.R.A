@@ -78,6 +78,8 @@ mira.main [--notch]                     MIRA: main window · MIRA-NOTCH: notch
       → TaskActivity                     (running actions → "tasks_changed")
       → TaskNoticeProducer               (action results → "notice")
       → SystemNoticeProducer(sources)    (system changes → "notice")
+      → CountdownTimer                   (the one countdown → "timer_changed", "timer_finished")
+      → SoundCues(sound_output)          ("timer_finished" → the timer-done chime)
   → DesktopShell(application, initial_surface, load_notch_session)
       → FaceController → FaceAnimator   (the one embodiment and its clock)
       → the initial surface only; any other on its first show_surface:
@@ -463,19 +465,65 @@ NotchWindow ── hover_changed ───────┤
   base (hidden or shown); the notch is EXPANDED while any `ExpansionReason`
   holds — HOVER (if `expand_on_hover`), PINNED (tuning preview), NOTICE (a
   notice whose category expands automatically), CONTROLS (the integrated
-  controls are open), LISTENING (MIRA is listening) — and COMPACT otherwise.
-  The content band shows, in this order of precedence: controls > notice >
-  listening (the real waveform) > task running > activity — where a notice
-  below INTERACTION does not show during a turn of conversation (see "Notice
+  controls are open), LISTENING (MIRA is listening), TIMER (the timer panel
+  is open), TIMER_DONE (a finished countdown awaits OK) — and COMPACT
+  otherwise.
+  The content band shows, in this order of precedence: controls > timer
+  panel > notice > listening (the real waveform) > countdown > task running >
+  activity — where which notice shows, and when, is decided by priority:
+  none below INTERACTION during a turn of conversation, and none below
+  CRITICAL while the controls or a timer panel have the band (see "Notice
   priority").
 - **Integrated controls.** Right click toggles the notch's own controls
-  (Settings, Quit M.I.R.A.), drawn as pills in the content band and clicked
+  (Timer, Settings, Quit M.I.R.A.), drawn as pills in the content band and clicked
   in place; there is no native menu. Opening the main window is not a
   control: the double click is that one gesture. Controls close after use,
   on another right click, on hide, or 1.5 s after the pointer leaves
   (re-entering in time keeps them), on the Scheduler. The notch accepts
   mouse presses, which is what makes X11 deliver the releases its controls
   act on.
+- **Timer.** The Timer control replaces the controls with the timer panel
+  in the same band: the time, then `TimerButton` pills — a duration to
+  choose (−/+ by a minute up to ten, by five above, 1–180 min; presets 5,
+  10, 15, 25) and Start, or Pause/Resume and Reset while a countdown is
+  under way. The chosen duration is the presenter's; the countdown is the
+  application's `CountdownTimer` (`mira/core/countdown_timer.py`), which
+  keeps a deadline on an injected monotonic clock, arms one Scheduler
+  callback for the time left (re-armed if it fires early) and ignores
+  callbacks of an earlier generation, so it never drifts and finishes
+  exactly once. Commands leave the window as `timer_requested`;
+  `DesktopShell` sends them to the timer and its `"timer_changed"`
+  snapshots to the presenter. The time left is pulled from the timer on
+  every repaint, like the waveform. The panel closes like the controls and
+  when the countdown finishes; a running countdown never expands the notch,
+  is shown only while it is open for another reason, and keeps counting
+  while compact.
+- **Timer completion.** A finished countdown is state, not a notice: the
+  timer stays FINISHED until `CountdownTimer.acknowledge()` returns it to
+  idle (a plain `"timer_changed"`; `"timer_finished"` is emitted once, at
+  the end, and never again). For exactly that long `deliver_timer` holds the
+  TIMER_FINISHED embodiment condition — the success cue's CHEVRON eyes,
+  held and breathing slightly instead of flashed, above TASK_RUNNING and
+  below any cue — and the presenter holds TIMER_DONE: "Timer done!" and an
+  OK button in the band, which no timeout, pointer movement or right click
+  ends. Right click opens the controls over it; closing them shows it
+  again. OK leaves the window as `timer_requested`, the shell calls
+  `acknowledge()`, and the resulting IDLE snapshot releases both.
+- **Timer chime.** The end is also heard, once. `SoundCues`
+  (`mira/core/sound_cues.py`) is the one listener to `"timer_finished"` and
+  asks the `SoundOutput` port (`mira/domain/sound.py`) for
+  `Sound.TIMER_DONE`; nothing else — redraws, hover, acknowledgement,
+  pause or reset — emits that event, so nothing else plays it. The desktop
+  output is `QtSoundOutput` (`mira/adapters/qt_sound.py`): a `QSoundEffect`
+  per sound, loaded by `prepare` at startup next to the capture backend's
+  enumeration and played asynchronously, so the GUI thread never waits. A
+  missing file or device, or a failing backend, is logged once and
+  ignored, and `SoundCues` swallows anything an output raises, since it is
+  called from inside the timer's finish. The sound is an original 0.8 s
+  three-note FM arpeggio at -7 dBFS (`mira/sounds/timer_done.wav`),
+  rendered with the standard library by `scripts/generate_sounds.py`; a
+  test keeps the asset equal to what the script renders. Without a
+  `sound_output`, `build_application` is silent.
   Activity alone never expands; it only chooses the content shown while open.
   A notice of a category that does not expand still becomes the content (seen
   on hover) and still makes the eyes react.
@@ -495,7 +543,7 @@ NotchWindow ── hover_changed ───────┤
   notch keeps its last valid configuration. Mid-transition the content is
   revealed by the outline and faded with the reveal, by design.
 - **Actions.** The window emits `NotchAction` values (double click:
-  OPEN_MAIN_WINDOW; integrated controls: OPEN_SETTINGS, QUIT) and only those
+  OPEN_MAIN_WINDOW; integrated controls: TIMER, OPEN_SETTINGS, QUIT) and only those
   its presentation offers.
   `DesktopShell` honours them; the notch never holds `MainWindow`. The
   standalone tools offer none.
