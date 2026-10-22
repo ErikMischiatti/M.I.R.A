@@ -190,7 +190,10 @@ when the exchange ends, however long it took (up to a minute). While the
 notch's controls are open, notices wait and appear when they close; an
 error or alert closes the controls instead, so it can be seen. Two devices
 connecting
-together are shown one after the other. Defaults: alerts, devices and
+together are shown one after the other. The countdown timer has no settings of
+its own: its panel and a finished timer's "Timer done!" hold notices back
+like the controls do, and an error shows over "Timer done!", which returns
+after it. Defaults: alerts, devices and
 connectivity expand, task results do not.
 
 **System notices.** The runtime watches USB devices (kernel uevents), audio

@@ -199,6 +199,8 @@ Tests are grouped by boundary rather than by file:
 | System events and notices | `test_system_event_adapters.py`, `test_notice_producers.py`, `test_usb_device_notices.py` |
 | Device information | `test_device_info_service.py`, `test_adb_provider.py`, `test_device_info_providers.py`, `test_device_info_notch.py` |
 | Notice priority | `test_notice_priority.py`, `test_notice_priority_notch.py` |
+| Countdown timer | `test_countdown_timer.py`, `test_notch_timer.py`, `test_timer_sound.py` |
+| Unified notch | `test_notch_unified.py` (the twelve integration scenarios, the timer as a band owner) |
 | Memory and messaging | `test_memory_contracts.py`, `test_messaging_contracts.py` |
 
 Shared test doubles live in `tests/doubles.py` (covered by
@@ -348,6 +350,71 @@ done
 
 Product strings are the device's own and may name its owner (a phone
 renamed "Anna's Pixel"); check a log before sharing it.
+
+## Integration lineage
+
+The unified notch is `integration/notch-unified`: the notch foundation, the
+device line and the countdown timer, joined by one merge.
+
+```text
+origin/main b192ae7
+└─ main 5be4131 (+17, local)          micro-motions, camera
+   └─ feat/notch-embodiment-ui 48d1ac6 (+55)   notch, runtime, audio, voice activation
+      ├─ M1  0bec659  USB detection and stabilization
+      │  └─ M2  84ec4d5  device information providers
+      │     └─ M3  2f3d1a3  notice priority, name + detail
+      │        └─ M4  5940ec4  band floor, thinking in the turn   (fix/notch-notice-floor)
+      │           └─ M4.1 e5c8dda  expiration, critical vs band, SIGTERM, cancellation
+      │                            (fix/notch-integration-hardening)
+      └─ feat/notch-timer 88f6b1b, 102e832   countdown timer
+                     ╲
+                      merge → integration/notch-unified
+```
+
+`validate/m3-timer-integration` and `validate/m41-integration-candidate`
+were rehearsals of this merge with an uncommitted copy of the timer; they
+are evidence, not part of the lineage. The merge commit lists every
+conflict and how it was resolved; `tests/test_notch_unified.py` pins the
+semantic part (the timer's panels as content-band owners).
+
+## Acceptance testing of the unified notch
+
+Quit any running MIRA first (a second launch only forwards to it). From
+the repository root, with the environment from [Environment](#environment):
+
+```bash
+MIRA_DEVICE_MONITOR_DEBUG=1 venv/bin/python -m mira.main --notch 2>&1 \
+  | grep --line-buffered -E '^\[(devices|notices|mira)\]' | tee notch-acceptance.log
+```
+
+`MIRA-TUNE` (`bin/mira-tune`) opens the same notch with the tuning window
+and its *Device scenario* previews, for checks that need no hardware.
+
+| Area | Check | Expect |
+|---|---|---|
+| Timer | Right click → *Timer*; choose 1 min with − / presets; *Start* | The panel closes on start; hovering shows the time left counting down |
+| Timer | Let it finish | The notch expands with "Timer done!" and *OK*, the eyes hold a smile, one chime; *OK* collapses it |
+| Timer | Pause, resume, reset from the panel | The readout follows; reset returns to choosing |
+| USB | Plug in a USB stick | One notice, storage symbol, "<name> connected", then "<name> <size>"; a brief smile once |
+| USB | Unplug it | "<name> disconnected" about 2.5 s later, no smile |
+| USB + timer | Plug it in while "Timer done!" shows | Nothing until *OK*; then the stick's notice, greeted once |
+| Device information | iPhone (below) | "iPhone" + "N% · <state>" matching the phone |
+| Voice | Ctrl+Alt+M (or the configured key), speak, stop | The waveform shows; a device plugged in meanwhile appears only after listening ends |
+| Errors | MIRA-TUNE *Task failed* while "Timer done!" shows, and while the controls are open | The error shows with cross eyes; "Timer done!" returns after it; the controls are closed by it |
+| Eyes | Throughout | A smile when a device notice appears (not when it waits), none for a departure or for battery updates; cross eyes for errors |
+| Shutdown | `kill -TERM <pid>` (or Ctrl+C, or *Quit*) | Exit status 0, no traceback, `$XDG_RUNTIME_DIR/mira/runtime.sock` gone, no `pw-dump` left (`pgrep -x pw-dump`) |
+| Shutdown | Quit right after plugging in an adb phone, or while a timer runs | Returns at once |
+
+**iPhone battery (UPower).** Unlock the iPhone, connect it, accept "Trust
+This Computer?" and enter the passcode. Within a few seconds the notch
+shows "iPhone" and "N% · Charging" (or Full/Not charging). Compare with
+what UPower itself reads, without serial numbers:
+`upower --dump | grep -A12 '^ *phone$' | grep -E 'phone|present|state|percentage'`.
+Untrusted, UPower lists no phone and only the connection notice appears;
+the debug log says so (`[devices] upower: …`).
+
+Offscreen rendering (`QT_QPA_PLATFORM=offscreen`) checks layout and state,
+not how the desktop composites the notch; only a live run does that.
 
 ## Dependencies
 

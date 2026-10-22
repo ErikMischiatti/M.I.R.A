@@ -643,12 +643,27 @@ tasks are not a turn.
 
 | Owner | Examples | A notice below CRITICAL | A critical notice |
 |---|---|---|---|
-| Transient (`_transient_band`) | the integrated controls; the timer's panel once integrated | waits | arriving: closes the owner and shows — an error must be seen and acted on |
-| Persistent (`_persistent_band`) | a finished timer awaiting OK, once integrated | waits | shows; the owner is *suspended* while it shows, never dismissed, and returns when it ends |
+| Transient (`_transient_band`) | the integrated controls; the timer panel | waits | arriving: closes the owner and shows — an error must be seen and acted on; the timer panel's chosen duration is kept |
+| Persistent (`_persistent_band`) | a finished countdown awaiting OK ("Timer done!") | waits — even across the end of a conversation — until OK | shows; the done panel is *suspended* while it shows (`_band_suspended`: not drawn, the countdown stays FINISHED, TIMER_DONE keeps the notch expanded, the eyes keep TIMER_FINISHED under the error cue) and returns when it ends |
 
 Opening a transient owner is the user's own gesture: it pushes any showing
 notice aside, critical or not, and that notice returns when the owner
 closes. No notice is ever drawn, timed or reacted to underneath an owner.
+
+**The unified notch, state by state.** What a notice of each kind does in
+each situation (the band column wins over the turn column when both hold):
+
+| Situation | Device, connectivity (PASSIVE) | Task result (FEEDBACK) | Error, alert (CRITICAL) | Device information |
+|---|---|---|---|---|
+| Idle, countdown running | shown; the countdown returns after it | shown | shown | refines the device's notice in place; shown alone only if announced |
+| Listening, thinking, speaking (a turn) | waits for the turn's end | waits | shown over the waveform | joins the waiting notice |
+| Controls or timer panel open | waits | waits | closes the panel and shows | joins the waiting notice |
+| "Timer done!" awaiting OK | waits until OK | waits until OK | shows; "Timer done!" returns after it | joins the waiting notice |
+
+A device that leaves while its arrival waits cancels it; information about
+a device whose latest notice is its departure is dropped. The eyes react
+when a notice is shown — never while it waits, never for a refinement —
+and cue priority keeps a greeting from replacing a stronger cue.
 
 | Rule | Behaviour |
 |---|---|
@@ -920,7 +935,7 @@ allow-list/filter policy in `mira.core` deciding which become notices.
 
 | | |
 |---|---|
-| Implemented | one runtime per user with surface requests; lazy main window and notch; all-workspace presence on X11; readable expanded content by default; integrated notch controls; USB, audio-topology and connectivity notices with supervised PipeWire monitoring; USB device classification with per-kind notch symbols and an arrival greeting; device information providers; notice priority with deferral, coalescing and restoration; per-category expansion; SUCCESS/WARNING/ERROR cues and the TASK_RUNNING condition; keyboard listening activation; the runtime's microphone capture with real level and waveform in the notch |
+| Implemented | one runtime per user with surface requests; lazy main window and notch; all-workspace presence on X11; readable expanded content by default; integrated notch controls; USB, audio-topology and connectivity notices with supervised PipeWire monitoring; USB device classification with per-kind notch symbols and an arrival greeting; device information providers; notice priority with deferral, coalescing and restoration; the countdown timer as a content-band owner; per-category expansion; SUCCESS/WARNING/ERROR cues and the TASK_RUNNING condition; keyboard listening activation; the runtime's microphone capture with real level and waveform in the notch |
 | Prepared | `SystemEventSource` port; `EyeShape` in `EmbodimentFrame`; run ids for asynchronous actions; `ListeningActivationMode.WAKE_WORD`, activation sources and capture leases for a wake-word detector; `AudioFrame` for speech processing |
 | Future | wake word; voice activity detection; speech-to-text and text-to-speech; asynchronous (long) actions; desktop-notification source with a filter policy; Wayland workspace presence |
 
