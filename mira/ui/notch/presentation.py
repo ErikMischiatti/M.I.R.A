@@ -68,8 +68,16 @@ notice drawn under them could not be seen.
   device that arrived and left while its arrival waited cancels out, since
   nothing changed for the user. The same notice as the one showing only
   restarts its time: no new animation, no reaction.
-- *Expiration.* A waiting notice is dropped `DEFERRED_NOTICE_TTL_MS` after
-  it was deferred: it would no longer be news.
+- *Expiration.* Three things are kept apart. *Validity*: a notice no
+  longer true is gone at once — superseded by a newer one about its
+  subject, or, for an arrival, cancelled by the same device leaving — and
+  nothing waits longer than `MAX_NOTICE_AGE_MS` in all, whatever holds it
+  back. *Eligible waiting*: the time a notice waits although nothing but
+  the queue holds it back (no turn, no band it cannot pass); it may last
+  as long as every notice ahead of it needs to be shown, plus
+  `ELIGIBLE_GRACE_MS`, and it is not counted during a conversation or
+  under a band owner — a long turn does not use it up. *Display*: once
+  shown, `notice_duration_ms`.
 - *Yielding.* When MIRA starts listening or speaking, a showing notice
   below INTERACTION steps aside: it goes back to wait, without a second
   reaction, and the conversation has the band from its first moment. Any
@@ -326,7 +334,14 @@ Listener = Callable[[NotchPresentation], None]
 ReactionListener = Callable[[Notice], None]
 
 MAX_DEFERRED_NOTICES = 3
-DEFERRED_NOTICE_TTL_MS = 10_000
+# A waiting notice is dropped this long after it arrived, whatever held it
+# back: a bound on retention (a long turn of conversation lasts well under it).
+MAX_NOTICE_AGE_MS = 60_000
+# Beyond the turns of the notices ahead of it, how long a waiting notice may
+# stay waiting while nothing but the queue holds it back.
+ELIGIBLE_GRACE_MS = 2_000
+# Eligible waiting is counted in steps of this, on the scheduler.
+ELIGIBILITY_TICK_MS = 500
 
 # The activities of one turn of conversation; see the module.
 INTERACTION_ACTIVITIES = frozenset({ActivityState.LISTENING, ActivityState.THINKING, ActivityState.SPEAKING})
@@ -355,7 +370,9 @@ class _Deferred:
     priority: NoticePriority
     react: bool
     order: int
+    eligible_left_ms: int
     timer: TimerHandle | None = None
+    """Drops it at `MAX_NOTICE_AGE_MS`."""
 
 
 def _subject(notice: Notice) -> tuple:
@@ -409,6 +426,7 @@ class NotchPresenter:
         self._notice_priority = NoticePriority.PASSIVE
         self._deferred: list[_Deferred] = []
         self._deferred_order = 0
+        self._eligibility_tick: TimerHandle | None = None
         self._reactions: list[ReactionListener] = []
         self._expiry: TimerHandle | None = None
         # Identifies the notice the pending expiry belongs to, so a callback
@@ -606,6 +624,9 @@ class NotchPresenter:
             if entry.timer is not None:
                 entry.timer.cancel()
         self._deferred.clear()
+        if self._eligibility_tick is not None:
+            self._eligibility_tick.cancel()
+            self._eligibility_tick = None
         self._stopped = True
 
     # --- Arbitration ---------------------------------------------------------
@@ -649,11 +670,36 @@ class NotchPresenter:
 
     def _defer(self, notice: Notice, priority: NoticePriority, react: bool) -> None:
         self._deferred_order += 1
-        entry = _Deferred(notice, priority, react, self._deferred_order)
-        entry.timer = self._scheduler.call_later(DEFERRED_NOTICE_TTL_MS, lambda: self._drop_deferred(entry))
+        # Enough for every notice ahead to have its turn at the configured pace.
+        budget = MAX_DEFERRED_NOTICES * self._behaviour.notice_duration_ms + ELIGIBLE_GRACE_MS
+        entry = _Deferred(notice, priority, react, self._deferred_order, budget)
+        entry.timer = self._scheduler.call_later(MAX_NOTICE_AGE_MS, lambda: self._drop_deferred(entry))
         self._deferred.append(entry)
         if len(self._deferred) > MAX_DEFERRED_NOTICES:
             self._drop_deferred(min(self._deferred, key=lambda waiting: (waiting.priority, waiting.order)))
+        self._arm_eligibility_tick()
+
+    def _eligible(self, entry: _Deferred) -> bool:
+        """Nothing outside the queue holds it back: no turn, no band it cannot pass."""
+        return entry.priority >= self._context_floor()
+
+    def _arm_eligibility_tick(self) -> None:
+        if self._stopped or self._eligibility_tick is not None:
+            return
+        if any(self._eligible(entry) for entry in self._deferred):
+            self._eligibility_tick = self._scheduler.call_later(ELIGIBILITY_TICK_MS, self._count_eligible)
+
+    def _count_eligible(self) -> None:
+        """One step of eligible waiting for every notice nothing else holds back."""
+        self._eligibility_tick = None
+        if self._stopped:
+            return
+        for entry in list(self._deferred):
+            if self._eligible(entry):
+                entry.eligible_left_ms -= ELIGIBILITY_TICK_MS
+                if entry.eligible_left_ms <= 0:
+                    self._drop_deferred(entry)
+        self._arm_eligibility_tick()
 
     def _take_deferred(self, subject: tuple) -> _Deferred | None:
         for entry in self._deferred:
@@ -683,10 +729,10 @@ class NotchPresenter:
         if self._stopped or not self._deferred:
             return
         best = max(self._deferred, key=lambda entry: (entry.priority, -entry.order))
-        if best.priority < self._floor():
-            return
-        self._drop_deferred(best)
-        self._show(best.notice, best.priority, best.react)
+        if best.priority >= self._floor():
+            self._drop_deferred(best)
+            self._show(best.notice, best.priority, best.react)
+        self._arm_eligibility_tick()
 
     # --- Resolution ----------------------------------------------------------
 

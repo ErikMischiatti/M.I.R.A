@@ -24,9 +24,10 @@ from mira.domain.system_events import DeviceChange, DeviceEvent, DeviceKind, dev
 from mira.ui.face.face_controller import FaceController
 from mira.ui.notch.presence import NotchPresence
 from mira.ui.notch.presentation import (
-    DEFERRED_NOTICE_TTL_MS,
+    ELIGIBLE_GRACE_MS,
     INTERACTION_ACTIVITIES,
     MAX_DEFERRED_NOTICES,
+    MAX_NOTICE_AGE_MS,
     NotchAction,
     NotchBehaviour,
     NotchPresenter,
@@ -408,14 +409,71 @@ def test_waiting_notices_are_restored_highest_priority_first_then_oldest(notch):
     assert order == [DONE, arrived(PHONE), arrived(STICK)]
 
 
-def test_a_waiting_notice_expires_when_it_is_no_longer_news(notch):
+def test_a_long_turn_does_not_use_up_a_waiting_notice(notch):
+    # A 30 s utterance, 10 s of thinking and the answer: about 42 s of turn.
+    notch.presenter.set_listening(True, True)
+    notch.presenter.present(arrived())
+    notch.advance(30_000)
+    notch.presenter.set_listening(False)
+    notch.presenter.set_activity(ActivityState.THINKING)
+    notch.advance(10_000)
+    notch.presenter.set_activity(ActivityState.SPEAKING)
+    notch.advance(1_800)
+
+    notch.presenter.set_activity(ActivityState.IDLE)
+
+    assert notch.showing == arrived() and notch.reactions == [arrived()]
+
+
+def test_nothing_waits_longer_than_the_maximum_age_whatever_holds_it(notch):
     notch.presenter.set_listening(True, True)
     notch.presenter.present(arrived())
 
-    notch.advance(DEFERRED_NOTICE_TTL_MS)
+    notch.advance(MAX_NOTICE_AGE_MS)
     notch.presenter.set_listening(False)
 
     assert notch.presenter.deferred == () and notch.showing is None and notch.reactions == []
+
+
+def test_eligible_waiting_lasts_for_every_notice_ahead_plus_a_grace(notch):
+    # Four devices at once: one shows, three wait their turn at the configured pace.
+    devices = [replace(PHONE, key=f"/d/usb3/3-{n}") for n in range(4)]
+    for device in devices:
+        notch.presenter.present(arrived(device))
+
+    shown = [notch.showing]
+    for _ in range(3):
+        notch.advance(DURATION)
+        shown.append(notch.showing)
+
+    assert shown == [arrived(device) for device in devices]
+
+
+def test_a_notice_held_back_only_by_the_queue_expires_once_its_eligible_time_is_used(notch):
+    budget = MAX_DEFERRED_NOTICES * DURATION + ELIGIBLE_GRACE_MS  # 14 s at these settings
+    notch.presenter.present(ALERT)
+    notch.presenter.present(arrived())  # waits behind the alert: only the queue holds it
+
+    def keep_alert_showing(ms):
+        # The same alert subject again and again: it stays the showing notice.
+        for _ in range(ms // 1000):
+            notch.presenter.present(replace(ALERT, text=f"Low disk {notch.scheduler.pending_timers()}"))
+            notch.advance(1000)
+
+    keep_alert_showing(budget - 1000)
+    assert notch.presenter.deferred == (arrived(),)
+    keep_alert_showing(1000)
+    assert notch.presenter.deferred == ()
+
+
+def test_eligible_waiting_is_not_counted_under_a_band_owner_or_during_a_turn(notch):
+    budget = MAX_DEFERRED_NOTICES * DURATION + ELIGIBLE_GRACE_MS
+    notch.presenter.open_controls()
+    notch.presenter.present(arrived())
+    notch.advance(budget + 1000)  # under the controls: not counted
+    notch.presenter.close_controls()
+
+    assert notch.showing == arrived()
 
 
 def test_the_waiting_queue_is_bounded_and_drops_the_least_important_first(notch):
@@ -487,7 +545,7 @@ def test_a_long_random_sequence_keeps_the_presenter_consistent():
         lambda: notch.presenter.set_activity(rng.choice(list(ActivityState))),
         lambda: notch.presenter.open_controls(),
         lambda: notch.presenter.close_controls(),
-        lambda: notch.advance(rng.choice((0, 100, 1000, DURATION, DEFERRED_NOTICE_TTL_MS))),
+        lambda: notch.advance(rng.choice((0, 100, 1000, DURATION, 15_000, MAX_NOTICE_AGE_MS))),
     ]
     for _ in range(2000):
         rng.choice(events)()
@@ -506,7 +564,7 @@ def test_a_long_random_sequence_keeps_the_presenter_consistent():
     notch.presenter.set_listening(False)
     notch.presenter.set_activity(ActivityState.IDLE)
     notch.presenter.close_controls()
-    notch.advance(10 * DEFERRED_NOTICE_TTL_MS)
+    notch.advance(2 * MAX_NOTICE_AGE_MS)
     assert notch.showing is None and notch.presenter.deferred == ()
     notch.presenter.shutdown()
     assert notch.scheduler.pending_timers() == 0
