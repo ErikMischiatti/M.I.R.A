@@ -12,6 +12,7 @@ import sys
 
 from mira.domain.embodiment_cue import EmbodimentCondition, cue_for_notice
 from mira.domain.notice import Notice, NoticePriority, notice_priority
+from mira.domain.timer import TimerSnapshot, TimerState
 from mira.ui.face.face_animator import FaceAnimator
 from mira.ui.face.face_controller import FaceController
 from mira.ui.notch.config_store import NotchSettings
@@ -89,6 +90,22 @@ def deliver_notice(notice: Notice, *, presenter: NotchPresenter | None, controll
     if interacting and notice_priority(notice) < NoticePriority.INTERACTION:
         return
     react_to_notice(notice, controller)
+
+
+def deliver_timer(timer: TimerSnapshot, *, presenter: NotchPresenter | None, controller: FaceController | None) -> None:
+    """Show the countdown's state, the one way the desktop does it.
+
+    A finished countdown awaiting the user's OK holds the TIMER_FINISHED
+    condition on the shared embodiment — the success eyes, kept rather than
+    flashed — for exactly as long as the timer stays FINISHED; the notch's
+    presenter shows the panel. Both follow the timer's state, so the
+    acknowledgement is the timer's alone.
+    """
+
+    if controller is not None:
+        controller.set_condition(EmbodimentCondition.TIMER_FINISHED, timer.state is TimerState.FINISHED)
+    if presenter is not None:
+        presenter.set_timer(timer)
 
 
 def deliver_tasks(running: bool, *, presenter: NotchPresenter | None, controller: FaceController | None) -> None:

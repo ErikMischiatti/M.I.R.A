@@ -144,9 +144,10 @@ mira/
 ├── application/  # construction and wiring
 ├── ui/           # Qt window, chat panel, debug drawer, face/ rendering
 ├── config/       # packaged expression profiles
+├── sounds/       # packaged UI sounds (rendered by scripts/generate_sounds.py)
 └── main.py       # process entry point
 bin/mira          # launcher script; bin/mira-notch (ambient notch), bin/mira-tune (tuning)
-scripts/          # architecture checkers
+scripts/          # architecture checkers; generate_sounds.py renders mira/sounds/
 tests/            # pytest suite
 docs/             # technical documentation
 ```

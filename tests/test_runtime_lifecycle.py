@@ -96,8 +96,13 @@ def test_main_connects_every_shutdown_before_running(monkeypatch, argv, surface)
         def prepare(self):
             events.append("audio prepared")
 
+    class FakeSound:
+        def prepare(self):
+            events.append("sound prepared")
+
     class FakeApplicationRuntime:
         audio = FakeAudio()
+        sound = FakeSound()
         listening = None
 
         def start(self):
@@ -148,8 +153,10 @@ def test_main_connects_every_shutdown_before_running(monkeypatch, argv, surface)
     assert events == [
         f"claim {surface}",
         f"desktop built ({surface})",
-        # Before anything shows: the slow device enumeration, no capture.
+        # Before anything shows: the slow device enumeration, no capture;
+        # then the sounds load, so the first one never waits.
         "audio prepared",
+        "sound prepared",
         # Wake monitoring, if chosen, starts before anything is shown.
         "voice configured (keyboard)",
         "server for /run/fake/runtime.sock",
@@ -162,9 +169,10 @@ def test_main_connects_every_shutdown_before_running(monkeypatch, argv, surface)
         "server closed",
         "lock released",
     ]
-    # One runtime: one set of system watchers and one audio backend, whichever
-    # surface came first.
-    assert built_with == [["audio_backend", "device_info_providers", "device_monitor", "system_event_sources"]]
+    # One runtime: one set of system watchers, one audio backend and one
+    # sound output, whichever surface came first.
+    assert built_with == [["audio_backend", "device_info_providers", "device_monitor", "sound_output",
+                           "system_event_sources"]]
 
 
 def test_a_forwarding_launcher_exits_without_starting_qt(monkeypatch, capsys):
@@ -229,6 +237,7 @@ def _run_main_capturing_notch_settings(monkeypatch, argv=("--notch",)):
     class FakeRuntime:
         def __init__(self, **_options):
             self.audio = type("Audio", (), {"prepare": lambda self: None})()
+            self.sound = type("Sound", (), {"prepare": lambda self: None})()
             self.listening = None
 
         def start(self):

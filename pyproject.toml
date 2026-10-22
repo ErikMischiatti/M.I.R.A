@@ -68,6 +68,8 @@ namespaces = true
 [tool.setuptools.package-data]
 # The debug drawer currently loads and saves this packaged active profile file.
 "mira.config" = ["*.json"]
+# The packaged UI sounds, rendered by scripts/generate_sounds.py.
+"mira" = ["sounds/*.wav"]
 
 [tool.pytest.ini_options]
 # Anchors pytest's rootdir on this file, so a bare `pytest` collects the same

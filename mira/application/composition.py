@@ -21,10 +21,11 @@ rather than incidentally, because two parts of it are observable:
     component constructing successfully while events reached nobody and timers
     sat on a scheduler nothing drives.
 
-`scheduler` and `camera_source` are the only injection seams, and each exists
+`scheduler`, `camera_source` and `clock` are the only injection seams, and each exists
 for the same two reasons rather than for symmetry: it is an adapter choice, and
 it is what lets the graph be built without the technology behind it — no Qt
-event loop for the scheduler, no webcam or OpenCV for the camera. Passing `ManualScheduler` from
+event loop for the scheduler, no webcam or OpenCV for the camera, no real
+time passing for the countdown timer. Passing `ManualScheduler` from
 `mira.domain.scheduler` yields the real graph, fully wired, driven by an
 explicit clock — which is how `tests/test_application_composition.py` exercises
 a whole turn without a `QApplication`.
@@ -38,7 +39,8 @@ source.
 from __future__ import annotations
 
 import sys
-from collections.abc import Sequence
+import time
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 
 from mira.adapters.opencv_camera import OpenCVCameraSource
@@ -48,6 +50,8 @@ from mira.application.scheduling import build_scheduler
 from mira.core.activity_authority import ActivityAuthority
 from mira.core.brain import Brain
 from mira.core.camera_capture import CameraCapture
+from mira.core.countdown_timer import CountdownTimer
+from mira.core.sound_cues import SoundCues
 from mira.core.embodied_behavior import EmbodiedBehavior
 from mira.core.interaction_manager import InteractionManager
 from mira.core.listening import ListeningController
@@ -60,6 +64,7 @@ from mira.domain.audio import AudioCaptureBackend
 from mira.domain.camera import CameraSource
 from mira.domain.device_info import DeviceInfoProvider
 from mira.domain.scheduler import Scheduler
+from mira.domain.sound import SilentSoundOutput, SoundOutput
 from mira.domain.system_events import SystemEventSource
 from mira.messaging.events import EventBus
 
@@ -97,6 +102,9 @@ class Application:
     device_info: DeviceInfoService
     audio: AudioInputService
     listening: ListeningController
+    timer: CountdownTimer
+    sound: SoundOutput
+    sound_cues: SoundCues
 
     def start(self) -> None:
         """Start the long-running resources: camera capture and system watching."""
@@ -116,11 +124,15 @@ class Application:
         # released before anything else.
         self.listening.shutdown()
         self.audio.shutdown()
-        # Device information and the system sources next: their pending
-        # timers are cancelled while the scheduler still accepts it, and a
-        # query still running answers to nobody.
+        # Device information, the system sources and the countdown next:
+        # their pending timers are cancelled while the scheduler still
+        # accepts it, and a query still running answers to nobody.
         self.device_info.shutdown()
         self.system_notices.shutdown()
+        self.timer.shutdown()
+        # Nothing more to play; the output lets go of the audio device.
+        self.sound_cues.shutdown()
+        self.sound.shutdown()
         self.camera.shutdown()
         self.scheduler.shutdown()
 
@@ -133,6 +145,8 @@ def build_application(
     audio_backend: AudioCaptureBackend | None = None,
     device_info_providers: Sequence[DeviceInfoProvider] = (),
     device_monitor: DeviceMonitorConfiguration | None = None,
+    clock: Callable[[], float] | None = None,
+    sound_output: SoundOutput | None = None,
 ) -> Application:
     """Construct and wire the application graph.
 
@@ -150,6 +164,13 @@ def build_application(
     `audio_backend` is how the runtime's one `AudioInputService` captures
     (`mira.application.audio.desktop_audio_backend` on a desktop); by default none, so the service
     reports itself unavailable and no test ever opens a microphone.
+
+    `clock` is the monotonic clock the countdown timer reads its deadline
+    from, by default `time.monotonic`; tests pass a fake one and advance it
+    together with a `ManualScheduler`.
+
+    `sound_output` plays MIRA's short sounds (`desktop_sound_output` on a
+    desktop); by default a silent one, so no test ever opens a speaker.
 
     `system_event_sources` are the platform adapters whose changes become
     notices (`desktop_system_event_sources` for a Linux desktop); by default
@@ -204,6 +225,12 @@ def build_application(
     audio = AudioInputService(event_bus, audio_backend)
     # The one decision whether MIRA listens; activation sources only ask.
     listening = ListeningController(event_bus, audio, scheduler)
+    # The one countdown. A finished one is state awaiting the user, shown by
+    # each embodiment from "timer_changed" — not a transient notice.
+    timer = CountdownTimer(event_bus, scheduler, clock=time.monotonic if clock is None else clock)
+    # Its end is also heard, once: the timer itself knows nothing of sound.
+    sound = SilentSoundOutput() if sound_output is None else sound_output
+    sound_cues = SoundCues(event_bus, sound)
 
     return Application(
         event_bus=event_bus,
@@ -219,6 +246,9 @@ def build_application(
         device_info=device_info,
         audio=audio,
         listening=listening,
+        timer=timer,
+        sound=sound,
+        sound_cues=sound_cues,
     )
 
 

@@ -15,6 +15,7 @@ from PySide6.QtGui import (
 from PySide6.QtWidgets import QWidget
 
 from mira.domain.embodiment_frame import FACE_HEIGHT_UNITS, FACE_WIDTH_UNITS
+from mira.domain.timer import TimerSnapshot, TimerState, format_remaining
 from mira.ui.face.eye import Eye
 from mira.ui.face.eye_painter import EyePainter
 from mira.ui.face.face_animator import FaceAnimator
@@ -32,10 +33,19 @@ from mira.ui.notch.expanded_layout import (
     content_row,
     control_cells,
     label_room,
+    panel_cells,
     reveal_fraction,
     waveform_bars,
 )
-from mira.ui.notch.presentation import NotchAction, NotchContent, NotchPresentation
+from mira.ui.notch.presentation import (
+    NotchAction,
+    NotchContent,
+    NotchPresentation,
+    NotchSymbol,
+    TimerButton,
+    TimerCommand,
+    timer_content,
+)
 from mira.ui.notch.symbol_painter import paint_symbol
 from mira.ui.notch.presence import (
     NotchGeometry,
@@ -146,6 +156,7 @@ def layout_eyes(layout: NotchEyeLayout) -> tuple[Eye, Eye]:
 
 # What the integrated controls call each action.
 ACTION_LABELS = {
+    NotchAction.TIMER: "Timer",
     NotchAction.OPEN_SETTINGS: "Settings",
     NotchAction.QUIT: "Quit M.I.R.A.",
 }
@@ -153,6 +164,28 @@ ACTION_LABELS = {
 # The controls' pill: a quiet outline, filled under the pointer.
 CONTROL_COLOR = QColor(245, 245, 245, 40)
 CONTROL_HOVER_COLOR = QColor(245, 245, 245, 70)
+# The preset matching the chosen duration stands out from the other pills.
+SELECTED_CONTROL_COLOR = QColor(245, 245, 245, 110)
+
+# What the timer panel's buttons say; a preset says its minutes.
+TIMER_LABELS = {
+    TimerCommand.SHORTER: "−",
+    TimerCommand.LONGER: "+",
+    TimerCommand.START: "Start",
+    TimerCommand.PAUSE: "Pause",
+    TimerCommand.RESUME: "Resume",
+    TimerCommand.RESET: "Reset",
+    TimerCommand.ACKNOWLEDGE: "OK",
+}
+TIMER_DONE_TEXT = "Timer done!"
+# Room either side of a panel label inside its pill.
+PANEL_PADDING_PX = 7.0
+
+
+def timer_label(button: TimerButton) -> str:
+    if button.command is TimerCommand.PRESET:
+        return str(button.minutes)
+    return TIMER_LABELS[button.command]
 
 
 @dataclass(frozen=True)
@@ -237,6 +270,12 @@ class NotchWindow(QWidget):
     drawn as pills in the content band, and a click on one requests its
     action. The window never knows who honours them. Any other single click
     does nothing.
+
+    While the presentation shows the timer panel, the band holds the time —
+    the duration being chosen, or what is left of the countdown — and the
+    panel's buttons; a click on one leaves as `timer_requested`. The time
+    left is read from the timer source on every repaint, like the waveform,
+    so the countdown needs no timer of its own here.
     """
 
     TRANSITION_DURATION_MS = 200
@@ -252,6 +291,9 @@ class NotchWindow(QWidget):
 
     # The user asked to open or close the integrated controls (right click).
     controls_toggle_requested = Signal()
+
+    # A `TimerButton` of the timer panel was clicked.
+    timer_requested = Signal(object)
 
     def __init__(
         self,
@@ -310,9 +352,11 @@ class NotchWindow(QWidget):
         self._presence = NotchPresence.HIDDEN
         self._presentation = NotchPresentation()
         self._hovered = False
-        self._hovered_control: NotchAction | None = None
+        self._hovered_control: NotchAction | TimerButton | None = None
         # Where real captured audio is read from while listening; None: none.
         self._waveform_source = None
+        # Where the live countdown is read from; None: the presentation's.
+        self._timer_source = None
         # Symbol animation phase; read only while painting.
         self._clock = QElapsedTimer()
         self._clock.start()
@@ -538,7 +582,8 @@ class NotchWindow(QWidget):
         It follows the drawn height, so content fades in as the notch grows
         and out as it collapses, never popping at either end.
         """
-        if self._presentation.content is None and not self._presentation.controls:
+        presentation = self._presentation
+        if presentation.content is None and not presentation.controls and not presentation.timer_panel:
             return 0.0
         reveal = reveal_fraction(self._visual_size, self._geometry)
         return reveal * reveal
@@ -568,7 +613,9 @@ class NotchWindow(QWidget):
         super().leaveEvent(event)
 
     def mouseDoubleClickEvent(self, event):
-        if event.button() == Qt.LeftButton and self.control_at(event.position()) is None:
+        position = event.position()
+        on_target = self.control_at(position) is not None or self.timer_button_at(position) is not None
+        if event.button() == Qt.LeftButton and not on_target:
             self._request(NotchAction.OPEN_MAIN_WINDOW)
         event.accept()
 
@@ -583,11 +630,15 @@ class NotchWindow(QWidget):
             action = self.control_at(event.position())
             if action is not None:
                 self._request(action)
+            else:
+                button = self.timer_button_at(event.position())
+                if button is not None:
+                    self._request_timer(button)
         event.accept()
 
     def mouseMoveEvent(self, event):
-        hovered = self.control_at(event.position())
-        if hovered is not self._hovered_control:
+        hovered = self.control_at(event.position()) or self.timer_button_at(event.position())
+        if hovered != self._hovered_control:
             self._hovered_control = hovered
             self.update()
         super().mouseMoveEvent(event)
@@ -610,6 +661,87 @@ class NotchWindow(QWidget):
         if not self._presentation.shows_waveform or self._waveform_source is None:
             return None
         return self._waveform_source()
+
+    def set_timer_source(self, source) -> None:
+        """``source()`` returns the countdown's current `TimerSnapshot`.
+
+        Read on every repaint that shows the time left; without one the
+        notch shows the time left when the countdown last changed state.
+        """
+        self._timer_source = source
+
+    def current_timer(self) -> TimerSnapshot:
+        if self._timer_source is None:
+            return self._presentation.timer
+        return self._timer_source()
+
+    @property
+    def current_content(self) -> NotchContent | None:
+        """The content to draw, with a running countdown's time read live."""
+        content = self._presentation.content
+        if content is not None and content.symbol is NotchSymbol.TIMER and self._presentation.notice is None:
+            timer = self.current_timer()
+            if timer.active:
+                return timer_content(timer)
+        return content
+
+    @property
+    def timer_readout(self) -> str:
+        """The panel's text: done, what is left of a countdown, else the chosen duration."""
+        timer = self.current_timer()
+        if timer.state is TimerState.FINISHED:
+            return TIMER_DONE_TEXT
+        if timer.active:
+            return format_remaining(timer.remaining_s)
+        return format_remaining(self._presentation.timer_selection_s)
+
+    def _panel_fonts(self) -> tuple[QFont, QFont]:
+        """The readout's font, then the buttons' (the controls' size)."""
+        row = self.content_row
+        readout = QFont(self.font())
+        readout.setPixelSize(max(round(row.label_px), 1))
+        buttons = QFont(self.font())
+        buttons.setPixelSize(max(round(row.label_px * 0.85), 1))
+        return readout, buttons
+
+    def _timer_cells(self) -> list[QRectF]:
+        """The readout's cell, then one per panel button; empty while closed."""
+        buttons = self._presentation.timer_panel
+        if not buttons:
+            return []
+        row = self.content_row
+        readout_font, button_font = self._panel_fonts()
+        # A time is as wide as the widest time of its length, so it never jitters.
+        readout = self.timer_readout
+        sample = readout if ":" not in readout else "00:00:00" if len(readout) > 5 else "00:00"
+        widths = [QFontMetricsF(readout_font).horizontalAdvance(sample) + 2.0 * PANEL_PADDING_PX]
+        metrics = QFontMetricsF(button_font)
+        for button in buttons:
+            label = metrics.horizontalAdvance(timer_label(button)) + 2.0 * PANEL_PADDING_PX
+            widths.append(max(label, row.area.height))
+        return [QRectF(cell.x, cell.y, cell.width, cell.height) for cell in panel_cells(row, widths)]
+
+    @property
+    def timer_readout_rect(self) -> QRectF:
+        cells = self._timer_cells()
+        return cells[0] if cells else QRectF()
+
+    @property
+    def timer_button_rects(self) -> dict[TimerButton, QRectF]:
+        """Where each button of the open timer panel is drawn and clicked."""
+        return dict(zip(self._presentation.timer_panel, self._timer_cells()[1:]))
+
+    def timer_button_at(self, position) -> TimerButton | None:
+        if not self._presentation.timer_panel or self.content_opacity < 0.5:
+            return None
+        for button, rect in self.timer_button_rects.items():
+            if rect.contains(position):
+                return button
+        return None
+
+    def _request_timer(self, button: TimerButton):
+        if button in self._presentation.timer_panel:
+            self.timer_requested.emit(button)
 
     @property
     def control_rects(self) -> dict[NotchAction, QRectF]:
@@ -799,11 +931,14 @@ class NotchWindow(QWidget):
         if self._presentation.controls:
             self._paint_controls(painter)
             return
+        if self._presentation.timer_panel:
+            self._paint_timer_panel(painter)
+            return
         waveform = self.current_waveform()
         if waveform is not None:
             self._paint_waveform(painter, waveform)
             return
-        content = self._presentation.content
+        content = self.current_content
         if content is not None:
             self._paint_content(painter, content, self.content_row)
 
@@ -829,6 +964,31 @@ class NotchWindow(QWidget):
             painter.setBrush(CONTROL_HOVER_COLOR if action is self._hovered_control else CONTROL_COLOR)
             painter.drawRoundedRect(rect, radius, radius)
             label = metrics.elidedText(ACTION_LABELS[action], Qt.ElideRight, max(rect.width() - radius, 0.0))
+            painter.setPen(CONTENT_COLOR)
+            painter.drawText(rect, Qt.AlignCenter, label)
+
+    def _paint_timer_panel(self, painter: QPainter):
+        """The time, then each panel button as a pill like the controls."""
+        readout_font, button_font = self._panel_fonts()
+        cells = self._timer_cells()
+        painter.setFont(readout_font)
+        painter.setPen(CONTENT_COLOR)
+        painter.drawText(cells[0], Qt.AlignCenter, self.timer_readout)
+        metrics = QFontMetricsF(button_font)
+        painter.setFont(button_font)
+        selected = self._presentation.timer_selection_s
+        for button, rect in zip(self._presentation.timer_panel, cells[1:]):
+            radius = rect.height() / 2.0
+            if button == self._hovered_control:
+                color = CONTROL_HOVER_COLOR
+            elif button.command is TimerCommand.PRESET and button.minutes * 60 == selected:
+                color = SELECTED_CONTROL_COLOR
+            else:
+                color = CONTROL_COLOR
+            painter.setPen(Qt.NoPen)
+            painter.setBrush(color)
+            painter.drawRoundedRect(rect, radius, radius)
+            label = metrics.elidedText(timer_label(button), Qt.ElideRight, max(rect.width() - 2.0, 0.0))
             painter.setPen(CONTENT_COLOR)
             painter.drawText(rect, Qt.AlignCenter, label)
 

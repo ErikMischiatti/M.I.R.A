@@ -202,6 +202,31 @@ def control_cells(row: ContentRow, count: int) -> list[Rect]:
     return [Rect(left + index * (width + CONTROL_GAP_PX), row.area.y, width, row.area.height) for index in range(count)]
 
 
+# The timer panel: a readout and small buttons, closer together than the
+# controls so the whole panel fits one row.
+PANEL_GAP_PX = 6.0
+
+
+def panel_cells(row: ContentRow, widths) -> list[Rect]:
+    """Cells of the given widths, left to right and centred in the row.
+
+    As tall as the row. When they do not fit, every cell and gap shrinks in
+    proportion, so the panel never leaves the row.
+    """
+
+    count = len(widths)
+    if count == 0 or row.area.width <= 0:
+        return []
+    total = sum(widths) + PANEL_GAP_PX * (count - 1)
+    scale = min(row.area.width / total, 1.0) if total > 0 else 1.0
+    left = row.area.x + (row.area.width - total * scale) / 2.0
+    cells = []
+    for width in widths:
+        cells.append(Rect(left, row.area.y, width * scale, row.area.height))
+        left += (width + PANEL_GAP_PX) * scale
+    return cells
+
+
 # The listening waveform: a centred strip of bars, at most this share of the
 # row's width, each bar at least this tall so silence reads as a quiet line.
 WAVEFORM_WIDTH_SHARE = 0.7
