@@ -41,8 +41,10 @@ Main modules:
     `CameraSettings`, `CameraStatus` (`mira/domain/camera.py`); no OpenCV or
     numpy types
   - `UserInput`, `IntentResult`, `BrainResponse` (`mira/domain/models.py`)
-  - notices: `Notice`, `NoticeCategory`, `NoticeTone`, `NoticeDevice`
-    (`mira/domain/notice.py`)
+  - notices: `Notice`, `NoticeCategory`, `NoticeTone`, `NoticeDevice`,
+    `NoticePriority` (`mira/domain/notice.py`); arbitration by priority is
+    the notch presenter's (`mira/ui/notch/presentation.py`), the one
+    authority over what the notch shows
   - device kinds: `DeviceCategory` (`mira/domain/devices.py`)
   - device information: `DeviceInfo`, `ChargingState`, `InfoResult`, the
     `DeviceInfoProvider` port, `DeviceInfoUpdate` and its text

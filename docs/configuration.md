@@ -183,7 +183,10 @@ actions MIRA ran), `connectivity` (network lost, limited, back online) —
 saying whether such a notice expands the notch by itself. A notice of a
 disabled category still becomes the content (visible on hover) and MIRA's eyes
 still react to it; it only does not expand the notch. `notice_duration_ms`
-(1000–30000) is how long a notice stays. Defaults: alerts, devices and
+(1000–30000) is how long a notice stays. While MIRA listens or speaks, only
+errors and alerts are shown; device, connectivity and task notices wait
+(up to 10 s, at most three) and appear when the conversation ends, and two
+devices connecting together are shown one after the other. Defaults: alerts, devices and
 connectivity expand, task results do not.
 
 **System notices.** The runtime watches USB devices (kernel uevents), audio
@@ -211,7 +214,9 @@ more and the same notice grows: an Android phone's model, battery and
 charging state through `adb` (installed separately, with USB debugging on
 and the computer authorized on the phone), an iPhone's battery through
 UPower (the iPhone must trust the computer), a USB stick's capacity from
-sysfs — "Pixel 8 — Battery 84% — Charging", "SanDisk Ultra — 64 GB".
+sysfs — "Pixel 8  84% · Charging", "SanDisk Ultra  64 GB", the reading
+in a quieter tone after the name; a long name is shortened before the
+reading.
 Only what was read is shown; nothing is changed on the device, and serial
 numbers are never used or logged. `MIRA_DEVICE_INFO=0` turns it off;
 `MIRA_DEVICE_INFO_REFRESH_S` re-reads batteries periodically.

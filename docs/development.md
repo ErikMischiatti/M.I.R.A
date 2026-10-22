@@ -197,6 +197,7 @@ Tests are grouped by boundary rather than by file:
 | Camera | `test_camera_*.py`, `test_opencv_camera.py` |
 | System events and notices | `test_system_event_adapters.py`, `test_notice_producers.py`, `test_usb_device_notices.py` |
 | Device information | `test_device_info_service.py`, `test_adb_provider.py`, `test_device_info_providers.py`, `test_device_info_notch.py` |
+| Notice priority | `test_notice_priority.py`, `test_notice_priority_notch.py` |
 | Memory and messaging | `test_memory_contracts.py`, `test_messaging_contracts.py` |
 
 Shared test doubles live in `tests/doubles.py` (covered by
@@ -243,6 +244,25 @@ happens, and a notice stays `notice_duration_ms` (4 s by default).
 
 Without hardware, MIRA-TUNE's *Phone connected*, *Phone disconnected* and
 *Storage connected* previews go through the same presenter and eye path.
+
+**Notice priority, without hardware (MIRA-TUNE).** *Previews → Device
+scenario* plays scripted sequences on the real presenter and eyes, on real
+time (default notice duration 4 s; replaying a scenario cancels the one
+running). Expected, by eye:
+
+| Scenario | Expect |
+|---|---|
+| Connect, then info | "Google Pixel 8 connected" with the phone symbol and one brief smile; after ~1 s the same notice becomes "Pixel 8" + "84% · Charging" (reading in a quieter tone), no second smile, and stays its full time again. |
+| Battery after expiry | The arrival shows and closes; ~1 s after the notch is compact again it reopens once with "Pixel 8" + "84% · Charging", without a smile. |
+| Connect, then unplug | The arrival shows; after 1.5 s it is replaced by "Google Pixel 8 disconnected", no cue; it closes 4 s later. No stale "connected" afterwards. |
+| Device while listening | The eyes and notch go to listening at once; the phone (at 0.8 s) and its information (at 2 s) do **not** appear and the eyes do not smile; when listening ends (at 4.5 s) the notch stays open without a collapse and shows "Pixel 8" + "84% · Charging" with one smile. |
+| Two devices | The phone shows; the stick, 0.3 s later, waits; after the phone's 4 s the stick follows, the notch open throughout, one smile each. |
+| Long name | "Samsung Galaxy S24 …" — the name shortened, then "57% · Discharging" whole; nothing overlaps the symbol or leaves the notch. |
+
+Also check: an error preview (*Task failed*) during *Listening* (Activity
+row) takes the band and shows the cross eyes; *Idle* afterwards brings back
+anything that waited. With hover or the controls open, notices still queue
+and restore the same way.
 
 **Device information (optional, M2).** The providers are tested with
 scripted `adb` and `upower` output and a fake sysfs (`tests/adb_doubles.py`,

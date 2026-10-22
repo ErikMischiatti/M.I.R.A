@@ -457,7 +457,9 @@ NotchWindow ── hover_changed ───────┤
   notice whose category expands automatically), CONTROLS (the integrated
   controls are open), LISTENING (MIRA is listening) — and COMPACT otherwise.
   The content band shows, in this order of precedence: controls > notice >
-  listening (the real waveform) > task running > activity.
+  listening (the real waveform) > task running > activity — where a notice
+  below INTERACTION does not show while MIRA listens or speaks (see "Notice
+  priority").
 - **Integrated controls.** Right click toggles the notch's own controls
   (Settings, Quit M.I.R.A.), drawn as pills in the content band and clicked
   in place; there is no native menu. Opening the main window is not a
@@ -469,10 +471,10 @@ NotchWindow ── hover_changed ───────┤
   Activity alone never expands; it only chooses the content shown while open.
   A notice of a category that does not expand still becomes the content (seen
   on hover) and still makes the eyes react.
-- **Lifetime and replacement.** A notice shows for `notice_duration_ms`, on one
+- **Lifetime and priority.** A notice shows for `notice_duration_ms`, on a
   timer from the injected `Scheduler` (the application's own in production).
-  The latest notice replaces the showing one and gets the full duration; there
-  is no queue.
+  Whether it shows at once, replaces the showing one or waits its turn is
+  decided by priority, in "Notice priority".
 - **Rendering.** COMPACT shows only the eyes. EXPANDED keeps the eyes where
   the compact notch places them and draws a vector symbol (`symbol_painter`,
   Qt primitives only) and an optional elided label below them (by default a
@@ -560,6 +562,52 @@ ordinary device events are not.
   another runtime passes other sources or none, and renders `NotchPresentation`
   and cues its own way.
 
+### Notice priority
+
+`NotchPresenter` is the one authority over what the notch shows, so it is
+also where notices are arbitrated; there is no second controller. Every
+notice has a `NoticePriority` (`mira/domain/notice.py`, `notice_priority`):
+
+| Priority | Notices | While MIRA listens or speaks |
+|---|---|---|
+| CRITICAL | errors (any category), alerts | shown at once |
+| INTERACTION | — (MIRA listening or speaking to the user) | — |
+| FEEDBACK | task results | wait |
+| PASSIVE | device and connectivity changes | wait |
+
+The *floor* is the highest of the showing notice's priority and, while MIRA
+listens or speaks (the LISTENING reason, or activity LISTENING/SPEAKING),
+INTERACTION.
+
+| Rule | Behaviour |
+|---|---|
+| Preemption | Above the floor: shown at once, full duration. At the floor and about the same subject (same `NoticeDevice.key`, else same category): replaces (a device leaving replaces its arrival). A preempted notice of another subject goes back to wait, without a second reaction. |
+| Deferral | Below the floor, or at it about another subject: waits. At most 3 wait; when full, the lowest-priority, oldest is dropped. |
+| Coalescing | A newer notice about the same subject replaces the waiting one; an arrival and the same device's departure while waiting cancel out. The same notice as the one showing only restarts its time. |
+| Expiration | A waiting notice is dropped 10 s after it was deferred. |
+| Yielding | When MIRA starts listening or speaking, a showing notice below INTERACTION goes back to wait: the conversation has the band from its first moment. |
+| Restoration | When the floor drops (expiry, dismissal, listening/speaking ends) the best waiting notice (highest priority, oldest among equals) is shown in the same resolution step, so the notch stays expanded from one to the next instead of collapsing between them. One at a time. |
+| Refinement | Device information (`refine`) updates the notice about its device in place, showing or waiting; the first information or a charging change restarts a showing notice's time, a moving percentage does not. Shown on its own only if announced, never with a reaction; dropped if the device's latest notice is its departure. |
+
+- **Reactions.** The eyes react when a notice *starts showing*
+  (`subscribe_reactions`, bound with the controller by `bind_presenter`):
+  not while it waits, not when refined, not for a repeat. So MIRA does not
+  greet a device over its listening eyes, greets it when the notice appears
+  after the conversation, and never greets twice. Cue priority still applies
+  on top (ERROR > WARNING > SUCCESS > GREETING). Without a notch (main window
+  only) `deliver_notice` applies the same rule to the eyes' own activity.
+- **Expansion.** Unchanged and reason-based: a notice ending while LISTENING
+  holds never collapses the notch, and a restored notice takes over the
+  NOTICE reason in the same step.
+- **Lifecycle.** Notice, deferral and controls timers all run on the
+  injected `Scheduler`, guarded by generations; `shutdown` cancels every one
+  and drops the waiting notices, and nothing is published or reacted to
+  afterwards. Device information arrives on the UI thread (the service's
+  `Scheduler.submit` completion), so no Qt object is touched off it.
+- **Not covered.** THINKING is not an interaction (a notice may show while
+  MIRA prepares an answer). The waiting queue is not persisted. Priorities
+  are fixed, not user-configurable.
+
 ### USB device notices
 
 ```text
@@ -642,8 +690,10 @@ kernel uevent (add … bind / remove)
   unknown — and keeps the generic device symbol for unclassified notices
   (audio routes). A tone other than INFO still decides the symbol. The eyes
   play `EmbodimentCue.GREETING` (the success smile, 0.6 s, lowest priority:
-  it never interrupts another cue) for an arrival; a removal gets none. A
-  removal while the arrival still shows replaces it (no queue).
+  it never interrupts another cue) for an arrival, when its notice is
+  shown; a removal gets none. A removal while the arrival still shows
+  replaces it; a device arriving while MIRA listens or speaks waits (see
+  "Notice priority").
 - **Threading and resources.** The uevent socket is read by a
   `QSocketNotifier` on the Qt main thread, at most 64 messages per wake-up
   (the notifier fires again for the rest), and every step after it is
@@ -667,17 +717,16 @@ kernel uevent (add … bind / remove)
   maker's tablet is a "smartphone". A phone whose mode switch takes longer
   than 2.5 s is announced as disconnected and connected again. A device
   whose product string changes between modes is treated as another device.
-  A notice still replaces the content of an open notch, the listening
-  waveform included, for its duration (no priority or queue). Names come
+  Names come
   from the device's own strings; no vendor database is consulted. SIGTERM
   ends the runtime without the orderly shutdown (see Single runtime); the
   kernel still closes the socket.
 - **Next.** M2 — device information providers behind their own source or
   enrichment step (ADB for model and battery, `usbmuxd` for iPhones, UPower,
   storage capacity) — done for adb, UPower and sysfs storage, see "Device
-  information"; nothing is shown that was not read. M3 — notice priority
-  and queuing in `NotchPresenter` (so a device never covers listening),
-  device-specific cues, several devices at once, user-configurable reactions.
+  information"; nothing is shown that was not read. M3 — notice priority,
+  deferral and several devices in turn, done (see "Notice priority");
+  device-specific cues and user-configurable reactions remain.
 
 ### Device information
 
@@ -717,12 +766,17 @@ DesktopShell ─▶ NotchPresenter.refine: replaces the arrival notice of the sa
   `MIRA_DEVICE_INFO_REFRESH_S` (30–3600 s, default off) a device that
   reported a battery is asked again at that interval, one query at a time,
   only after the previous answer.
-- **Text.** `device_info_text`: the model if a provider read one, else the
-  USB name; then `Battery N%`, the charging state (Charging, Discharging,
-  Not charging, Full) and a capacity, each only if read: "Pixel 8 — Battery
-  84% — Charging", "SanDisk Ultra — 64 GB". On a battery line the maker is
-  dropped from a USB name ("iPhone"), for room. The notch elides a label
-  longer than its content band.
+- **Text.** The notice's text is the device's name — the model a provider
+  read, else the USB name, without its maker next to a battery reading
+  ("iPhone", "Pixel 8") — and its `detail` the readings that exist:
+  "84% · Charging", "100% · Full", "64 GB" (`device_info_name`,
+  `device_info_detail`; `device_info_text` joins them for a one-line
+  embodiment). The notch draws the detail after the name in a quieter tone
+  on the same row, so every valid geometry stays valid;
+  `expanded_layout.label_room` gives the detail its width first and the name
+  the rest (never under three text sizes while the detail could give way),
+  and both are elided from the end, so a long name shortens before the
+  reading does.
 - **Android (adb).** Needs `adb` installed, *USB debugging* enabled and the
   computer *authorized* on the phone; only a device whose descriptors offer
   the debug interface (`ff/42/01`) is asked, so no command runs otherwise.
@@ -788,9 +842,9 @@ allow-list/filter policy in `mira.core` deciding which become notices.
 
 | | |
 |---|---|
-| Implemented | one runtime per user with surface requests; lazy main window and notch; all-workspace presence on X11; readable expanded content by default; integrated notch controls; USB, audio-topology and connectivity notices with supervised PipeWire monitoring; USB device classification with per-kind notch symbols and an arrival greeting; per-category expansion; SUCCESS/WARNING/ERROR cues and the TASK_RUNNING condition; keyboard listening activation; the runtime's microphone capture with real level and waveform in the notch |
+| Implemented | one runtime per user with surface requests; lazy main window and notch; all-workspace presence on X11; readable expanded content by default; integrated notch controls; USB, audio-topology and connectivity notices with supervised PipeWire monitoring; USB device classification with per-kind notch symbols and an arrival greeting; device information providers; notice priority with deferral, coalescing and restoration; per-category expansion; SUCCESS/WARNING/ERROR cues and the TASK_RUNNING condition; keyboard listening activation; the runtime's microphone capture with real level and waveform in the notch |
 | Prepared | `SystemEventSource` port; `EyeShape` in `EmbodimentFrame`; run ids for asynchronous actions; `ListeningActivationMode.WAKE_WORD`, activation sources and capture leases for a wake-word detector; `AudioFrame` for speech processing |
-| Future | device information providers (ADB, iPhone, UPower, storage capacity); notice priority and queuing; wake word; voice activity detection; speech-to-text and text-to-speech; asynchronous (long) actions; desktop-notification source with a filter policy; Wayland workspace presence |
+| Future | wake word; voice activity detection; speech-to-text and text-to-speech; asynchronous (long) actions; desktop-notification source with a filter policy; Wayland workspace presence |
 
 ### Audio input and listening
 
