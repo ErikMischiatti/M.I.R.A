@@ -42,8 +42,10 @@ the notch is open for another reason), but adds no expansion reason.
 **Priority.** Every notice has a `NoticePriority` (`mira.domain.notice`):
 PASSIVE (devices, connectivity) < FEEDBACK (task results) < INTERACTION (MIRA
 listening or speaking; no notice has it) < CRITICAL (errors, alerts). The
-*floor* is the highest of: the showing notice's priority, and INTERACTION
-while MIRA listens or speaks.
+*floor* is the highest of: the showing notice's priority; INTERACTION
+while MIRA listens or speaks; and, while something else takes the content
+band — the integrated controls — a level above every priority, since a
+notice drawn under them could not be seen.
 
 - *Preemption.* A notice above the floor is shown at once and gets the
   full duration; so is one at the floor about the *same subject* as the
@@ -66,7 +68,9 @@ while MIRA listens or speaks.
   it was deferred: it would no longer be news.
 - *Yielding.* When MIRA starts listening or speaking, a showing notice
   below INTERACTION steps aside: it goes back to wait, without a second
-  reaction, and the conversation has the band from its first moment.
+  reaction, and the conversation has the band from its first moment. Any
+  notice steps aside the same way when the controls open, and comes back
+  when they close.
 - *Restoration.* When the floor drops — the showing notice expires or is
   dismissed, listening or speaking ends — the waiting notice with the
   highest priority (the oldest among equals) is shown, in the same
@@ -323,6 +327,10 @@ DEFERRED_NOTICE_TTL_MS = 10_000
 # Activities during which MIRA is in an exchange with the user.
 _INTERACTION_ACTIVITIES = frozenset({ActivityState.LISTENING, ActivityState.SPEAKING})
 
+# Above every notice priority: the content band belongs to something the
+# user opened, and a notice drawn under it would not be seen.
+_BAND_TAKEN = NoticePriority.CRITICAL + 1
+
 
 class NoticeOutcome(StrEnum):
     """What became of a notice handed to the presenter."""
@@ -449,11 +457,12 @@ class NotchPresenter:
         self._hovered = False
         self._controls_open = False
         self._cancel_controls_timer()
+        self._restore()
         self._publish()
 
     def set_activity(self, activity: ActivityState) -> None:
         self._activity = activity
-        self._yield_to_interaction()
+        self._yield_to_context()
         self._restore()
         self._publish()
 
@@ -478,11 +487,13 @@ class NotchPresenter:
             return
         self._controls_open = True
         self._cancel_controls_timer()
+        self._yield_to_context()
         self._publish()
 
     def close_controls(self) -> None:
         self._controls_open = False
         self._cancel_controls_timer()
+        self._restore()
         self._publish()
 
     def toggle_controls(self) -> None:
@@ -506,7 +517,7 @@ class NotchPresenter:
         """Whether MIRA listens, and whether real audio is arriving for it."""
         self._listening = bool(listening)
         self._capturing = bool(listening and capturing)
-        self._yield_to_interaction()
+        self._yield_to_context()
         self._restore()
         self._publish()
 
@@ -598,11 +609,21 @@ class NotchPresenter:
     def _interacting(self) -> bool:
         return self._listening or self._activity in _INTERACTION_ACTIVITIES
 
+    def _band_taken(self) -> bool:
+        """Whether something the user opened has the content band."""
+        return self._controls_open
+
+    def _context_floor(self) -> int:
+        """What the situation alone demands of a notice, apart from the one showing."""
+        if self._band_taken():
+            return _BAND_TAKEN
+        if self._interacting():
+            return NoticePriority.INTERACTION
+        return 0
+
     def _floor(self) -> int:
         """The priority a notice needs to be shown now; see the module."""
-        floor = 0
-        if self._interacting():
-            floor = NoticePriority.INTERACTION
+        floor = self._context_floor()
         if self._notice is not None:
             floor = max(floor, self._notice_priority)
         return floor
@@ -644,11 +665,9 @@ class NotchPresenter:
             entry.timer.cancel()
             entry.timer = None
 
-    def _yield_to_interaction(self) -> None:
-        """A conversation starting takes the band from any lesser notice."""
-        if self._notice is None or not self._interacting():
-            return
-        if self._notice_priority >= NoticePriority.INTERACTION:
+    def _yield_to_context(self) -> None:
+        """A conversation starting, or the controls opening, takes the band from a lesser notice."""
+        if self._notice is None or self._notice_priority >= self._context_floor():
             return
         notice, priority = self._notice, self._notice_priority
         self._cancel_expiry()

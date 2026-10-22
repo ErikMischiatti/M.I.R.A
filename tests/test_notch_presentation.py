@@ -476,18 +476,22 @@ def test_a_notch_without_control_actions_opens_no_controls():
     assert presenter.presentation.controls == () and not presenter.controls_open
 
 
-def test_controls_sit_over_a_notice_and_hiding_closes_them():
+def test_a_notice_steps_aside_for_the_controls_and_hiding_closes_them():
     from mira.domain.notice import Notice, NoticeCategory, NoticeTone
 
     presenter, _ = controls_presenter()
-    presenter.present(Notice(NoticeCategory.ALERT, NoticeTone.WARNING, "Low battery"))
+    low_battery = Notice(NoticeCategory.ALERT, NoticeTone.WARNING, "Low battery")
+    presenter.present(low_battery)
     presenter.open_controls()
-    assert presenter.presentation.controls and presenter.presentation.notice is not None
+    # Drawn under the controls it could not be seen: it waits instead.
+    assert presenter.presentation.controls and presenter.presentation.notice is None
+    assert presenter.deferred == (low_battery,)
 
     presenter.hide()
     presenter.show()
 
     assert presenter.presentation.controls == ()
+    assert presenter.presentation.notice == low_battery
 
 
 def test_the_linger_timer_is_cancelled_by_shutdown():

@@ -26,6 +26,7 @@ from mira.ui.notch.presence import NotchPresence
 from mira.ui.notch.presentation import (
     DEFERRED_NOTICE_TTL_MS,
     MAX_DEFERRED_NOTICES,
+    NotchAction,
     NotchBehaviour,
     NotchPresenter,
     NoticeOutcome,
@@ -64,7 +65,9 @@ class Recorder:
 
     def __init__(self):
         self.scheduler = ManualScheduler()
-        self.presenter = NotchPresenter(self.scheduler, NotchBehaviour(notice_duration_ms=DURATION))
+        self.presenter = NotchPresenter(
+            self.scheduler, NotchBehaviour(notice_duration_ms=DURATION), actions=frozenset(NotchAction),
+        )
         self.reactions: list[Notice] = []
         self.presenter.subscribe(self._presented)
         self.presenter.subscribe_reactions(self.reactions.append)
@@ -168,6 +171,46 @@ def test_task_feedback_waits_for_a_conversation_but_an_error_interrupts_it(notch
     assert notch.presenter.present(DONE) is NoticeOutcome.DEFERRED
     assert notch.presenter.present(ERROR) is NoticeOutcome.SHOWN
     assert not notch.presenter.presentation.shows_waveform and notch.reactions == [ERROR]
+
+
+# --- The controls take the band ------------------------------------------------------------
+
+
+@pytest.mark.parametrize("incoming", [arrived(), ERROR])
+def test_while_the_controls_are_open_every_notice_waits(notch, incoming):
+    notch.presenter.open_controls()
+
+    assert notch.presenter.present(incoming) is NoticeOutcome.DEFERRED
+    assert notch.showing is None and notch.reactions == []  # nothing drawn under the controls
+
+    notch.presenter.close_controls()
+
+    assert notch.showing == incoming and notch.reactions == [incoming]
+
+
+def test_a_showing_notice_steps_aside_for_the_controls_and_returns_without_a_second_reaction(notch):
+    notch.presenter.present(arrived())
+    notch.advance(3000)
+
+    notch.presenter.open_controls()
+    assert notch.showing is None and notch.presenter.deferred == (arrived(),)
+    notch.advance(DURATION)  # it does not expire under the controls
+    notch.presenter.close_controls()
+
+    assert notch.showing == arrived() and notch.reactions == [arrived()]
+    notch.advance(DURATION - 1)
+    assert notch.showing == arrived()  # its full time again, now that it can be seen
+
+
+def test_the_controls_closing_by_themselves_bring_the_waiting_notice_back(notch):
+    notch.presenter.set_hovered(True)
+    notch.presenter.open_controls()
+    notch.presenter.present(arrived())
+    notch.presenter.set_hovered(False)
+
+    notch.advance(1500)  # CONTROLS_LINGER_MS after the pointer left
+
+    assert notch.presenter.presentation.controls == () and notch.showing == arrived()
 
 
 # --- 4–5: several devices, rapid changes ----------------------------------------------------
@@ -422,6 +465,8 @@ def test_a_long_random_sequence_keeps_the_presenter_consistent():
         lambda: notch.presenter.refine(informed(), announce=rng.random() < 0.5),
         lambda: notch.presenter.set_listening(rng.random() < 0.5, True),
         lambda: notch.presenter.set_activity(rng.choice(list(ActivityState))),
+        lambda: notch.presenter.open_controls(),
+        lambda: notch.presenter.close_controls(),
         lambda: notch.advance(rng.choice((0, 100, 1000, DURATION, DEFERRED_NOTICE_TTL_MS))),
     ]
     for _ in range(2000):
@@ -435,10 +480,13 @@ def test_a_long_random_sequence_keeps_the_presenter_consistent():
             presenter.presentation.activity in (ActivityState.LISTENING, ActivityState.SPEAKING)
         if interacting and shown is not None:
             assert notice_priority(shown) is NoticePriority.CRITICAL  # nothing else covers a conversation
-        if shown is None and not interacting:
+        if presenter.presentation.controls:
+            assert shown is None  # nothing is drawn, or timed, under the controls
+        if shown is None and not interacting and not presenter.presentation.controls:
             assert presenter.deferred == ()  # nothing waits without a reason
     notch.presenter.set_listening(False)
     notch.presenter.set_activity(ActivityState.IDLE)
+    notch.presenter.close_controls()
     notch.advance(10 * DEFERRED_NOTICE_TTL_MS)
     assert notch.showing is None and notch.presenter.deferred == ()
     notch.presenter.shutdown()
