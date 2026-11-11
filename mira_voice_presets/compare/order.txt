@@ -1,0 +1,3 @@
+Each comparison plays, in order: baseline, soft, babble, expressive.
+all_presets_compare.wav: 00_greeting, 02_thinking, 03_curious, 04_happy, in turn.
+Clips are RMS-matched within each group; the per-preset folders are not.
