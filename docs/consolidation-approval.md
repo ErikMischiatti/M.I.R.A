@@ -1,9 +1,9 @@
-# Proposed approval operations
+# Approved operations — executed
 
-Main is occupied by the original worktree. It remains at 5be4131; do not
-update that reference behind its worktree. The integration result is ready for
-a reviewed fast-forward in that worktree once owner approval covers updating
-its checked-out main. Recheck clean status and remote ancestry first.
+The owner approved these operations. Main was fast-forwarded safely in its
+clean worktree and published. Python 3.12.16 CI passed before cleanup. The
+commands below are the historical approval plan, not commands to rerun.
+See [final execution results](consolidation.md#approved-publication-and-cleanup-results).
 
 ```bash
 git -C /home/erikmischi/Desktop/Projects/M.I.R.A merge --ff-only integration/repository-consolidation
@@ -13,3 +13,6 @@ git push origin --delete feat/device-info-providers feat/embodiment-micro-motion
 ```
 
 No other refs will be deleted. Archive and experiment aliases remain local. No worktree removal is proposed. If remote main has advanced, stop publication and reconcile it first.
+
+Execution exception: `refactor/embodiment-frame` was already absent remotely;
+its stale local tracking ref was removed instead. All other approved deletions completed.

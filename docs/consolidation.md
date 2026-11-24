@@ -6,7 +6,7 @@ A clean but old main coexisted with a large desktop feature stack and separate
 voice/perception work. Three history-preserving integrations combine the mature
 optional services without redesigning the inner architecture. Historical WIP,
 demo assets and the identity experiment remain preserved and explicitly named.
-Cleanup and publication await a single owner decision.
+Publication and the approved cleanup are complete; see the execution results below.
 
 ## Initial state and preservation
 
@@ -120,10 +120,9 @@ pip check and whitespace validation pass. Final full suite: **2306 passed, 9 ski
 The run used offscreen Qt, socket permission and explicit integration PYTHONPATH. Visible GUI, real Ollama, webcam, microphone, audible
 output and USB hardware acceptance remain manual.
 
-Original main remains checked out in its original worktree, so it has not been
-modified behind that worktree. The integration branch contains the candidate.
-Remote refs are unchanged. No push, deletion, stash mutation, reset, or existing
-worktree removal has occurred. Preservation aliases are `archive/voice-demos`,
+Main was safely fast-forwarded in its own clean worktree and published with a
+standard non-force push. After successful Python 3.12 CI, the approved redundant
+branches were deleted. No stash mutation, reset, or existing worktree removal occurred. Preservation aliases are `archive/voice-demos`,
 `archive/llm-session-context`, `archive/validate-m3-timer`,
 `archive/validate-m41-candidate`; `exp/cognitive-identity-port` names the retained
 cognitive work. All original tips remain recoverable. See
@@ -131,8 +130,8 @@ cognitive work. All original tips remain recoverable. See
 
 ## Final verification and remaining limitations
 
-Every original branch tip is retained both by its original ref and the verified
-bundle. No unique work has been discarded. The cognitive identity port, backup
+Every original branch tip remains recoverable through the verified bundle;
+retained development and preservation branches also keep their original refs. No unique work has been discarded. The cognitive identity port, backup
 parser and unique validation tests remain explicit follow-up work. Existing
 worktrees and ignored personal files were not removed or modified.
 
@@ -143,9 +142,8 @@ The default app remains rule-based; camera, person detection and synthesized
 voice are opt-in. Existing wake-word optional dependency declarations were
 preserved without installing their packages.
 
-The original checkout has only the intentionally created ignored-on-candidate
-`.mira-recovery/` directory as new local preservation data; on the old main it
-will appear untracked until the candidate `.gitignore` is adopted.
+The intentionally created `.mira-recovery/` directory is ignored and untracked.
+Recovery files and CI evidence were not published.
 
 ## Integration checkpoints
 
@@ -160,3 +158,66 @@ will appear untracked until the candidate `.gitignore` is adopted.
 
 No selective source integration was required. Cognitive functionality is
 retained separately rather than partially ported without full behavioral tests.
+
+## Approved publication and cleanup results
+
+The consolidated application commit is `2b5a1d3fb537526d503b766a2ef25b4cfb0a8845`.
+A final documentation-only commit records these results without changing runtime behavior.
+Main was published using a standard non-force push.
+
+Supported CI: **CPython 3.12.16 — 2306 passed, 9 skipped in 50.58 s**.
+Compilation, layering and state-authority checks passed in the same
+[successful run](https://github.com/ErikMischiatti/M.I.R.A/actions/runs/45372555268).
+The provided local Python 3.14 environment also passed 135 focused tests after
+main was fast-forwarded. Real hardware and visible GUI checks remain manual.
+
+Before deletion, each tip matched the audit and verified recovery bundle, was
+an ancestor of consolidated main, had no linked worktree, and had no open PR
+using it as head or base. The original bundles remain unchanged.
+
+Deleted local branches:
+
+- `ftr/llm_async_integration`
+- `refactor/embodiment-frame`
+- `refactor/embodiment-vocabulary`
+
+Deleted remote branches:
+
+- `feat/device-info-providers`
+- `feat/embodiment-micro-motions`
+- `feat/nonverbal_voice`
+- `feat/notch-embodiment-ui`
+- `feat/notch-notification-priority`
+- `feat/notch-timer`
+- `feat/perception-camera-foundation`
+- `feat/perception-human-presence`
+- `feat/usb-device-detection`
+- `fix/notch-integration-hardening`
+- `fix/notch-notice-floor`
+- `integration/notch-unified`
+
+`refactor/embodiment-frame` was already absent remotely; only its stale local
+tracking ref was removed. No other deletion was performed.
+
+Remaining local branches and purposes:
+
+| Branch | Purpose |
+|---|---|
+| `main` | Published, integrated baseline |
+| `integration/repository-consolidation` | Tested application checkpoint; existing worktree retained |
+| `exp/cognitive-identity-port` | Active port candidate; migrate name/identity behavior to current domain models and memory ownership |
+| `archive/llm-session-context` | Historical stash; review permissive JSON parsing before reuse |
+| `archive/voice-demos` | Historical generated voice demos and presets |
+| `archive/validate-m3-timer` | Historical timer candidate; compare unique tests with unified acceptance coverage |
+| `archive/validate-m41-candidate` | Historical multi-feature candidate; compare unique tests before further cleanup |
+
+Remaining remote branches: `main`, `ftr/cognitive_layer_stabilization` (the
+identity port source), `backup/stash-llm-session-context`, `assets/voice-demos`,
+`validate/m3-timer-integration`, and `validate/m41-integration-candidate`
+(historical preservation). Original remote names were retained deliberately;
+local `exp/` and `archive/` aliases make their roles explicit without additional
+remote renaming. No new permanent development branch was introduced.
+
+The branch reconciliation table above records the original classification and
+integration decisions; this execution section records the final cleanup status.
+All recovery commands and future milestones above remain applicable.
