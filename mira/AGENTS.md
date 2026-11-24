@@ -43,6 +43,11 @@ Main modules:
   - person perception boundary: `PersonDetector`, `PersonObservation`,
     `BoundingBox` (image space, [0, 1]), `PersonDetections`, `HumanPresence`,
     `PresenceStabilizer` (`mira/domain/perception.py`); no identity fields
+  - nonverbal voice vocabulary: `VocalIntent`, `VocalizationRequest`,
+    `VoiceIdentity`, `PcmClip`, the `AudioOutput` port
+    (`mira/domain/vocalization.py`) and the pure, seeded synthesizers:
+    V1, the default (`mira/domain/vocal_synthesis.py`), and the opt-in V2
+    (`mira/domain/vocal_synthesis_v2.py`, `MIRA_VOICE_ENGINE=v2`)
   - `UserInput`, `IntentResult`, `BrainResponse` (`mira/domain/models.py`)
   - notices: `Notice`, `NoticeCategory`, `NoticeTone`, `NoticeDevice`,
     `NoticePriority` (`mira/domain/notice.py`); arbitration by priority is
@@ -90,6 +95,8 @@ Main modules:
     `OpenCVCascadePersonDetector` (`mira/adapters/opencv_person_detector.py`):
     the only modules that import `cv2`/numpy, lazily; both are the optional
     `camera` extra
+  - `QtAudioOutput` (`mira/adapters/qt_audio.py`): plays voice clips through
+    Qt Multimedia on the main thread; no device is a status
   - may import `mira.domain`; never imported by the domain
 
 - `mira/application`
@@ -137,6 +144,9 @@ Main modules:
     frame and the camera status
   - human perception (`HumanPerception`): owns the perception thread, the
     newest detections, stabilized presence and diagnostics
+  - voice policy (`VoiceController`, `mira/core/voice.py`): opt-in via
+    `MIRA_VOICE`, cooldown, bounded queue, no overlap; renders through
+    `Scheduler.submit`. The Brain never emits audio.
 
 - `mira/cognition`
   - intent engine abstraction

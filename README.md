@@ -46,6 +46,12 @@ expresses what it is doing.
 - **Debug drawer**: hidden by default. It offers live tuning of expression
   geometry, animation, and blink parameters, with save/reload of the profile
   file, and shows camera and human-perception status.
+  file, and shows the camera status.
+- **Optional nonverbal voice**: with `MIRA_VOICE=1`, MIRA greets on start and
+  reacts to each response with a short, procedurally synthesized babble whose
+  intonation carries intent (greeting, acknowledgement, happy, confused,
+  error…). It is not speech, is generated offline in pure Python, and plays
+  through Qt Multimedia.
 - **Optional camera input**: with `MIRA_CAMERA=1` and the `camera` extra
   installed, frames are captured from a webcam through OpenCV on a background
   thread.
@@ -58,6 +64,9 @@ expresses what it is doing.
 Current scope: the rule engine and built-in replies are in **Italian**, and
 desktop actions target **Linux** (`xdg-open`, `notify-send`). There is no voice,
 face or person recognition, object detection, persistent memory, or hardware
+desktop actions target **Linux** (`xdg-open`, `notify-send`). There is no speech
+recognition or spoken output (the voice is nonverbal), no visual perception
+(face, person or object recognition), no persistent memory, and no hardware
 integration.
 
 ## Architecture
@@ -112,6 +121,13 @@ in:
 ```bash
 venv/bin/python -m pip install --constraint constraints.txt --editable ".[dev,camera]"
 MIRA_CAMERA=1 MIRA_PERSON_DETECTION=1 venv/bin/python -m mira.main   # status in the debug drawer
+```
+
+To hear the nonverbal voice, opt in, or try every vocalization standalone:
+
+```bash
+MIRA_VOICE=1 venv/bin/python -m mira.main
+venv/bin/python scripts/voice_demo.py        # --no-play --out DIR exports WAVs
 ```
 
 LLM mode uses `llama3.2:3b` at `http://localhost:11434` by default. See

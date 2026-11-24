@@ -233,3 +233,7 @@ class QtAudioCaptureBackend:
         print(f"[audio] {reason}", file=sys.stderr)
         if listener is not None:
             listener(reason)
+
+
+# Compatibility export for the synthesized voice output.
+from mira.adapters.qt_voice_output import QtAudioOutput

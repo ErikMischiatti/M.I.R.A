@@ -156,6 +156,13 @@ def test_absent_variables_select_the_production_defaults():
     )
 
     assert person_detection_configuration_from_environment() == PersonDetectionConfiguration()
+    # The voice variables default to a disabled voice with the default identity.
+    from mira.application.voice_config import (
+        VoiceConfiguration,
+        voice_configuration_from_environment,
+    )
+
+    assert voice_configuration_from_environment() == VoiceConfiguration()
 
 
 # --- the references the shared infrastructure documents itself with -----

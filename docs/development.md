@@ -135,12 +135,15 @@ X server.
 ```text
 mira/
 ├── domain/       # technology-independent vocabulary, scheduler/camera/detector ports, presence, micro-motions, playback
+├── domain/       # technology-independent vocabulary, scheduler/camera/audio ports, micro-motions, playback, voice synthesis
 ├── memory/       # session retention
 ├── messaging/    # synchronous event bus
 ├── actions/      # contracts, execution policy, registry, executor, handlers
 ├── cognition/    # rule and optional local-LLM inference, response building
 ├── core/         # turn, activity, interaction, and behavior orchestration; camera capture, human perception
 ├── adapters/     # Qt scheduler, OpenCV camera and OpenCV person-detector implementations
+├── core/         # turn, activity, interaction, and behavior orchestration; camera capture; voice policy
+├── adapters/     # Qt scheduler, OpenCV camera and Qt audio output implementations
 ├── application/  # construction and wiring
 ├── ui/           # Qt window, chat panel, debug drawer, face/ rendering
 ├── config/       # packaged expression profiles
@@ -148,6 +151,8 @@ mira/
 └── main.py       # process entry point
 bin/mira          # launcher script; bin/mira-notch (ambient notch), bin/mira-tune (tuning)
 scripts/          # architecture checkers; generate_sounds.py renders mira/sounds/
+bin/mira          # launcher script
+scripts/          # architecture checkers; voice_demo.py (standalone voice demo)
 tests/            # pytest suite
 docs/             # technical documentation
 ```
@@ -202,6 +207,7 @@ Tests are grouped by boundary rather than by file:
 | Countdown timer | `test_countdown_timer.py`, `test_notch_timer.py`, `test_timer_sound.py` |
 | Unified notch | `test_notch_unified.py` (the twelve integration scenarios, the timer as a band owner) |
 | Human perception | `test_perception_*.py`, `test_human_perception.py`, `test_presence_stabilizer.py`, `test_opencv_person_detector.py` |
+| Voice | `test_vocal_synthesis.py`, `test_voice_controller.py`, `test_qt_audio_adapter.py` |
 | Memory and messaging | `test_memory_contracts.py`, `test_messaging_contracts.py` |
 
 Shared test doubles live in `tests/doubles.py` (covered by
@@ -221,6 +227,12 @@ run repeatedly after threading changes:
 for i in $(seq 25); do QT_QPA_PLATFORM=offscreen venv/bin/python -m pytest -q -p no:cacheprovider \
   tests/test_camera_capture.py tests/test_human_perception.py | tail -1; done | sort | uniq -c
 ```
+
+No test needs speakers: the voice tests use a recording `AudioOutput`, and the
+Qt audio adapter tests play only silence and accept a machine without a sound
+card. After voice changes, listen to `scripts/voice_demo.py` and start the app
+with `MIRA_VOICE=1`: a greeting at start, one short reaction per response, no
+overlap when sending messages quickly, and a clean exit.
 
 A physical camera needs a manual check after camera changes: the app starts
 with `MIRA_CAMERA=1`, the debug drawer reports `active` with a sane size,

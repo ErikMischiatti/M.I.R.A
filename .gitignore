@@ -36,3 +36,9 @@ new_tree.txt
 .DS_Store
 .vscode/
 .idea/
+
+# Voice demo fallback output (scripts/voice_demo.py)
+mira_voice_demo/
+mira_voice_demo_v2/
+mira_voice_demo_ab/
+mira_voice_presets/

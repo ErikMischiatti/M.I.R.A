@@ -21,7 +21,7 @@ rather than incidentally, because two parts of it are observable:
     component constructing successfully while events reached nobody and timers
     sat on a scheduler nothing drives.
 
-`scheduler`, `camera_source`, `person_detector` and `clock` are adapter and test seams. Passing `ManualScheduler` from
+`scheduler`, `camera_source`, `person_detector` `voice_output` and `clock` are adapter and test seams. Passing `ManualScheduler` from
 `mira.domain.scheduler` yields the real graph, fully wired, driven by an
 explicit clock — which is how `tests/test_application_composition.py` exercises
 a whole turn without a `QApplication`.
@@ -47,6 +47,8 @@ from mira.adapters.opencv_person_detector import OpenCVCascadePersonDetector
 from mira.application.perception_config import (
     person_detection_configuration_from_environment,
 )
+from mira.adapters.qt_audio import QtAudioOutput
+from mira.application.voice_config import voice_configuration_from_environment
 from mira.core.activity_authority import ActivityAuthority
 from mira.core.brain import Brain
 from mira.core.camera_capture import CameraCapture
@@ -62,12 +64,15 @@ from mira.core.notice_producers import SystemNoticeProducer, TaskNoticeProducer
 from mira.core.task_activity import TaskActivity
 from mira.core.state_manager import StateManager
 from mira.domain.audio import AudioCaptureBackend
+from mira.core.voice import VoiceController
 from mira.domain.camera import CameraSource
 from mira.domain.device_info import DeviceInfoProvider
 from mira.domain.perception import PersonDetector
 from mira.domain.scheduler import Scheduler
 from mira.domain.sound import SilentSoundOutput, SoundOutput
 from mira.domain.system_events import SystemEventSource
+from mira.domain.vocal_synthesis import synthesizer_for
+from mira.domain.vocalization import AudioOutput
 from mira.messaging.events import EventBus
 
 
@@ -98,6 +103,7 @@ class Application:
     interaction_manager: InteractionManager
     embodied_behavior: EmbodiedBehavior
     camera: CameraCapture
+    voice: VoiceController
     perception: HumanPerception
     tasks: TaskActivity
     task_notices: TaskNoticeProducer
@@ -113,6 +119,7 @@ class Application:
         """Start the long-running resources: camera capture and system watching."""
         self.camera.start()
         self.perception.start()
+        self.voice.start()
         # Ready before the first device is announced.
         self.device_info.start()
         self.system_notices.start()
@@ -139,6 +146,7 @@ class Application:
         self.sound.shutdown()
         self.perception.shutdown()
         self.camera.shutdown()
+        self.voice.shutdown()
         self.scheduler.shutdown()
 
 
@@ -153,6 +161,7 @@ def build_application(
     clock: Callable[[], float] | None = None,
     sound_output: SoundOutput | None = None,
     person_detector: PersonDetector | None = None,
+    voice_output: AudioOutput | None = None,
 ) -> Application:
     """Construct and wire the application graph.
 
@@ -188,6 +197,13 @@ def build_application(
     (`desktop_device_info_providers`); by default none, so no test runs a
     command. `device_monitor` supplies their refresh interval and debug
     logging; by default no refresh and no logging (not the environment).
+
+    `voice_output` is the third. The `MIRA_VOICE*` environment decides whether
+    the voice is enabled, its character and its engine (V1 unless
+    `MIRA_VOICE_ENGINE=v2`); when enabled and no output is
+    passed, a `QtAudioOutput` is used. A disabled voice subscribes to nothing,
+    so the event bus is exactly what it was before the voice existed. Tests pass
+    a recording output, so no test needs speakers.
 
     No side effects: nothing is started, no state transition is triggered, no
     timer is armed and no device is opened. The returned graph is idle until
@@ -247,6 +263,19 @@ def build_application(
                 options["min_confidence"] = detection.min_confidence
             person_detector = OpenCVCascadePersonDetector(detection.model_path, **options)
     perception = HumanPerception(camera, person_detector)
+    voice_configuration = voice_configuration_from_environment()
+    if voice_configuration.enabled and voice_output is None:
+        voice_output = QtAudioOutput()
+    voice = VoiceController(
+        scheduler,
+        voice_output,
+        enabled=voice_configuration.enabled,
+        identity=voice_configuration.identity,
+        synthesizer=synthesizer_for(voice_configuration.engine),
+    )
+    # Last, so every existing subscriber keeps its position on the bus.
+    if voice.enabled:
+        voice.attach(event_bus)
 
     return Application(
         event_bus=event_bus,
@@ -266,6 +295,7 @@ def build_application(
         sound=sound,
         sound_cues=sound_cues,
         perception=perception,
+        voice=voice,
     )
 
 
