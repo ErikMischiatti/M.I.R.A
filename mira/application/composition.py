@@ -21,11 +21,7 @@ rather than incidentally, because two parts of it are observable:
     component constructing successfully while events reached nobody and timers
     sat on a scheduler nothing drives.
 
-`scheduler`, `camera_source` and `clock` are the only injection seams, and each exists
-for the same two reasons rather than for symmetry: it is an adapter choice, and
-it is what lets the graph be built without the technology behind it — no Qt
-event loop for the scheduler, no webcam or OpenCV for the camera, no real
-time passing for the countdown timer. Passing `ManualScheduler` from
+`scheduler`, `camera_source`, `person_detector` and `clock` are adapter and test seams. Passing `ManualScheduler` from
 `mira.domain.scheduler` yields the real graph, fully wired, driven by an
 explicit clock — which is how `tests/test_application_composition.py` exercises
 a whole turn without a `QApplication`.
@@ -47,12 +43,17 @@ from mira.adapters.opencv_camera import OpenCVCameraSource
 from mira.application.camera_config import camera_configuration_from_environment
 from mira.application.device_config import DeviceMonitorConfiguration, device_monitor_configuration_from_environment
 from mira.application.scheduling import build_scheduler
+from mira.adapters.opencv_person_detector import OpenCVCascadePersonDetector
+from mira.application.perception_config import (
+    person_detection_configuration_from_environment,
+)
 from mira.core.activity_authority import ActivityAuthority
 from mira.core.brain import Brain
 from mira.core.camera_capture import CameraCapture
 from mira.core.countdown_timer import CountdownTimer
 from mira.core.sound_cues import SoundCues
 from mira.core.embodied_behavior import EmbodiedBehavior
+from mira.core.human_perception import HumanPerception
 from mira.core.interaction_manager import InteractionManager
 from mira.core.listening import ListeningController
 from mira.core.audio_input import AudioInputService
@@ -63,6 +64,7 @@ from mira.core.state_manager import StateManager
 from mira.domain.audio import AudioCaptureBackend
 from mira.domain.camera import CameraSource
 from mira.domain.device_info import DeviceInfoProvider
+from mira.domain.perception import PersonDetector
 from mira.domain.scheduler import Scheduler
 from mira.domain.sound import SilentSoundOutput, SoundOutput
 from mira.domain.system_events import SystemEventSource
@@ -96,6 +98,7 @@ class Application:
     interaction_manager: InteractionManager
     embodied_behavior: EmbodiedBehavior
     camera: CameraCapture
+    perception: HumanPerception
     tasks: TaskActivity
     task_notices: TaskNoticeProducer
     system_notices: SystemNoticeProducer
@@ -109,6 +112,7 @@ class Application:
     def start(self) -> None:
         """Start the long-running resources: camera capture and system watching."""
         self.camera.start()
+        self.perception.start()
         # Ready before the first device is announced.
         self.device_info.start()
         self.system_notices.start()
@@ -116,9 +120,9 @@ class Application:
     def shutdown(self) -> None:
         """Stop the resources owned by this application graph.
 
-        The camera goes first and releases its device before the scheduler
-        stops; the two are independent, so the order only makes the device
-        free as early as possible.
+        Perception goes first, because it consumes the camera's frames; the
+        camera then releases its device, and the scheduler, which neither
+        uses, stops last.
         """
         # Audio first: listening lets go of the microphone, which is then
         # released before anything else.
@@ -133,6 +137,7 @@ class Application:
         # Nothing more to play; the output lets go of the audio device.
         self.sound_cues.shutdown()
         self.sound.shutdown()
+        self.perception.shutdown()
         self.camera.shutdown()
         self.scheduler.shutdown()
 
@@ -147,6 +152,7 @@ def build_application(
     device_monitor: DeviceMonitorConfiguration | None = None,
     clock: Callable[[], float] | None = None,
     sound_output: SoundOutput | None = None,
+    person_detector: PersonDetector | None = None,
 ) -> Application:
     """Construct and wire the application graph.
 
@@ -159,7 +165,9 @@ def build_application(
     `camera_source` is the second adapter choice. When omitted, the
     `MIRA_CAMERA*` environment decides: an `OpenCVCameraSource` when the camera
     is enabled, otherwise no source and a disabled capture. Tests pass a fake
-    source, so no test needs a webcam.
+    source, so no test needs a webcam. `person_detector` works the same way
+    with the `MIRA_PERSON_DETECTION*` variables and `OpenCVCascadePersonDetector`;
+    detection runs only when the camera does.
 
     `audio_backend` is how the runtime's one `AudioInputService` captures
     (`mira.application.audio.desktop_audio_backend` on a desktop); by default none, so the service
@@ -231,6 +239,14 @@ def build_application(
     # Its end is also heard, once: the timer itself knows nothing of sound.
     sound = SilentSoundOutput() if sound_output is None else sound_output
     sound_cues = SoundCues(event_bus, sound)
+    if person_detector is None:
+        detection = person_detection_configuration_from_environment()
+        if detection.enabled:
+            options = {}
+            if detection.min_confidence is not None:
+                options["min_confidence"] = detection.min_confidence
+            person_detector = OpenCVCascadePersonDetector(detection.model_path, **options)
+    perception = HumanPerception(camera, person_detector)
 
     return Application(
         event_bus=event_bus,
@@ -249,6 +265,7 @@ def build_application(
         timer=timer,
         sound=sound,
         sound_cues=sound_cues,
+        perception=perception,
     )
 
 

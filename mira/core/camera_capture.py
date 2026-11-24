@@ -15,7 +15,8 @@ synchronous fan-out for small semantic events on the serialized context;
 pushing 30 raw images a second through it would run every subscriber on the
 capture thread, or queue images on the UI thread. Instead the capture keeps
 only the newest frame, and consumers pull: `latest_frame` never blocks, and
-`wait_for_frame` lets a consumer thread sleep until something newer arrives.
+`wait_for_frame(after=...)` lets a consumer thread sleep until a frame other
+than the one it already has arrives.
 A slow consumer therefore sees fewer frames rather than a growing backlog, and
 no consumer code ever runs on the capture thread.
 """
@@ -90,31 +91,29 @@ class CameraCapture:
             return self._latest
 
     def wait_for_frame(
-        self, *, newer_than: int | None = None, timeout_s: float
+        self, *, after: CameraFrame | None = None, timeout_s: float
     ) -> CameraFrame | None:
-        """Wait for a frame whose sequence exceeds ``newer_than``.
+        """Wait for the newest frame, other than ``after`` when one is given.
 
-        Returns the newest such frame, or None on timeout or once capture stops.
-        Sequences restart when a capture restarts, so a consumer that outlives
-        a stop should start again from ``newer_than=None``.
+        Only the newest frame is kept, so any frame other than ``after`` is
+        newer than it, including after the camera restarted and its sequence
+        numbers began again from zero. Returns None on timeout or once capture
+        stops.
         """
 
         stop_requested = self._stop_requested
 
-        def ready() -> bool:
-            if stop_requested.is_set():
-                return True
+        def fresh() -> CameraFrame | None:
             latest = self._latest
-            return latest is not None and (newer_than is None or latest.sequence > newer_than)
+            return latest if latest is not None and latest is not after else None
 
         with self._frames:
-            self._frames.wait_for(ready, timeout=timeout_s)
+            self._frames.wait_for(
+                lambda: stop_requested.is_set() or fresh() is not None, timeout=timeout_s
+            )
             if stop_requested.is_set():
                 return None
-            latest = self._latest
-            if latest is None or (newer_than is not None and latest.sequence <= newer_than):
-                return None
-            return latest
+            return fresh()
 
     def start(self) -> None:
         with self._lock:

@@ -68,6 +68,8 @@ class FakeCameraSource:
         if self.open_error is not None:
             raise self.open_error
         self.is_open = True
+        # Sequences count from zero for each opening, as the port requires.
+        self._next_sequence = 0
         return self.info
 
     def read(self):

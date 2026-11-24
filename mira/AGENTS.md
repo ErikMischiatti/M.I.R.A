@@ -40,6 +40,9 @@ Main modules:
   - camera boundary: `CameraSource`, `CameraFrame`, `CameraInfo`,
     `CameraSettings`, `CameraStatus` (`mira/domain/camera.py`); no OpenCV or
     numpy types
+  - person perception boundary: `PersonDetector`, `PersonObservation`,
+    `BoundingBox` (image space, [0, 1]), `PersonDetections`, `HumanPresence`,
+    `PresenceStabilizer` (`mira/domain/perception.py`); no identity fields
   - `UserInput`, `IntentResult`, `BrainResponse` (`mira/domain/models.py`)
   - notices: `Notice`, `NoticeCategory`, `NoticeTone`, `NoticeDevice`,
     `NoticePriority` (`mira/domain/notice.py`); arbitration by priority is
@@ -83,6 +86,10 @@ Main modules:
     the UI thread: `AdbDeviceInfoProvider` (`adb`, optional; matched by USB
     port, never by serial), `UPowerPhoneProvider` (`upower --dump`, kind
     `phone` only), `UsbStorageInfoProvider` (sysfs disk size)
+  - `OpenCVCameraSource` (`mira/adapters/opencv_camera.py`) and
+    `OpenCVCascadePersonDetector` (`mira/adapters/opencv_person_detector.py`):
+    the only modules that import `cv2`/numpy, lazily; both are the optional
+    `camera` extra
   - may import `mira.domain`; never imported by the domain
 
 - `mira/application`
@@ -128,6 +135,8 @@ Main modules:
     `mira/core/voice_processing.py` runs the engines off the UI thread
   - camera capture (`CameraCapture`): owns the capture thread, the newest
     frame and the camera status
+  - human perception (`HumanPerception`): owns the perception thread, the
+    newest detections, stabilized presence and diagnostics
 
 - `mira/cognition`
   - intent engine abstraction
@@ -180,11 +189,17 @@ Main modules:
   core is constructible and testable with no GUI toolkit installed.
 - Keep Qt geometry, timers, disk I/O, EventBus access and cognitive concepts out
   of `EmbodimentFrame`; it is an outward pose value, not animation state.
-- Keep camera frames off the EventBus: consumers pull from `CameraCapture`
-  (`latest_frame`, `wait_for_frame`). The capture thread must not touch Qt,
-  the EventBus or application state, and no test may require a webcam or
-  OpenCV. Camera support must stay optional: a missing device or library is a
-  status, never an exception.
+- Keep camera frames and perception results off the EventBus: consumers pull
+  from `CameraCapture` (`latest_frame`, `wait_for_frame`) and
+  `HumanPerception` (`latest_detections`, `wait_for_detections`, `presence`).
+  The capture and perception threads must not touch Qt, the EventBus or
+  application state. Never call `FaceController.set_attention_target` (or any
+  UI) from the perception thread; attention integration needs an explicit
+  application/core boundary. No test may require a webcam, OpenCV or a model
+  download. Camera and perception stay optional: a missing device, library or
+  model is a status, never an exception.
+- Keep image space ([0, 1], `PersonObservation`) and gaze space ([-1, 1],
+  `AttentionTarget`) distinct; convert explicitly.
 - Session memory lives in `mira/memory` and the event bus in `mira/messaging`,
   not in `mira/core`. The layering checker declares zero exceptions; keep it
   that way rather than adding one.
