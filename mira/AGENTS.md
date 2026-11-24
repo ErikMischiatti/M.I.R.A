@@ -41,6 +41,24 @@ Main modules:
     `CameraSettings`, `CameraStatus` (`mira/domain/camera.py`); no OpenCV or
     numpy types
   - `UserInput`, `IntentResult`, `BrainResponse` (`mira/domain/models.py`)
+  - notices: `Notice`, `NoticeCategory`, `NoticeTone`, `NoticeDevice`,
+    `NoticePriority` (`mira/domain/notice.py`); arbitration by priority is
+    the notch presenter's (`mira/ui/notch/presentation.py`), the one
+    authority over what the notch shows
+  - device kinds: `DeviceCategory` (`mira/domain/devices.py`)
+  - device information: `DeviceInfo`, `ChargingState`, `InfoResult`, the
+    `DeviceInfoProvider` port, `DeviceInfoUpdate` and its text
+    (`mira/domain/device_info.py`); fields are what was read, never guessed
+  - countdown: `TimerState`, `TimerSnapshot`, `format_remaining`
+    (`mira/domain/timer.py`)
+  - sounds: `Sound`, the `SoundOutput` port, `SilentSoundOutput`
+    (`mira/domain/sound.py`)
+  - system changes: `DeviceEvent`, `ConnectivityEvent`, the
+    `SystemEventSource` port (`mira/domain/system_events.py`)
+  - voice: detector ports, `ListeningSession`, `Utterance`
+    (`mira/domain/voice.py`)
+  - semantic eye cues: `EmbodimentCue`, `EyeShape`, `CuePlayback`
+    (`mira/domain/embodiment_cue.py`); an overlay, never an expression
   - depends on nothing else in `mira`; must never import PySide6
 
 - `mira/adapters`
@@ -49,6 +67,22 @@ Main modules:
     adapter; the only place that knows the turn lifecycle runs on a Qt event loop
   - `OpenCVCameraSource` (`mira/adapters/opencv_camera.py`): the only module
     that imports `cv2`, lazily; OpenCV is the optional `camera` extra
+  - `QtAudioCaptureBackend` (`mira/adapters/qt_audio.py`): microphone
+    capture through Qt Multimedia's `QAudioSource`, default input
+  - `QtSoundOutput` (`mira/adapters/qt_sound.py`): short UI sounds through
+    Qt Multimedia's `QSoundEffect`; packaged WAVs in `mira/sounds/`, rendered
+    by `scripts/generate_sounds.py` (regenerate, never hand-edit)
+  - `mira/adapters/sherpa_voice.py`: local keyword spotter and Silero VAD
+    (optional `voice` extra and model files)
+  - Linux system sources, all event-driven on the Qt loop and optional:
+    `LinuxUsbDeviceSource` (kernel uevents; classifies devices from sysfs,
+    never reads serials; supervised and resynchronised after lost
+    messages), `PipeWireAudioSource`
+    (`pw-dump --monitor`), `NetworkManagerConnectivitySource` (QtDBus)
+  - device information providers, each a bounded, read-only query run off
+    the UI thread: `AdbDeviceInfoProvider` (`adb`, optional; matched by USB
+    port, never by serial), `UPowerPhoneProvider` (`upower --dump`, kind
+    `phone` only), `UsbStorageInfoProvider` (sysfs disk size)
   - may import `mira.domain`; never imported by the domain
 
 - `mira/application`
@@ -72,6 +106,26 @@ Main modules:
   - brain orchestration
   - interaction manager
   - embodied behavior
+  - notice producers (`mira/core/notice_producers.py`): task and system
+    events → `"notice"` on the bus, with the noise policy
+  - device information (`mira/core/device_info.py`): follows
+    `"device_changed"`, asks providers through `Scheduler.submit`, drops
+    stale answers, publishes `"device_info"`
+  - countdown (`mira/core/countdown_timer.py`): the one `CountdownTimer`,
+    deadline-based on the Scheduler and an injected monotonic clock →
+    `"timer_changed"` and `"timer_finished"`; the notch pulls the time left;
+    FINISHED lasts until `acknowledge()` (shown as the TIMER_FINISHED
+    condition and the notch's OK panel)
+  - sound cues (`mira/core/sound_cues.py`): `"timer_finished"` → one
+    `Sound.TIMER_DONE` on the `SoundOutput`; failures are logged, never raised
+  - running tasks (`mira/core/task_activity.py`): executor run ids →
+    `"tasks_changed"`; shown as the TASK_RUNNING condition
+  - audio input (`mira/core/audio_input.py`): the runtime's one
+    `AudioInputService`, capture by leases, pulled level and waveform
+  - listening (`mira/core/listening.py`): keyboard or wake-word activation →
+    one `ListeningSession` (VAD segmentation) → `"listening_changed"` and
+    `"utterance_ready"`; LISTENING stays the activity authority's;
+    `mira/core/voice_processing.py` runs the engines off the UI thread
   - camera capture (`CameraCapture`): owns the capture thread, the newest
     frame and the camera status
 
@@ -92,6 +146,11 @@ Main modules:
   - desktop actions
 
 - `mira/ui`
+  - desktop shell: the authority over surfaces; `show_surface` builds the
+    main window or the notch once and reuses it
+  - single instance: `mira/application/instance.py` (lock election, client)
+    and `mira/ui/instance_server.py`; one runtime per user, launchers forward
+  - notch (`mira/ui/notch`) and window-system adapters (`mira/ui/desktop`)
   - main window
   - compact chat panel
   - debug drawer

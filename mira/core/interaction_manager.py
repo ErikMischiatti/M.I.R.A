@@ -21,6 +21,9 @@ class InteractionManager:
 
         self.input_has_focus = False
         self.input_has_text = False
+        # MIRA listening by voice (`mira.core.listening`): engagement like
+        # a focused input, shown as the same LISTENING activity.
+        self.voice_listening = False
         self.is_processing = False
 
         self._register_subscribers()
@@ -33,6 +36,7 @@ class InteractionManager:
         self.event_bus.subscribe("user_input_received", self.on_user_input_received)
         self.event_bus.subscribe("processing_started", self.on_processing_started)
         self.event_bus.subscribe("response_ready", self.on_response_ready)
+        self.event_bus.subscribe("listening_changed", self.on_listening_changed)
 
     def on_input_focused(self, payload=None) -> None:
         self.input_has_focus = True
@@ -48,7 +52,7 @@ class InteractionManager:
         if self.is_processing:
             return
 
-        self.activity.settle(engaged=self.input_has_text)
+        self.activity.settle(engaged=self.input_has_text or self.voice_listening)
 
     def on_input_text_changed(self, text) -> None:
         text = text or ""
@@ -57,7 +61,20 @@ class InteractionManager:
         if self.is_processing:
             return
 
-        self.activity.settle(engaged=self.input_has_text or self.input_has_focus)
+        self.activity.settle(engaged=self.input_has_text or self.input_has_focus or self.voice_listening)
+
+    def on_listening_changed(self, status) -> None:
+        self.voice_listening = bool(getattr(status, "listening", False))
+
+        # A turn in progress keeps its THINKING/response; listening shows
+        # again when it settles.
+        if self.is_processing:
+            return
+
+        if self.voice_listening:
+            self.activity.attend()
+        else:
+            self._restore_idle_or_listening()
 
     def on_user_input_received(self, payload=None) -> None:
         # Interaction starts: user is actively engaging with the system.
@@ -91,4 +108,4 @@ class InteractionManager:
         self._restore_idle_or_listening()
 
     def _restore_idle_or_listening(self) -> None:
-        self.activity.settle(engaged=self.input_has_focus or self.input_has_text)
+        self.activity.settle(engaged=self.input_has_focus or self.input_has_text or self.voice_listening)

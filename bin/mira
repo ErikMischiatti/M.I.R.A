@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
 #
-# M.I.R.A. launcher.
+# M.I.R.A. launcher: asks this user's M.I.R.A. runtime to show the main
+# window, starting the runtime if none is running (an already running one,
+# for example from bin/mira-notch, receives the request and this exits).
 #
-# Runs the desktop application from any working directory using the
-# repository's own virtual environment. Intended to be reached through a
+# Runs from any working directory using the repository's own virtual
+# environment. Intended to be reached through a
 # symlink on PATH, for example:
 #
 #   ln -s "$PWD/bin/mira" ~/.local/bin/MIRA

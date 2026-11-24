@@ -30,6 +30,11 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 #   MIRA_CAMERA_WIDTH               mira/application/camera_config.py:35
 #   MIRA_CAMERA_HEIGHT              mira/application/camera_config.py:36
 #   MIRA_CAMERA_FPS                 mira/application/camera_config.py:37
+#   MIRA_NOTCH_CONFIG               mira/ui/notch/config_store.py:133
+#   MIRA_DEVICE_MONITOR             mira/application/device_config.py:39
+#   MIRA_DEVICE_MONITOR_DEBUG       mira/application/device_config.py:40
+#   MIRA_DEVICE_INFO                mira/application/device_config.py:41
+#   MIRA_DEVICE_INFO_REFRESH_S      mira/application/device_config.py:42
 # `test_each_variable_is_read_at_the_line_it_is_attributed_to` checks every one.
 MIRA_ENV_VARS = (
     "MIRA_INTENT_ENGINE",
@@ -42,6 +47,11 @@ MIRA_ENV_VARS = (
     "MIRA_CAMERA_WIDTH",
     "MIRA_CAMERA_HEIGHT",
     "MIRA_CAMERA_FPS",
+    "MIRA_NOTCH_CONFIG",
+    "MIRA_DEVICE_MONITOR",
+    "MIRA_DEVICE_MONITOR_DEBUG",
+    "MIRA_DEVICE_INFO",
+    "MIRA_DEVICE_INFO_REFRESH_S",
 )
 
 
@@ -70,3 +80,19 @@ def isolate_mira_env(monkeypatch: pytest.MonkeyPatch) -> None:
     """
     for name in MIRA_ENV_VARS:
         monkeypatch.delenv(name, raising=False)
+
+
+@pytest.fixture(autouse=True)
+def isolate_runtime_directory(monkeypatch: pytest.MonkeyPatch, tmp_path_factory) -> None:
+    """Point ``XDG_RUNTIME_DIR`` at a fresh private directory for every test.
+
+    The single-instance runtime (`mira.application.instance`) lives in
+    ``$XDG_RUNTIME_DIR/mira``. Without this, a test that runs `mira.main` — in
+    process or as a subprocess, which inherits the environment — would use
+    the developer's real runtime directory, and could forward its request to
+    the MIRA they are running. Not a MIRA_* variable, so `isolate_mira_env`
+    still only deletes.
+    """
+    directory = tmp_path_factory.mktemp("xdg-runtime")
+    directory.chmod(0o700)
+    monkeypatch.setenv("XDG_RUNTIME_DIR", str(directory))

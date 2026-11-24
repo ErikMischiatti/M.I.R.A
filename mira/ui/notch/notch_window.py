@@ -1,0 +1,1053 @@
+from dataclasses import dataclass
+
+from PySide6.QtCore import QElapsedTimer, QEasingCurve, QRect, QRectF, Qt, QTimer, QVariantAnimation, Signal
+from PySide6.QtGui import (
+    QColor,
+    QFont,
+    QFontMetricsF,
+    QGuiApplication,
+    QPainter,
+    QPainterPath,
+    QPainterPathStroker,
+    QRegion,
+    QScreen,
+)
+from PySide6.QtWidgets import QWidget
+
+from mira.domain.embodiment_frame import FACE_HEIGHT_UNITS, FACE_WIDTH_UNITS
+from mira.domain.timer import TimerSnapshot, TimerState, format_remaining
+from mira.ui.face.eye import Eye
+from mira.ui.face.eye_painter import EyePainter
+from mira.ui.face.face_animator import FaceAnimator
+from mira.domain.motion_envelope import PoseEnvelope
+from mira.ui.notch.eye_layout import (
+    NotchEyeLayout,
+    NotchEyeStyle,
+    library_envelope,
+    notch_eye_layout,
+    production_envelope,
+)
+from mira.ui.notch.expanded_layout import (
+    ContentRow,
+    NotchContentStyle,
+    content_row,
+    control_cells,
+    label_room,
+    panel_cells,
+    reveal_fraction,
+    waveform_bars,
+)
+from mira.ui.notch.presentation import (
+    NotchAction,
+    NotchContent,
+    NotchPresentation,
+    NotchSymbol,
+    TimerButton,
+    TimerCommand,
+    timer_content,
+)
+from mira.ui.notch.symbol_painter import paint_symbol
+from mira.ui.notch.presence import (
+    NotchGeometry,
+    NotchPresence,
+    NotchShape,
+    NotchSize,
+    Rect,
+    remaining_fraction,
+    window_bounds,
+    window_shape_for_size,
+)
+from mira.ui.notch.screen_selection import MonitorPreference, ScreenSelection
+from mira.ui.notch.visual_config import NotchVisualConfig, eye_motion_bottom, validate_visual_config
+from mira.ui.desktop.workspaces import WorkspacePresence, workspace_presence_for
+from mira.ui.notch.screens import (
+    ScreenSelector,
+    application_screens,
+    rect_from_qrect,
+    select_screen_of,
+)
+
+
+def notch_path(shape: NotchShape) -> QPainterPath:
+    """The notch outline: a flat top edge and rounded lower corners."""
+
+    bounds = shape.bounds
+    left, top, right, bottom = bounds.x, bounds.y, bounds.right, bounds.bottom
+    diameter = shape.corner_radius * 2.0
+
+    path = QPainterPath()
+    if bounds.width <= 0 or bounds.height <= 0:
+        return path
+
+    path.moveTo(left, top)
+    path.lineTo(right, top)
+    path.lineTo(right, bottom - shape.corner_radius)
+    path.arcTo(QRectF(right - diameter, bottom - diameter, diameter, diameter), 0.0, -90.0)
+    path.lineTo(left + shape.corner_radius, bottom)
+    path.arcTo(QRectF(left, bottom - diameter, diameter, diameter), 270.0, -90.0)
+    path.closeSubpath()
+    return path
+
+
+# How far the input mask reaches beyond the drawn outline. On X11 a top-level
+# mask is the window's bounding shape and clips painting too, so a mask exactly
+# on the outline would cut off the antialiased edge pixels and leave the curves
+# stepped. One pixel keeps the whole antialiased edge inside the mask.
+MASK_MARGIN_PX = 1.0
+
+# Below this height the notch counts as retracted: nothing is painted and the
+# mask shrinks to `RETRACTED_MASK`, so no invisible strip catches clicks.
+MIN_VISIBLE_HEIGHT_PX = 1.0
+
+# A shown window needs some mask: Qt treats an empty one as no mask, which would
+# let the whole window catch input. One pixel in the top-left corner stands in.
+RETRACTED_MASK = QRect(0, 0, 1, 1)
+
+
+def is_retracted(shape: NotchShape) -> bool:
+    return shape.bounds.width <= 0 or shape.bounds.height < MIN_VISIBLE_HEIGHT_PX
+
+
+def notch_mask(shape: NotchShape) -> QRegion:
+    """The notch's input and bounding region; empty for an empty shape."""
+
+    path = notch_path(shape)
+    if path.isEmpty():
+        return QRegion()
+    stroker = QPainterPathStroker()
+    stroker.setWidth(MASK_MARGIN_PX * 2.0)
+    outline = path.united(stroker.createStroke(path))
+    return QRegion(outline.toFillPolygon().toPolygon())
+
+
+EYE_COLOR = QColor(245, 245, 245)
+
+# Symbols and labels: the eyes' colour, slightly receded so the eyes stay the
+# primary visual.
+CONTENT_COLOR = QColor(245, 245, 245, 210)
+# A label's detail ("84% · Charging"): the same ink, quieter.
+DETAIL_COLOR = QColor(245, 245, 245, 150)
+
+
+def eye_canvas(layout: NotchEyeLayout) -> QRectF:
+    """The face design canvas at the layout's fixed scale, eye tops at its top."""
+
+    return QRectF(
+        layout.center_x - FACE_WIDTH_UNITS / 2.0 * layout.scale,
+        layout.top,
+        FACE_WIDTH_UNITS * layout.scale,
+        FACE_HEIGHT_UNITS * layout.scale,
+    )
+
+
+def layout_eyes(layout: NotchEyeLayout) -> tuple[Eye, Eye]:
+    """The layout's resting eyes as `EyePainter` placements on `eye_canvas`."""
+
+    def eye(side: str) -> Eye:
+        return Eye(
+            x_ratio=(FACE_WIDTH_UNITS / 2.0 + layout.eye_left_units(side)) / FACE_WIDTH_UNITS,
+            y_ratio=0.0,
+            width_ratio=layout.eye_width / FACE_WIDTH_UNITS,
+            height_ratio=layout.eye_height / FACE_HEIGHT_UNITS,
+        )
+
+    return eye("left"), eye("right")
+
+
+# What the integrated controls call each action.
+ACTION_LABELS = {
+    NotchAction.TIMER: "Timer",
+    NotchAction.OPEN_SETTINGS: "Settings",
+    NotchAction.QUIT: "Quit M.I.R.A.",
+}
+
+# The controls' pill: a quiet outline, filled under the pointer.
+CONTROL_COLOR = QColor(245, 245, 245, 40)
+CONTROL_HOVER_COLOR = QColor(245, 245, 245, 70)
+# The preset matching the chosen duration stands out from the other pills.
+SELECTED_CONTROL_COLOR = QColor(245, 245, 245, 110)
+
+# What the timer panel's buttons say; a preset says its minutes.
+TIMER_LABELS = {
+    TimerCommand.SHORTER: "−",
+    TimerCommand.LONGER: "+",
+    TimerCommand.START: "Start",
+    TimerCommand.PAUSE: "Pause",
+    TimerCommand.RESUME: "Resume",
+    TimerCommand.RESET: "Reset",
+    TimerCommand.ACKNOWLEDGE: "OK",
+}
+TIMER_DONE_TEXT = "Timer done!"
+# Room either side of a panel label inside its pill.
+PANEL_PADDING_PX = 7.0
+
+
+def timer_label(button: TimerButton) -> str:
+    if button.command is TimerCommand.PRESET:
+        return str(button.minutes)
+    return TIMER_LABELS[button.command]
+
+
+@dataclass(frozen=True)
+class ContentLayout:
+    """The expanded content as drawn: the symbol's square, then the texts that fit."""
+
+    symbol: QRectF
+    label: str
+    label_rect: QRectF
+    detail: str
+    detail_rect: QRectF
+
+
+class NotchWindow(QWidget):
+    """A frameless top-level overlay that draws the notch and nothing else.
+
+    The window keeps one fixed size, the expanded notch rounded to whole pixels,
+    hung top-centre from the selected screen's full geometry: with no top margin
+    the notch's top edge is the screen's top edge. The desktop work area
+    (`QScreen.availableGeometry`) is deliberately not used — on X11 it follows
+    the window manager's panel struts, which change asynchronously with
+    monitor hot-plugging and can leave a gap above the notch. Presence only
+    changes the shape drawn inside the window; it is never resized to follow
+    the notch.
+
+    Three things are kept apart:
+
+    - `presence`, the semantic target: hidden, compact or expanded;
+    - `visual_size`, what is drawn now, which mid-transition lies between sizes;
+    - one `transition` animation that blends the visual size to the target's.
+
+    A new target restarts the blend from the current visual size, so reversing
+    mid-transition never jumps, and the duration shrinks with the share of the
+    path still left. Showing shows the window before the notch grows out of the
+    top edge; hiding keeps the window shown until the notch has retracted and
+    only then hides it. The mask follows the drawn shape on every frame.
+
+    Given a `FaceAnimator`, the notch is also a view of that embodiment: it
+    repaints on each tick and draws the controller's current frame with the
+    same `EyePainter` as the face, clipped to the drawn shape, at a layout fixed
+    by the compact notch (`notch_eye_layout`) — so expanding reveals space
+    around the eyes rather than rescaling them. It never steps the controller
+    and never starts or stops the animator; that clock belongs to its owner.
+    Without an animator the notch is a plain overlay.
+
+    Which screen the notch appears on is `screen_selector`'s choice — by
+    default `select_screen` under the window's `monitor_preference`: the
+    preferred monitor when connected, otherwise the automatic 1 / 2 / 3+
+    screen policy. The window re-runs it whenever screens are added or
+    removed, change geometry, or the primary screen changes, and follows
+    whatever it picks, emitting `screen_selection_changed` each time. A
+    preferred monitor that is unplugged is therefore left for the automatic
+    choice and returned to when it is plugged in again.
+
+    The visual parameters — `notch_geometry`, `eye_style` and
+    `transition_duration_ms` — can be replaced at run time through their
+    setters; the window then re-derives bounds, shape, mask and eye layout
+    through the same pipeline as at construction. `apply_visual_config`
+    replaces all three at once and only after `validate_visual_config` has
+    shown that the eyes' whole `motion_envelope` fits the notch; the envelope
+    is that of the animator's expression library (or the packaged profiles).
+
+    The window never takes keyboard focus and shows without activating.
+
+    It asks to be present on every virtual workspace, through
+    ``workspace_presence`` (by default the adapter for the running Qt
+    platform, `mira.ui.desktop.workspaces`): before every map, since a window
+    manager forgets the request when a window is withdrawn. Where the
+    platform offers no such request the notch stays on one workspace.
+
+    What the notch presents is decided elsewhere (`NotchPresenter`). The window
+    reports the pointer entering and leaving the drawn notch through
+    `hover_changed` — plain Qt enter/leave events, so the input mask decides
+    what counts as inside — and renders whatever `present` hands it. It never
+    expands or collapses itself on hover; see `bind_presenter`.
+
+    User intents leave the window as `action_requested`, carrying a
+    `NotchAction` value, and only for the actions the presentation offers: a
+    double click asks for the main window. A right click asks the presenter
+    to toggle the notch's integrated controls (`controls_toggle_requested`);
+    no native menu is shown. While the presentation shows controls they are
+    drawn as pills in the content band, and a click on one requests its
+    action. The window never knows who honours them. Any other single click
+    does nothing.
+
+    While the presentation shows the timer panel, the band holds the time —
+    the duration being chosen, or what is left of the countdown — and the
+    panel's buttons; a click on one leaves as `timer_requested`. The time
+    left is read from the timer source on every repaint, like the waveform,
+    so the countdown needs no timer of its own here.
+    """
+
+    TRANSITION_DURATION_MS = 200
+
+    # Emitted after every screen selection, whether or not the screen changed.
+    screen_selection_changed = Signal()
+
+    # The pointer entered (True) or left (False) the notch.
+    hover_changed = Signal(bool)
+
+    # A `NotchAction` value the user asked for.
+    action_requested = Signal(str)
+
+    # The user asked to open or close the integrated controls (right click).
+    controls_toggle_requested = Signal()
+
+    # A `TimerButton` of the timer panel was clicked.
+    timer_requested = Signal(object)
+
+    def __init__(
+        self,
+        geometry: NotchGeometry | None = None,
+        *,
+        color: QColor | None = None,
+        animator: FaceAnimator | None = None,
+        screen_selector: ScreenSelector | None = None,
+        eye_style: NotchEyeStyle | None = None,
+        monitor_preference: MonitorPreference | None = None,
+        workspace_presence: WorkspacePresence | None = None,
+    ):
+        super().__init__(None)
+
+        self.setWindowFlags(
+            Qt.FramelessWindowHint
+            | Qt.WindowStaysOnTopHint
+            | Qt.Tool
+            | Qt.WindowDoesNotAcceptFocus
+        )
+        self.setAttribute(Qt.WA_TranslucentBackground)
+        self.setAttribute(Qt.WA_ShowWithoutActivating)
+        self.setFocusPolicy(Qt.NoFocus)
+        # Move events without a button pressed, to highlight the control under
+        # the pointer.
+        self.setMouseTracking(True)
+        self.setWindowTitle("M.I.R.A. notch")
+        self.workspace_presence = (
+            workspace_presence_for(QGuiApplication.platformName()) if workspace_presence is None else workspace_presence
+        )
+        self.all_workspaces_requested = False
+
+        self._geometry = NotchGeometry() if geometry is None else geometry
+        self._eye_style = NotchEyeStyle() if eye_style is None else eye_style
+        self.transition_duration_ms = self.TRANSITION_DURATION_MS
+        self._content_style = NotchContentStyle()
+        self.animator = animator
+        # A controller without an expression library (a test double, say)
+        # is bounded by the packaged profiles.
+        library = getattr(animator.controller, "expression_library", None) if animator else None
+        self._envelope = production_envelope() if library is None else library_envelope(library)
+        self._eye_layout = notch_eye_layout(
+            self._geometry, Rect(0.0, 0.0, 0.0, 0.0), self._eye_style, self._envelope
+        )
+        left, right = layout_eyes(self._eye_layout)
+        # The eyelids cut into the eyes in the notch colour; see `color`.
+        self.eye_painter = EyePainter(
+            left,
+            right,
+            eye_color=EYE_COLOR,
+            lid_color=QColor(0, 0, 0),
+            offset_gain=self._eye_style.motion_gain,
+        )
+        self.color = QColor(0, 0, 0) if color is None else color
+
+        self._presence = NotchPresence.HIDDEN
+        self._presentation = NotchPresentation()
+        self._hovered = False
+        self._hovered_control: NotchAction | TimerButton | None = None
+        # Where real captured audio is read from while listening; None: none.
+        self._waveform_source = None
+        # Where the live countdown is read from; None: the presentation's.
+        self._timer_source = None
+        # Symbol animation phase; read only while painting.
+        self._clock = QElapsedTimer()
+        self._clock.start()
+        self._visual_size = self._geometry.size_for(NotchPresence.HIDDEN)
+        self._from_size = self._visual_size
+        self._to_size = self._visual_size
+        self._window_bounds = Rect(0.0, 0.0, 0.0, 0.0)
+        self._screen: QScreen | None = None
+
+        self._transition = QVariantAnimation(self)
+        self._transition.setStartValue(0.0)
+        self._transition.setEndValue(1.0)
+        self._transition.setEasingCurve(QEasingCurve.OutCubic)
+        self._transition.valueChanged.connect(self._on_transition_value)
+        self._transition.finished.connect(self._on_transition_finished)
+
+        self._monitor_preference = MonitorPreference() if monitor_preference is None else monitor_preference
+        self._selection: ScreenSelection | None = None
+        self._select_screen = self._select_preferred_screen if screen_selector is None else screen_selector
+        self._watched_screens: list[QScreen] = []
+        application = QGuiApplication.instance()
+        application.screenAdded.connect(self._on_screen_added)
+        application.screenRemoved.connect(self._on_screen_removed)
+        application.primaryScreenChanged.connect(self._on_primary_screen_changed)
+        for screen in QGuiApplication.screens():
+            self._watch_screen(screen)
+        self.retarget_screen()
+
+        if animator is not None:
+            animator.frame_advanced.connect(self.update)
+
+    @property
+    def color(self) -> QColor:
+        """The notch fill, which is also the eyelid colour.
+
+        Eyelids are drawn by covering part of an eye in the colour beneath it,
+        so both must stay one setting.
+        """
+        return self._color
+
+    @color.setter
+    def color(self, color: QColor):
+        self._color = color
+        self.eye_painter.lid_color = color
+
+    @property
+    def notch_geometry(self) -> NotchGeometry:
+        return self._geometry
+
+    def set_notch_geometry(self, geometry: NotchGeometry):
+        """Replace the notch geometry; the current presence keeps its target.
+
+        At rest the notch takes the new size at once. Mid-transition the one
+        transition is restarted from the shape drawn now towards the new
+        target size, for the time it had left, so nothing jumps.
+        """
+
+        self._geometry = geometry
+        target = geometry.size_for(self._presence)
+        if self._transition.state() is QVariantAnimation.State.Stopped:
+            self._visual_size = target
+        else:
+            remaining = self._transition.duration() - self._transition.currentTime()
+            self._transition.stop()
+            self._run_transition(target, remaining)
+        self.reposition()
+
+    @property
+    def eye_style(self) -> NotchEyeStyle:
+        return self._eye_style
+
+    def set_eye_style(self, style: NotchEyeStyle):
+        """Replace the eye layout rules and re-derive the layout."""
+        self._eye_style = style
+        self._update_eye_layout()
+        self.update()
+
+    @property
+    def eye_layout(self) -> NotchEyeLayout:
+        return self._eye_layout
+
+    @property
+    def motion_envelope(self) -> PoseEnvelope:
+        """Every pose the shown embodiment can reach; see `motion_envelope`."""
+        return self._envelope
+
+    @property
+    def visual_config(self) -> NotchVisualConfig:
+        return NotchVisualConfig(self._geometry, self._eye_style, self.transition_duration_ms, self._content_style)
+
+    def apply_visual_config(self, config: NotchVisualConfig):
+        """Validate ``config`` against the motion envelope, then apply it all.
+
+        Raises `InvalidVisualConfig` and changes nothing if the eyes could
+        leave the notch's safe region.
+        """
+
+        validate_visual_config(config, self._envelope)
+        self.transition_duration_ms = config.transition_duration_ms
+        self._eye_style = config.eye_style
+        self._content_style = config.content_style
+        self.set_notch_geometry(config.geometry)  # re-derives the eye layout too
+
+    @property
+    def eye_canvas(self) -> QRectF:
+        return eye_canvas(self._eye_layout)
+
+    # --- Presence ------------------------------------------------------------
+
+    @property
+    def presence(self) -> NotchPresence:
+        """The semantic target; mid-transition the drawn notch lags behind it."""
+        return self._presence
+
+    @property
+    def visual_size(self) -> NotchSize:
+        return self._visual_size
+
+    @property
+    def shape(self) -> NotchShape:
+        """The notch as drawn now, in window-local coordinates."""
+        return window_shape_for_size(self._window_bounds, self._geometry, self._visual_size)
+
+    @property
+    def transition(self) -> QVariantAnimation:
+        return self._transition
+
+    def show_notch(self):
+        """Show the compact notch if hidden; a shown notch keeps its presence."""
+        if self._presence is NotchPresence.HIDDEN:
+            self.set_presence(NotchPresence.COMPACT)
+
+    def hide_notch(self):
+        self.set_presence(NotchPresence.HIDDEN)
+
+    def expand_notch(self):
+        self.set_presence(NotchPresence.EXPANDED)
+
+    def collapse_notch(self):
+        self.set_presence(NotchPresence.COMPACT)
+
+    def set_presence(self, presence: NotchPresence, *, animated: bool = True):
+        """Move towards ``presence`` from wherever the notch is drawn now.
+
+        Requesting the current target again changes nothing, even mid-way.
+        """
+
+        if presence is self._presence:
+            return
+
+        origin = self._geometry.size_for(self._presence)
+        target = self._geometry.size_for(presence)
+        self._presence = presence
+
+        # stop() does not emit `finished`, so an interrupted transition never
+        # completes — or hides the window — on behalf of the new target.
+        self._transition.stop()
+        if presence.is_visible:
+            self.show()
+
+        duration = round(
+            self.transition_duration_ms * remaining_fraction(self._visual_size, origin, target)
+        )
+        self._run_transition(target, duration if animated else 0)
+
+    def _run_transition(self, target: NotchSize, duration: int):
+        """Blend from the drawn size to ``target``; settle at once if no time."""
+
+        self._from_size = self._visual_size
+        self._to_size = target
+        if duration <= 0:
+            self._set_visual_size(target)
+            self._settle()
+            return
+        self._transition.setDuration(duration)
+        self._transition.start()
+
+    def _on_transition_value(self, progress: float):
+        # A stopped animation still emits: setDuration() re-evaluates the value
+        # at the time the previous run ended, against the new endpoints. That is
+        # no frame of any transition, and applying it would flash a wrong shape
+        # and mask for an instant.
+        if self._transition.state() is QVariantAnimation.State.Stopped:
+            return
+        self._set_visual_size(self._from_size.lerp(self._to_size, progress))
+
+    def _on_transition_finished(self):
+        self._set_visual_size(self._to_size)
+        self._settle()
+
+    def _settle(self):
+        # Reads the current target, never the one a transition started for.
+        if self._presence is NotchPresence.HIDDEN:
+            self.hide()
+
+    def _set_visual_size(self, size: NotchSize):
+        self._visual_size = size
+        self._apply_shape()
+
+    # --- Presentation and pointer ------------------------------------------
+
+    @property
+    def presentation(self) -> NotchPresentation:
+        """What the notch was last asked to present."""
+        return self._presentation
+
+    @property
+    def content_style(self) -> NotchContentStyle:
+        return self._content_style
+
+    @property
+    def content_row(self) -> ContentRow:
+        """Where expanded content is drawn: below the eyes; see `expanded_layout`."""
+        return content_row(
+            self._window_bounds, self._geometry, self._content_style,
+            eye_motion_bottom(self._eye_layout, self._envelope),
+        )
+
+    @property
+    def content_opacity(self) -> float:
+        """How visible the content row is now: 0 at compact, 1 at expanded.
+
+        It follows the drawn height, so content fades in as the notch grows
+        and out as it collapses, never popping at either end.
+        """
+        presentation = self._presentation
+        if presentation.content is None and not presentation.controls and not presentation.timer_panel:
+            return 0.0
+        reveal = reveal_fraction(self._visual_size, self._geometry)
+        return reveal * reveal
+
+    def present(self, presentation: NotchPresentation):
+        """Render ``presentation``: move to its presence and repaint."""
+        self._presentation = presentation
+        self.set_presence(presentation.presence)
+        self.update()
+
+    @property
+    def hovered(self) -> bool:
+        return self._hovered
+
+    def _set_hovered(self, hovered: bool):
+        if hovered is self._hovered:
+            return
+        self._hovered = hovered
+        self.hover_changed.emit(hovered)
+
+    def enterEvent(self, event):
+        self._set_hovered(True)
+        super().enterEvent(event)
+
+    def leaveEvent(self, event):
+        self._set_hovered(False)
+        super().leaveEvent(event)
+
+    def mouseDoubleClickEvent(self, event):
+        position = event.position()
+        on_target = self.control_at(position) is not None or self.timer_button_at(position) is not None
+        if event.button() == Qt.LeftButton and not on_target:
+            self._request(NotchAction.OPEN_MAIN_WINDOW)
+        event.accept()
+
+    def mousePressEvent(self, event):
+        # Accepted, so the window system delivers the matching release here:
+        # an ignored press loses its release, and with it every click on a
+        # control. (Synthetic test clicks deliver both regardless.)
+        event.accept()
+
+    def mouseReleaseEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            action = self.control_at(event.position())
+            if action is not None:
+                self._request(action)
+            else:
+                button = self.timer_button_at(event.position())
+                if button is not None:
+                    self._request_timer(button)
+        event.accept()
+
+    def mouseMoveEvent(self, event):
+        hovered = self.control_at(event.position()) or self.timer_button_at(event.position())
+        if hovered != self._hovered_control:
+            self._hovered_control = hovered
+            self.update()
+        super().mouseMoveEvent(event)
+
+    def contextMenuEvent(self, event):
+        # The notch's own controls, never a native popup menu.
+        self.controls_toggle_requested.emit()
+        event.accept()
+
+    def set_waveform_source(self, source) -> None:
+        """``source()`` returns the latest real `AudioWaveform`, or None.
+
+        Read on every repaint while the presentation shows the waveform; the
+        owner's animator already repaints the notch on each frame, so no
+        timer of its own is needed.
+        """
+        self._waveform_source = source
+
+    def current_waveform(self):
+        if not self._presentation.shows_waveform or self._waveform_source is None:
+            return None
+        return self._waveform_source()
+
+    def set_timer_source(self, source) -> None:
+        """``source()`` returns the countdown's current `TimerSnapshot`.
+
+        Read on every repaint that shows the time left; without one the
+        notch shows the time left when the countdown last changed state.
+        """
+        self._timer_source = source
+
+    def current_timer(self) -> TimerSnapshot:
+        if self._timer_source is None:
+            return self._presentation.timer
+        return self._timer_source()
+
+    @property
+    def current_content(self) -> NotchContent | None:
+        """The content to draw, with a running countdown's time read live."""
+        content = self._presentation.content
+        if content is not None and content.symbol is NotchSymbol.TIMER and self._presentation.notice is None:
+            timer = self.current_timer()
+            if timer.active:
+                return timer_content(timer)
+        return content
+
+    @property
+    def timer_readout(self) -> str:
+        """The panel's text: done, what is left of a countdown, else the chosen duration."""
+        timer = self.current_timer()
+        if timer.state is TimerState.FINISHED:
+            return TIMER_DONE_TEXT
+        if timer.active:
+            return format_remaining(timer.remaining_s)
+        return format_remaining(self._presentation.timer_selection_s)
+
+    def _panel_fonts(self) -> tuple[QFont, QFont]:
+        """The readout's font, then the buttons' (the controls' size)."""
+        row = self.content_row
+        readout = QFont(self.font())
+        readout.setPixelSize(max(round(row.label_px), 1))
+        buttons = QFont(self.font())
+        buttons.setPixelSize(max(round(row.label_px * 0.85), 1))
+        return readout, buttons
+
+    def _timer_cells(self) -> list[QRectF]:
+        """The readout's cell, then one per panel button; empty while closed."""
+        buttons = self._presentation.timer_panel
+        if not buttons:
+            return []
+        row = self.content_row
+        readout_font, button_font = self._panel_fonts()
+        # A time is as wide as the widest time of its length, so it never jitters.
+        readout = self.timer_readout
+        sample = readout if ":" not in readout else "00:00:00" if len(readout) > 5 else "00:00"
+        widths = [QFontMetricsF(readout_font).horizontalAdvance(sample) + 2.0 * PANEL_PADDING_PX]
+        metrics = QFontMetricsF(button_font)
+        for button in buttons:
+            label = metrics.horizontalAdvance(timer_label(button)) + 2.0 * PANEL_PADDING_PX
+            widths.append(max(label, row.area.height))
+        return [QRectF(cell.x, cell.y, cell.width, cell.height) for cell in panel_cells(row, widths)]
+
+    @property
+    def timer_readout_rect(self) -> QRectF:
+        cells = self._timer_cells()
+        return cells[0] if cells else QRectF()
+
+    @property
+    def timer_button_rects(self) -> dict[TimerButton, QRectF]:
+        """Where each button of the open timer panel is drawn and clicked."""
+        return dict(zip(self._presentation.timer_panel, self._timer_cells()[1:]))
+
+    def timer_button_at(self, position) -> TimerButton | None:
+        if not self._presentation.timer_panel or self.content_opacity < 0.5:
+            return None
+        for button, rect in self.timer_button_rects.items():
+            if rect.contains(position):
+                return button
+        return None
+
+    def _request_timer(self, button: TimerButton):
+        if button in self._presentation.timer_panel:
+            self.timer_requested.emit(button)
+
+    @property
+    def control_rects(self) -> dict[NotchAction, QRectF]:
+        """Where each open control is drawn and clicked, window-local."""
+        controls = self._presentation.controls
+        cells = control_cells(self.content_row, len(controls))
+        return {action: QRectF(cell.x, cell.y, cell.width, cell.height) for action, cell in zip(controls, cells)}
+
+    def control_at(self, position) -> NotchAction | None:
+        """The open control under ``position``, once the notch has grown enough to show it."""
+        if not self._presentation.controls or self.content_opacity < 0.5:
+            return None
+        for action, rect in self.control_rects.items():
+            if rect.contains(position):
+                return action
+        return None
+
+    def _request(self, action: NotchAction):
+        if action in self._presentation.actions:
+            self.action_requested.emit(action.value)
+
+    def showEvent(self, event):
+        # Delivered before the window is mapped, so the window manager reads
+        # the request when it starts managing the window. A spontaneous show
+        # comes from the window system for a window already mapped.
+        if not event.spontaneous():
+            self.all_workspaces_requested = self.workspace_presence.prepare_to_show(int(self.winId()))
+        super().showEvent(event)
+
+    def hideEvent(self, event):
+        # A hidden window receives no leave event; the pointer is gone anyway.
+        self._set_hovered(False)
+        super().hideEvent(event)
+
+    # --- Screen placement ----------------------------------------------------
+
+    @property
+    def tracked_screen(self) -> QScreen | None:
+        return self._screen
+
+    @property
+    def watched_screens(self) -> list[QScreen]:
+        """Screens whose geometry changes trigger a new screen selection."""
+        return list(self._watched_screens)
+
+    @property
+    def monitor_preference(self) -> MonitorPreference:
+        return self._monitor_preference
+
+    def set_monitor_preference(self, preference: MonitorPreference):
+        """Prefer a monitor (or none: automatic) and select again at once."""
+        self._monitor_preference = preference
+        self.retarget_screen()
+
+    @property
+    def selection(self) -> ScreenSelection | None:
+        """How the default selector chose; None under a substituted selector."""
+        return self._selection
+
+    def _select_preferred_screen(self) -> QScreen | None:
+        screens, primary = application_screens()
+        screen, self._selection = select_screen_of(screens, primary, self._monitor_preference)
+        return screen
+
+    def retarget_screen(self):
+        """Re-run screen selection and follow the screen it picks."""
+        self.track_screen(self._select_screen())
+        self.screen_selection_changed.emit()
+
+    def _watch_screen(self, screen: QScreen):
+        if any(watched is screen for watched in self._watched_screens):
+            return
+        screen.geometryChanged.connect(self._on_screen_geometry)
+        self._watched_screens.append(screen)
+
+    def _unwatch_screen(self, screen: QScreen):
+        if not any(watched is screen for watched in self._watched_screens):
+            return
+        self._watched_screens = [watched for watched in self._watched_screens if watched is not screen]
+        try:
+            screen.geometryChanged.disconnect(self._on_screen_geometry)
+        except (RuntimeError, TypeError):
+            pass  # The screen is already gone, and its connections with it.
+
+    def _on_screen_added(self, screen: QScreen):
+        self._watch_screen(screen)
+        self.retarget_screen()
+
+    def _on_screen_removed(self, screen: QScreen):
+        self._unwatch_screen(screen)
+        if screen is self._screen:
+            self._release_tracked_screen()
+        # The screen may still be listed while this signal is delivered, so
+        # choose again once the event loop has finished removing it.
+        QTimer.singleShot(0, self, self.retarget_screen)
+
+    def _on_primary_screen_changed(self, _screen: QScreen):
+        # The primary screen decides between two screens and breaks ties.
+        self.retarget_screen()
+
+    def _on_screen_geometry(self, _geometry: QRect):
+        # Any screen moving or resizing can change the automatic choice.
+        self.retarget_screen()
+
+    def _release_tracked_screen(self):
+        try:
+            self._screen.geometryChanged.disconnect(self._on_tracked_geometry)
+        except (RuntimeError, TypeError):
+            pass  # The screen is already gone, and its connections with it.
+        self._screen = None
+
+    def track_screen(self, screen: QScreen | None):
+        """Follow ``screen``'s geometry, dropping the previous screen.
+
+        Normally called by `retarget_screen` with the selector's choice. The
+        previous screen's connection is removed first, so repeated or
+        alternating changes never accumulate connections.
+        """
+
+        if screen is self._screen:
+            self.reposition()
+            return
+        if self._screen is not None:
+            self._release_tracked_screen()
+        self._screen = screen
+        if screen is not None:
+            screen.geometryChanged.connect(self._on_tracked_geometry)
+        self.reposition()
+
+    def reposition(self):
+        """Recompute the window's bounds from the tracked screen."""
+
+        if self._screen is None:
+            self._apply_shape()
+            return
+        self._window_bounds = window_bounds(rect_from_qrect(self._screen.geometry()), self._geometry)
+        bounds = self._window_bounds
+        self._update_eye_layout()
+        self.setFixedSize(int(bounds.width), int(bounds.height))
+        self.move(int(bounds.x), int(bounds.y))
+        self._apply_shape()
+
+    def _on_tracked_geometry(self, _geometry: QRect):
+        self.reposition()
+
+    def _update_eye_layout(self):
+        self._eye_layout = notch_eye_layout(
+            self._geometry, self._window_bounds, self._eye_style, self._envelope
+        )
+        self.eye_painter.left, self.eye_painter.right = layout_eyes(self._eye_layout)
+        self.eye_painter.offset_gain = self._eye_style.motion_gain
+
+    # --- Shape ---------------------------------------------------------------
+
+    def _apply_shape(self):
+        # Known issue (X11, not reproduced): one capture during a fast reversal
+        # showed a stale and a current frame at once. setMask() reaches the X
+        # server at once while the repaint lands with the next flush, so the
+        # two are not atomic. No deterministic failure exists yet; do not
+        # reorder mask and paint until one does.
+        shape = self.shape
+        if is_retracted(shape):
+            self.setMask(QRegion(RETRACTED_MASK))
+        else:
+            self.setMask(notch_mask(shape))
+        self.update()
+
+    def paintEvent(self, event):
+        # The surface outside the notch stays transparent (WA_TranslucentBackground).
+        shape = self.shape
+        if is_retracted(shape):
+            return
+        path = notch_path(shape)
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+        painter.setPen(Qt.NoPen)
+        painter.fillPath(path, self.color)
+
+        painter.setClipPath(path)
+        if self.animator is not None:
+            self.eye_painter.paint(painter, self.eye_canvas, self.animator.controller.get_frame())
+
+        opacity = self.content_opacity
+        if opacity <= 0.01:
+            return
+        painter.setOpacity(opacity)
+        if self._presentation.controls:
+            self._paint_controls(painter)
+            return
+        if self._presentation.timer_panel:
+            self._paint_timer_panel(painter)
+            return
+        waveform = self.current_waveform()
+        if waveform is not None:
+            self._paint_waveform(painter, waveform)
+            return
+        content = self.current_content
+        if content is not None:
+            self._paint_content(painter, content, self.content_row)
+
+    def _paint_waveform(self, painter: QPainter, waveform):
+        """The captured audio's recent bucket peaks as bars around the centre line."""
+        rects = waveform_bars(self.content_row, waveform.buckets)
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(CONTENT_COLOR)
+        for bar in rects:
+            radius = min(bar.width, bar.height) / 2.0
+            painter.drawRoundedRect(QRectF(bar.x, bar.y, bar.width, bar.height), radius, radius)
+
+    def _paint_controls(self, painter: QPainter):
+        """Each open control as a rounded pill with its label, in the content band."""
+        font = QFont(self.font())
+        row = self.content_row
+        font.setPixelSize(max(round(row.label_px * 0.85), 1))
+        metrics = QFontMetricsF(font)
+        painter.setFont(font)
+        for action, rect in self.control_rects.items():
+            radius = rect.height() / 2.0
+            painter.setPen(Qt.NoPen)
+            painter.setBrush(CONTROL_HOVER_COLOR if action is self._hovered_control else CONTROL_COLOR)
+            painter.drawRoundedRect(rect, radius, radius)
+            label = metrics.elidedText(ACTION_LABELS[action], Qt.ElideRight, max(rect.width() - radius, 0.0))
+            painter.setPen(CONTENT_COLOR)
+            painter.drawText(rect, Qt.AlignCenter, label)
+
+    def _paint_timer_panel(self, painter: QPainter):
+        """The time, then each panel button as a pill like the controls."""
+        readout_font, button_font = self._panel_fonts()
+        cells = self._timer_cells()
+        painter.setFont(readout_font)
+        painter.setPen(CONTENT_COLOR)
+        painter.drawText(cells[0], Qt.AlignCenter, self.timer_readout)
+        metrics = QFontMetricsF(button_font)
+        painter.setFont(button_font)
+        selected = self._presentation.timer_selection_s
+        for button, rect in zip(self._presentation.timer_panel, cells[1:]):
+            radius = rect.height() / 2.0
+            if button == self._hovered_control:
+                color = CONTROL_HOVER_COLOR
+            elif button.command is TimerCommand.PRESET and button.minutes * 60 == selected:
+                color = SELECTED_CONTROL_COLOR
+            else:
+                color = CONTROL_COLOR
+            painter.setPen(Qt.NoPen)
+            painter.setBrush(color)
+            painter.drawRoundedRect(rect, radius, radius)
+            label = metrics.elidedText(timer_label(button), Qt.ElideRight, max(rect.width() - 2.0, 0.0))
+            painter.setPen(CONTENT_COLOR)
+            painter.drawText(rect, Qt.AlignCenter, label)
+
+    def content_layout(self, content: NotchContent, row: ContentRow | None = None) -> ContentLayout:
+        """Where ``content``'s symbol, label and detail go, and what fits of each.
+
+        The symbol, the label and the detail form one group, centred in the
+        row, left to right and never overlapping; the label and the detail
+        share the width the symbol leaves (`expanded_layout.label_room`) and
+        are elided to their shares.
+        """
+        row = self.content_row if row is None else row
+        font = self._content_font(row)
+        metrics = QFontMetricsF(font)
+        area = row.area
+        label, detail = content.label or "", content.detail or ""
+        line = max(row.symbol_px, metrics.height())
+        texts = label or detail
+        room = area.width - row.symbol_px - (row.gap_px if texts else 0.0)
+        share = label_room(
+            room,
+            metrics.horizontalAdvance(label) if label else 0.0,
+            metrics.horizontalAdvance(detail) if detail else 0.0,
+            row.label_px,
+        )
+        label = metrics.elidedText(label, Qt.ElideRight, share.label) if label and share.label > 0 else ""
+        detail = metrics.elidedText(detail, Qt.ElideRight, share.detail) if detail and share.detail > 0 else ""
+        label_width = metrics.horizontalAdvance(label) if label else 0.0
+        detail_width = metrics.horizontalAdvance(detail) if detail else 0.0
+        gap = share.gap if label and detail else 0.0
+        text_width = label_width + gap + detail_width
+        group = row.symbol_px + (row.gap_px + text_width if text_width else 0.0)
+        left = area.x + (area.width - group) / 2.0
+        text_top = row.center_y - line / 2.0
+        symbol = QRectF(left, row.center_y - row.symbol_px / 2.0, row.symbol_px, row.symbol_px)
+        label_left = left + row.symbol_px + row.gap_px
+        return ContentLayout(
+            symbol=symbol,
+            label=label,
+            label_rect=QRectF(label_left, text_top, label_width, line),
+            detail=detail,
+            detail_rect=QRectF(label_left + label_width + gap, text_top, detail_width, line),
+        )
+
+    def _content_font(self, row: ContentRow) -> QFont:
+        font = QFont(self.font())
+        font.setPixelSize(max(round(row.label_px), 1))
+        return font
+
+    def _paint_content(self, painter: QPainter, content: NotchContent, row: ContentRow):
+        """Symbol, then the label and its detail if any, centred as one group in the row."""
+
+        layout = self.content_layout(content, row)
+        phase = self._clock.elapsed() / 1000.0
+        paint_symbol(painter, content.symbol, layout.symbol, CONTENT_COLOR, phase)
+        painter.setFont(self._content_font(row))
+        for text, rect, color in ((layout.label, layout.label_rect, CONTENT_COLOR),
+                                  (layout.detail, layout.detail_rect, DETAIL_COLOR)):
+            if text:
+                painter.setPen(color)
+                # One pixel of slack: the advance can round below what is drawn.
+                painter.drawText(rect.adjusted(0.0, 0.0, 1.0, 0.0), Qt.AlignVCenter | Qt.AlignLeft, text)

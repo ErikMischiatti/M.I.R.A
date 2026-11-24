@@ -102,7 +102,7 @@ def test_face_widget_drives_the_injected_controller(qt_application):
     try:
         assert widget.controller is controller
         before = controller.current_pose
-        widget.on_frame()
+        widget.animator.advance()
         assert controller.current_pose != before
     finally:
         widget.frame_timer.stop()

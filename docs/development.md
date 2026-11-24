@@ -41,6 +41,16 @@ and numpy versions:
 venv/bin/python -m pip install --constraint constraints.txt --editable ".[dev,camera]"
 ```
 
+Local voice activation (wake word, Silero speech detection) is the optional
+`voice` extra, also outside CI; its models are separate downloads
+([configuration.md](configuration.md#voice-engine-and-models)). Tests never
+need it: they use fake engines, and the few that exercise the real models
+skip when they are not installed.
+
+```bash
+venv/bin/python -m pip install --constraint constraints.txt --editable ".[dev,voice]"
+```
+
 For a runtime-only editable install within the supported ranges, without the
 tested lock or pytest:
 
@@ -73,6 +83,53 @@ the symlink. It preserves the caller's working directory, which the desktop
 actions use for the `current` alias and relative paths (see
 [configuration.md](configuration.md#desktop-actions)).
 
+### Notch launchers
+
+`MIRA` and `MIRA-NOTCH` are two ways into one M.I.R.A. runtime per user.
+The first one started becomes the runtime; a later one asks it to show its
+surface and exits immediately (`[mira] connected to the running M.I.R.A.
+(pid …)`), so starting `MIRA-NOTCH` while `MIRA` runs adds the notch to it,
+and the other way round. `MIRA-TUNE` is the standalone tuning tool and is
+not part of that runtime. All use the same `venv` and symlink resolution:
+
+| Command | Script | Runs |
+|---|---|---|
+| `MIRA` | `bin/mira` | `python -m mira.main`: show the main window (starting the runtime if needed). Closing the window ends the runtime unless a notch is open. |
+| `MIRA-NOTCH` | `bin/mira-notch` | `python -m mira.main --notch`: show the notch (starting the runtime if needed), with the saved configuration and real task, device and connectivity notices; double-click opens the main window, closing it leaves the notch running. Quit from the notch's own controls (right click) or Ctrl+C. |
+| `MIRA-TUNE` | `bin/mira-tune` | `python -m mira.ui.notch --tune`: a standalone notch (no application behind it) with its tuning window, which changes it live, previews notices and eye cues, and can Save, Reload and Reset defaults. Closing the window quits. |
+
+In a running M.I.R.A., `M` (in its windows, outside text fields) or
+`Ctrl+Alt+M` (anywhere) toggles listening: the notch opens and shows the
+microphone's real waveform. With wake-word activation chosen in the
+settings, saying the wake phrase does the same. A finished utterance is
+logged as `[listening] off: utterance ready (duration, samples, source)`;
+nothing transcribes it yet. Automated tests never open a microphone; they
+use fake capture backends.
+
+`python -m mira.ui.notch --notch-only` still shows the standalone notch
+without the tuning window, for development; it has no application and so no
+real notices.
+
+```bash
+ln -s "$PWD/bin/mira-notch" ~/.local/bin/MIRA-NOTCH
+ln -s "$PWD/bin/mira-tune" ~/.local/bin/MIRA-TUNE
+MIRA-TUNE --config /tmp/notch-experiment.json   # any other configuration file
+```
+
+The configuration file and its rules are in
+[configuration.md](configuration.md#notch).
+
+The runtime's lock and socket live in `$XDG_RUNTIME_DIR/mira` (else a
+private `/tmp/mira-<uid>`); a crash needs no cleanup. Tests point
+`XDG_RUNTIME_DIR` at a fresh directory each (`tests/conftest.py`), so they
+never reach a MIRA you are running.
+
+The system notices need, at run time: the kernel's
+uevent netlink socket (USB), `pw-dump` from PipeWire (audio devices) and
+NetworkManager on the system bus (connectivity). Each is optional. Tests use
+fakes for all of them and never need a device, an audio server, a bus or an
+X server.
+
 ## Repository layout
 
 ```text
@@ -87,9 +144,10 @@ mira/
 ├── application/  # construction and wiring
 ├── ui/           # Qt window, chat panel, debug drawer, face/ rendering
 ├── config/       # packaged expression profiles
+├── sounds/       # packaged UI sounds (rendered by scripts/generate_sounds.py)
 └── main.py       # process entry point
-bin/mira          # launcher script
-scripts/          # architecture checkers
+bin/mira          # launcher script; bin/mira-notch (ambient notch), bin/mira-tune (tuning)
+scripts/          # architecture checkers; generate_sounds.py renders mira/sounds/
 tests/            # pytest suite
 docs/             # technical documentation
 ```
@@ -138,6 +196,11 @@ Tests are grouped by boundary rather than by file:
 | Actions | `test_action_executor.py`, `test_action_execution_policy.py`, `test_action_contract_consistency.py`, `test_desktop_actions.py` |
 | Embodiment | `test_embodiment_*.py`, `test_micro_motion*.py`, `test_face_*.py`, `test_expression_store.py` |
 | Camera | `test_camera_*.py`, `test_opencv_camera.py` |
+| System events and notices | `test_system_event_adapters.py`, `test_notice_producers.py`, `test_usb_device_notices.py` |
+| Device information | `test_device_info_service.py`, `test_adb_provider.py`, `test_device_info_providers.py`, `test_device_info_notch.py` |
+| Notice priority | `test_notice_priority.py`, `test_notice_priority_notch.py` |
+| Countdown timer | `test_countdown_timer.py`, `test_notch_timer.py`, `test_timer_sound.py` |
+| Unified notch | `test_notch_unified.py` (the twelve integration scenarios, the timer as a band owner) |
 | Memory and messaging | `test_memory_contracts.py`, `test_messaging_contracts.py` |
 
 Shared test doubles live in `tests/doubles.py` (covered by
@@ -154,6 +217,204 @@ with `MIRA_CAMERA=1`, the debug drawer reports `active` with a sane size,
 quitting releases the device (another application can open it afterwards), and
 an invalid `MIRA_CAMERA_DEVICE` or a camera held by another application reports
 `unavailable` while the rest of the app keeps working.
+
+USB device notices need a manual check after changes to the USB source,
+the producers or the notch's notice path. The tests use a fake kernel
+(`tests/usb_doubles.py`: a sysfs tree and a socket pair), so only a real
+plug proves the kernel side. Quit any running MIRA first — a second launch
+only forwards to the running runtime, whose environment is the one that
+counts — then start it with the USB debug log, keeping only MIRA's own
+device and notice lines:
+
+```bash
+MIRA_DEVICE_MONITOR_DEBUG=1 venv/bin/python -m mira.main --notch 2>&1 \
+  | grep --line-buffered -E '^\[(devices|notices)\]' | tee usb-check.log
+```
+
+Ctrl+C quits through the orderly shutdown. Expected timings: an arrival
+shows about 0.8 s after the device is ready, an unplug about 2.5 s after it
+happens, and a notice stays `notice_duration_ms` (4 s by default).
+
+| # | Scenario | Do | Expect |
+|---|---|---|---|
+| 1 | Android smartphone | Plug in an unlocked phone; select *File transfer* | One expansion: phone symbol, "<name> connected", a brief smile; one `[devices] connected …: smartphone` line. After 4 s the notch is as before. Unplug: "<name> disconnected", same symbol, no smile. |
+| 2 | USB storage | Plug in a USB stick, wait, unplug | Storage symbol, "<name> connected"; later "<name> disconnected". No disconnect from mounting or the file manager opening. |
+| 3 | Rapid reconnect | Unplug and replug the phone in the same port within about 2 s; then do it 5 times in a row | Nothing at all, or — if a replug took longer than 2.5 s — a disconnect then a connect, never a burst. `[devices]` shows every remove and add. |
+| 4 | USB mode switching | With the phone connected, switch *File transfer* → *PTP* → *USB tethering/No data transfer* → *File transfer*, a few seconds apart; with developer options, toggle *USB debugging* | Nothing for switches between phone modes. From *No data transfer* (shown as an unknown USB device, named) to *File transfer*: once, "<name> connected" with the phone symbol. Note the time between `disconnected` and `connected` lines; above 2.5 s the switch shows as a disconnect and a connect. |
+| 5 | Connected during startup | (a) Leave the phone plugged in and start MIRA; (b) plug it in while MIRA is starting | (a) A `present at start …` line and no notice; unplugging later announces it. (b) Either the same as (a), or one arrival if it was still configuring (`configuring at start …`). Never two. |
+| 6 | Unplugged during the notch animation | Plug in, and unplug while the notch is still expanding or showing "connected" | About 2.5 s after the unplug the content becomes "<name> disconnected" (or, within the first 0.8 s, nothing at all is shown); the notch collapses 4 s later. No stuck expansion, no error. |
+| 7 | Monitoring disabled | Start with `MIRA_DEVICE_MONITOR=0` | `[notices] USB device monitoring disabled`; plugging shows nothing. |
+
+Without hardware, MIRA-TUNE's *Phone connected*, *Phone disconnected* and
+*Storage connected* previews go through the same presenter and eye path.
+
+**Notice priority, without hardware (MIRA-TUNE).** *Previews → Device
+scenario* plays scripted sequences on the real presenter and eyes, on real
+time (default notice duration 4 s; replaying a scenario cancels the one
+running). Expected, by eye:
+
+| Scenario | Expect |
+|---|---|
+| Connect, then info | "Google Pixel 8 connected" with the phone symbol and one brief smile; after ~1 s the same notice becomes "Pixel 8" + "84% · Charging" (reading in a quieter tone), no second smile, and stays its full time again. |
+| Battery after expiry | The arrival shows and closes; ~1 s after the notch is compact again it reopens once with "Pixel 8" + "84% · Charging", without a smile. |
+| Connect, then unplug | The arrival shows; after 1.5 s it is replaced by "Google Pixel 8 disconnected", no cue; it closes 4 s later. No stale "connected" afterwards. |
+| Device while listening | The eyes and notch go to listening at once; the phone (at 0.8 s) and its information (at 2 s) do **not** appear and the eyes do not smile; when listening ends (at 4.5 s) the notch stays open without a collapse and shows "Pixel 8" + "84% · Charging" with one smile. |
+| Two devices | The phone shows; the stick, 0.3 s later, waits; after the phone's 4 s the stick follows, the notch open throughout, one smile each. |
+| Long name | "Samsung Galaxy S24 …" — the name shortened, then "57% · Discharging" whole; nothing overlaps the symbol or leaves the notch. |
+
+Also check: an error preview (*Task failed*) during *Listening* (Activity
+row) takes the band and shows the cross eyes; *Idle* afterwards brings back
+anything that waited; *Thinking* holds notices back like *Listening*. Right
+click to open the controls, then play *Connect, then info*: nothing shows
+under the controls, and the phone appears when they close (use one, right
+click again, or move the pointer away for 1.5 s). Hover alone changes
+nothing. With the controls open, *Task failed* closes them and shows the
+error with the cross eyes. A long *Listening* (half a minute) followed by
+*Idle* still brings back a device that connected at its start.
+
+**Shutdown.** Start `MIRA`, then from another terminal `kill -TERM <pid>`:
+the log ends like Ctrl+C (no traceback), the process exits with status 0,
+`$XDG_RUNTIME_DIR/mira/runtime.sock` is gone and `pgrep -x pw-dump` shows
+no orphan. With an adb phone connected, stopping MIRA right after plugging
+it in returns at once rather than after adb's timeout.
+
+**Device information (optional, M2).** The providers are tested with
+scripted `adb` and `upower` output and a fake sysfs (`tests/adb_doubles.py`,
+`tests/usb_doubles.py`); a real phone needs a manual check. Start MIRA with
+the debug log as above; the `[devices] adb: …` / `[devices] upower: …`
+lines say what each provider read or why it read nothing. Nothing here is
+required: without it MIRA shows the connection notice only.
+
+*Android, battery through adb.* Needs, on the computer, `adb`
+(`sudo apt install adb`; MIRA never installs it) and permission to the
+phone's USB device (Ubuntu's `adb` package ships the udev rules; otherwise
+adb lists the phone with "no permissions"); on the phone, *Developer
+options → USB debugging* on, and the computer authorized ("Allow USB
+debugging?" → Allow).
+
+1. Without USB debugging: the phone offers no debug interface, MIRA runs
+   no command and shows only "<name> connected".
+2. With debugging but not yet authorized: "<name> connected", and the log
+   says the phone has not authorized this computer. Tap *Allow* within
+   about a minute: the notch shows "<model> — Battery N% — <state>".
+   After a minute without *Allow*, MIRA stops asking until the next plug.
+3. Verify the reading against the phone itself (status bar, or Settings →
+   Battery) and against adb directly:
+   `adb shell dumpsys battery | grep -E '^ +(level|scale|status|present|AC powered|USB powered):'`
+   (status 2 charging, 3 discharging, 4 not charging, 5 full). Use
+   `adb devices` without `-l` and do not share its output: the first
+   column is the serial.
+4. Charging and discharging: with `MIRA_DEVICE_INFO_REFRESH_S=30`, watch
+   the state change. On most phones a laptop port charges ("Charging");
+   *Settings → Battery → Charging optimization / limit to 80 %* or a full
+   battery gives "Not charging" or "Full". A change of charging state is
+   shown on its own; a percentage that only moves is not.
+5. Two Android phones at once: each gets its own reading, matched by port.
+
+*iPhone, battery through UPower.* Needs nothing beyond Ubuntu's own
+`upower` and `usbmuxd`; the iPhone unlocked and trusting this computer
+("Trust This Computer?" → Trust, then the passcode). Check what UPower
+itself reads, without serials:
+`upower --dump | grep -A12 '^ *phone$' | grep -E 'phone|present|state|percentage'`.
+MIRA's notice should match it. Untrusted: UPower lists no phone and MIRA
+shows only the connection.
+
+*USB storage capacity.* Plug in a stick: "<name> connected", then
+"<name> — <size>" once the disk appears (about a second). Compare with
+`lsblk -d -o NAME,SIZE,TRAN | grep usb` (which shows sizes in binary units:
+"58.6G" for a "64 GB" stick).
+
+**Diagnostics without serial numbers.** MIRA's `[devices]` lines carry the
+port, category, name, vendor:product id and interface classes, never a
+serial. The kernel's own messages are serial-free too — use `--kernel`, not
+`--udev`, whose events add `ID_SERIAL` from udev's database:
+
+```bash
+udevadm monitor --kernel --property --subsystem-match=usb | tee usb-uevents.log
+```
+
+What MIRA reads from sysfs for every connected device, without `serial`
+(do not use `lsusb -v`, which prints it):
+
+```bash
+for d in /sys/bus/usb/devices/*; do
+  n=${d##*/}; case $n in *:*|usb*) continue;; esac
+  printf '%s %s:%s cfg=%s "%s" "%s" |' "$n" "$(cat $d/idVendor)" "$(cat $d/idProduct)" \
+    "$(cat $d/bConfigurationValue)" "$(cat $d/manufacturer 2>/dev/null)" "$(cat $d/product 2>/dev/null)"
+  for i in $d/$n:*; do
+    printf ' %s/%s/%s(%s)' $(cat $i/bInterfaceClass $i/bInterfaceSubClass $i/bInterfaceProtocol) \
+      "$(cat $i/interface 2>/dev/null)"
+  done; echo
+done
+```
+
+Product strings are the device's own and may name its owner (a phone
+renamed "Anna's Pixel"); check a log before sharing it.
+
+## Integration lineage
+
+The unified notch is `integration/notch-unified`: the notch foundation, the
+device line and the countdown timer, joined by one merge.
+
+```text
+origin/main b192ae7
+└─ main 5be4131 (+17, local)          micro-motions, camera
+   └─ feat/notch-embodiment-ui 48d1ac6 (+55)   notch, runtime, audio, voice activation
+      ├─ M1  0bec659  USB detection and stabilization
+      │  └─ M2  84ec4d5  device information providers
+      │     └─ M3  2f3d1a3  notice priority, name + detail
+      │        └─ M4  5940ec4  band floor, thinking in the turn   (fix/notch-notice-floor)
+      │           └─ M4.1 e5c8dda  expiration, critical vs band, SIGTERM, cancellation
+      │                            (fix/notch-integration-hardening)
+      └─ feat/notch-timer 88f6b1b, 102e832   countdown timer
+                     ╲
+                      merge → integration/notch-unified
+```
+
+`validate/m3-timer-integration` and `validate/m41-integration-candidate`
+were rehearsals of this merge with an uncommitted copy of the timer; they
+are evidence, not part of the lineage. The merge commit lists every
+conflict and how it was resolved; `tests/test_notch_unified.py` pins the
+semantic part (the timer's panels as content-band owners).
+
+## Acceptance testing of the unified notch
+
+Quit any running MIRA first (a second launch only forwards to it). From
+the repository root, with the environment from [Environment](#environment):
+
+```bash
+MIRA_DEVICE_MONITOR_DEBUG=1 venv/bin/python -m mira.main --notch 2>&1 \
+  | grep --line-buffered -E '^\[(devices|notices|mira)\]' | tee notch-acceptance.log
+```
+
+`MIRA-TUNE` (`bin/mira-tune`) opens the same notch with the tuning window
+and its *Device scenario* previews, for checks that need no hardware.
+
+| Area | Check | Expect |
+|---|---|---|
+| Timer | Right click → *Timer*; choose 1 min with − / presets; *Start* | The panel closes on start; hovering shows the time left counting down |
+| Timer | Let it finish | The notch expands with "Timer done!" and *OK*, the eyes hold a smile, one chime; *OK* collapses it |
+| Timer | Pause, resume, reset from the panel | The readout follows; reset returns to choosing |
+| USB | Plug in a USB stick | One notice, storage symbol, "<name> connected", then "<name> <size>"; a brief smile once |
+| USB | Unplug it | "<name> disconnected" about 2.5 s later, no smile |
+| USB + timer | Plug it in while "Timer done!" shows | Nothing until *OK*; then the stick's notice, greeted once |
+| Device information | iPhone (below) | "iPhone" + "N% · <state>" matching the phone |
+| Voice | Ctrl+Alt+M (or the configured key), speak, stop | The waveform shows; a device plugged in meanwhile appears only after listening ends |
+| Errors | MIRA-TUNE *Task failed* while "Timer done!" shows, and while the controls are open | The error shows with cross eyes; "Timer done!" returns after it; the controls are closed by it |
+| Eyes | Throughout | A smile when a device notice appears (not when it waits), none for a departure or for battery updates; cross eyes for errors |
+| Shutdown | `kill -TERM <pid>` (or Ctrl+C, or *Quit*) | Exit status 0, no traceback, `$XDG_RUNTIME_DIR/mira/runtime.sock` gone, no `pw-dump` left (`pgrep -x pw-dump`) |
+| Shutdown | Quit right after plugging in an adb phone, or while a timer runs | Returns at once |
+
+**iPhone battery (UPower).** Unlock the iPhone, connect it, accept "Trust
+This Computer?" and enter the passcode. Within a few seconds the notch
+shows "iPhone" and "N% · Charging" (or Full/Not charging). Compare with
+what UPower itself reads, without serial numbers:
+`upower --dump | grep -A12 '^ *phone$' | grep -E 'phone|present|state|percentage'`.
+Untrusted, UPower lists no phone and only the connection notice appears;
+the debug log says so (`[devices] upower: …`).
+
+Offscreen rendering (`QT_QPA_PLATFORM=offscreen`) checks layout and state,
+not how the desktop composites the notch; only a live run does that.
 
 ## Dependencies
 

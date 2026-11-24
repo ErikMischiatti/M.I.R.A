@@ -147,16 +147,24 @@ _PHASE_STEP = 0.05
 _SPEAKING_PHASE_STEP = 0.22
 
 
+# The thinking drift swings between these offsets; the speaking pulse adds at
+# most this much height. Named so that motion bounds can be derived from them.
+THINKING_DRIFT_RANGE = (-16.0, 0.0)
+SPEAKING_PULSE_MAX = 0.16
+
+
 def thinking_drift(phase: float) -> float:
     """Horizontal offset of the slow sideways glance while thinking."""
 
-    return -8.0 + 8.0 * math.sin(phase * 0.35)
+    low, high = THINKING_DRIFT_RANGE
+    middle, amplitude = (low + high) / 2.0, (high - low) / 2.0
+    return middle + amplitude * math.sin(phase * 0.35)
 
 
 def speaking_pulse(phase: float) -> float:
     """Height added by the rhythmic widening while speaking."""
 
-    return 0.16 * abs(math.sin(phase))
+    return SPEAKING_PULSE_MAX * abs(math.sin(phase))
 
 
 def gaze_deformation(offset_x: float, offset_y: float) -> tuple[float, float]:

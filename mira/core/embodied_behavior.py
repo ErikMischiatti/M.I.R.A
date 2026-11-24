@@ -37,6 +37,7 @@ class EmbodiedBehavior:
         self.decay_active = False
         self.input_has_focus = False
         self.input_has_text = False
+        self.voice_listening = False
 
         self._register_subscribers()
 
@@ -47,8 +48,8 @@ class EmbodiedBehavior:
         self.event_bus.subscribe("input_focused", self.on_input_focused)
         self.event_bus.subscribe("input_unfocused", self.on_input_unfocused)
         self.event_bus.subscribe("input_text_changed", self.on_input_text_changed)
+        self.event_bus.subscribe("listening_changed", self.on_listening_changed)
 
-        
 
     def on_intent_inferred(self, intent: IntentResult) -> None:
         """
@@ -109,5 +110,8 @@ class EmbodiedBehavior:
         text = text or ""
         self.input_has_text = bool(text.strip())
 
+    def on_listening_changed(self, status) -> None:
+        self.voice_listening = bool(getattr(status, "listening", False))
+
     def _should_return_to_listening(self) -> bool:
-        return self.input_has_focus or self.input_has_text
+        return self.input_has_focus or self.input_has_text or self.voice_listening

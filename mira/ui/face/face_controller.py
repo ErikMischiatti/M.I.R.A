@@ -1,3 +1,5 @@
+import dataclasses
+
 from mira.ui.face.expression_store import load_expression_library, reset_expression
 from mira.domain.attention import AttentionTarget
 from mira.domain.embodiment import (
@@ -6,6 +8,7 @@ from mira.domain.embodiment import (
     ExpressionKey,
     resolve_expression_key,
 )
+from mira.domain.embodiment_cue import ConditionPlayback, CuePlayback, EmbodimentCondition, EmbodimentCue
 from mira.domain.embodiment_frame import EmbodimentFrame, frame_from_definition
 from mira.domain.embodiment_playback import (
     EmbodimentPlayback,
@@ -30,6 +33,15 @@ class FaceController:
     Each controller owns its `MicroMotions`; pass one seeded with a
     `random.Random` for reproducible motion. An instance must not be shared
     between controllers, since each steps it once per frame.
+
+    A semantic cue (`show_cue`, `mira.domain.embodiment_cue`) overlays the
+    frame for a moment without touching the intent, the expression or the
+    motions: when it ends the frame is the current expression again. Its
+    lifetime advances with `update`, so it needs no timer of its own.
+
+    A condition (`set_condition`) is the persistent layer between the two:
+    shown for as long as it holds. A showing cue wins over it; the expression
+    lies under both (see `mira.domain.embodiment_cue`).
     """
 
     def __init__(self, motions: MicroMotions | None = None):
@@ -45,6 +57,8 @@ class FaceController:
         self._playback = EmbodimentPlayback()
         self._base_pose = PlaybackPose()
         self._asymmetry = EyeAsymmetry()
+        self._cue = CuePlayback()
+        self._conditions = ConditionPlayback()
 
         self.apply_profile()
 
@@ -86,7 +100,27 @@ class FaceController:
     def clear_attention_target(self):
         self._motions.clear_attention_target()
 
+    @property
+    def active_cue(self) -> EmbodimentCue | None:
+        return self._cue.cue
+
+    def show_cue(self, cue: EmbodimentCue) -> bool:
+        """Overlay ``cue``; False if a higher-priority cue is playing."""
+        return self._cue.show(cue)
+
+    def clear_cue(self):
+        self._cue.clear()
+
+    @property
+    def conditions(self) -> frozenset[EmbodimentCondition]:
+        return self._conditions.active
+
+    def set_condition(self, condition: EmbodimentCondition, active: bool):
+        self._conditions.set(condition, active)
+
     def update(self, dt_seconds: float):
+        self._cue.advance(dt_seconds)
+        self._conditions.advance(dt_seconds)
         motion = self._motions.step()
         self._playback.advance(
             motion.apply_to(self._base_pose),
@@ -114,10 +148,22 @@ class FaceController:
     def get_frame(self) -> EmbodimentFrame:
         """Snapshot the fully resolved instantaneous pose for any renderer."""
 
-        return self._playback.get_frame(
+        frame = self._playback.get_frame(
             asymmetry=self._asymmetry,
             left_eye_closed=self.eyes_closed,
             right_eye_closed=self.eyes_closed,
+        )
+        # A showing cue, else the strongest condition, else the expression.
+        if self._cue.amount > 0.0:
+            layer = self._cue
+        elif self._conditions.amount > 0.0:
+            layer = self._conditions
+        else:
+            return frame
+        cue = {"shape": layer.shape, "shape_amount": layer.amount}
+        return EmbodimentFrame(
+            left_eye=dataclasses.replace(frame.left_eye, **cue),
+            right_eye=dataclasses.replace(frame.right_eye, **cue),
         )
 
     def refresh_profile_targets(self):

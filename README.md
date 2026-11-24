@@ -31,6 +31,18 @@ expresses what it is doing.
   applications, and allowed directories, notifications, and system info. Every
   action passes an explicit execution policy. Actions that require confirmation
   are blocked because no confirmation flow exists yet.
+- **Ambient notch** (`MIRA-NOTCH`): MIRA's eyes in a small notch at the top
+  of the screen, on every X11 workspace. It expands on hover and for real
+  notices — action results, USB and audio devices, network connectivity —
+  and the eyes react to success, warnings and errors, and narrow while MIRA
+  is working on a task. Press `Ctrl+Alt+M` (or `M` in its window) and MIRA
+  listens: the notch opens and shows the microphone's real waveform. With
+  the optional voice engine, a wake word ("mira" by default, configurable)
+  starts listening instead, detected locally. MIRA notices when you start
+  and stop speaking and hands the utterance on; there is no speech
+  recognition yet. `MIRA` and `MIRA-NOTCH` share one runtime per user:
+  the second only asks the first to show its surface. Double-click the notch
+  to open the main window. Tunable with `MIRA-TUNE`.
 - **Debug drawer**: hidden by default. It offers live tuning of expression
   geometry, animation, and blink parameters, with save/reload of the profile
   file, and shows the camera status.

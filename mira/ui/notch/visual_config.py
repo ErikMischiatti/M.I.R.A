@@ -1,0 +1,237 @@
+"""Qt-free notch visual configuration and the rule that keeps eyes unclipped.
+
+`NotchVisualConfig` bundles every visual parameter the notch takes at run
+time. Its fields already reject impossible values on construction (negative
+sizes, a radius that does not fit, an expanded notch smaller than the compact
+one). `visual_config_problems` adds the rule that depends on all of them
+together and on the embodiment's motion:
+
+    For COMPACT and EXPANDED, and every size between them, each eye's complete
+    motion envelope lies inside the notch's safe region: the drawn outline,
+    flat top and rounded lower corners, inset by `SAFE_MARGIN_PX`.
+
+A configuration that breaks the rule is invalid, not repaired: no eye is ever
+moved, shrunk or clipped to make it fit. The eyes' layout is identical for
+every presence (`notch_eye_layout`), so the rule is checked once per notch
+size against one fixed layout.
+
+Showing and hiding grow the notch out of, and back into, the top edge: those
+transitions cut through the eyes by design and are not covered.
+
+The expanded content (`NotchContentStyle`) is checked too, at EXPANDED: it
+must end inside the safe region and its symbol must fit between the rounded
+corners (`expanded_layout.content_problems`). It is placed below the eyes'
+whole motion envelope, so it can never overlap a reachable eye pose. Mid
+transition the content is revealed by the growing outline and faded by the
+reveal fraction, by design, so it is not checked there.
+"""
+
+from __future__ import annotations
+
+import math
+from dataclasses import dataclass, field
+
+from mira.domain.motion_envelope import PoseEnvelope
+from mira.ui.notch.expanded_layout import ContentRow, NotchContentStyle, content_problems, content_row
+from mira.ui.notch.eye_layout import NotchEyeLayout, NotchEyeStyle, notch_eye_layout, production_envelope
+from mira.ui.notch.presence import (
+    NotchGeometry,
+    NotchPresence,
+    NotchShape,
+    NotchSize,
+    Rect,
+    window_shape_for_size,
+)
+
+
+# The eyes keep this far inside the drawn outline: their antialiased edge
+# spreads about half a pixel, and the window's input mask hugs the outline.
+SAFE_MARGIN_PX = 1.0
+
+# How many sizes between COMPACT and EXPANDED are checked besides the two
+# ends. The blend is linear in width, height and radius.
+TRANSITION_SAMPLES = 16
+
+MAX_TRANSITION_DURATION_MS = 5000
+
+DEFAULT_TRANSITION_DURATION_MS = 200
+
+
+@dataclass(frozen=True, slots=True)
+class NotchVisualConfig:
+    """Everything visual the notch can be tuned in; defaults are production."""
+
+    geometry: NotchGeometry = field(default_factory=NotchGeometry)
+    eye_style: NotchEyeStyle = field(default_factory=NotchEyeStyle)
+    transition_duration_ms: int = DEFAULT_TRANSITION_DURATION_MS
+    content_style: NotchContentStyle = field(default_factory=NotchContentStyle)
+
+    def __post_init__(self):
+        duration = self.transition_duration_ms
+        if isinstance(duration, bool) or not isinstance(duration, int):
+            raise ValueError(f"transition duration must be whole milliseconds, got {duration!r}")
+        if not 0 <= duration <= MAX_TRANSITION_DURATION_MS:
+            raise ValueError(
+                f"transition duration must be within 0..{MAX_TRANSITION_DURATION_MS} ms, got {duration}"
+            )
+
+
+class InvalidVisualConfig(ValueError):
+    """A configuration whose eye motion cannot fit the notch."""
+
+    def __init__(self, problems: list[str]):
+        super().__init__("; ".join(problems))
+        self.problems = problems
+
+
+def nominal_window(geometry: NotchGeometry) -> Rect:
+    """The window-local frame the notch is drawn in, independent of screens.
+
+    The window is the expanded notch rounded up to whole pixels; screens
+    larger than the notch never change it.
+    """
+
+    return Rect(0.0, 0.0, float(math.ceil(geometry.expanded.width)), float(math.ceil(geometry.expanded.height)))
+
+
+def safe_region(shape: NotchShape, margin: float = SAFE_MARGIN_PX) -> NotchShape:
+    """``shape`` inset by ``margin`` on every side; the radius shrinks with it."""
+
+    bounds = shape.bounds
+    width = max(bounds.width - 2.0 * margin, 0.0)
+    height = max(bounds.height - 2.0 * margin, 0.0)
+    return NotchShape(
+        bounds=Rect(bounds.x + margin, bounds.y + margin, width, height),
+        corner_radius=max(min(shape.corner_radius - margin, width / 2.0, height / 2.0), 0.0),
+    )
+
+
+def overflow(rect: Rect, region: NotchShape) -> list[str]:
+    """How ``rect`` leaves ``region``, a notch outline; empty when inside.
+
+    Exact for a rectangle in a shape with a flat top and rounded lower
+    corners: within the bounds, a rectangle can only leave through a lower
+    corner, and then its own nearest corner is the point furthest outside.
+    """
+
+    bounds, radius = region.bounds, region.corner_radius
+    problems = []
+    for name, excess in (
+        ("top", bounds.y - rect.y),
+        ("bottom", rect.bottom - bounds.bottom),
+        ("left", bounds.x - rect.x),
+        ("right", rect.right - bounds.right),
+    ):
+        if excess > 1e-9:
+            problems.append(f"{name} edge by {excess:.2f} px")
+    if problems or radius <= 0:
+        return problems
+
+    corner_y = bounds.bottom - radius
+    for name, corner_x, x in (
+        ("lower-left", bounds.x + radius, rect.x),
+        ("lower-right", bounds.right - radius, rect.right),
+    ):
+        outside_x = corner_x - x if name == "lower-left" else x - corner_x
+        outside_y = rect.bottom - corner_y
+        if outside_x > 0 and outside_y > 0:
+            excess = math.hypot(outside_x, outside_y) - radius
+            if excess > 1e-9:
+                problems.append(f"{name} corner by {excess:.2f} px")
+    return problems
+
+
+def eye_layout_for(config: NotchVisualConfig, envelope: PoseEnvelope) -> NotchEyeLayout:
+    return notch_eye_layout(config.geometry, nominal_window(config.geometry), config.eye_style, envelope)
+
+
+def eye_motion_bottom(layout: NotchEyeLayout, envelope: PoseEnvelope) -> float:
+    """The lowest point either eye can reach, in the layout's window pixels."""
+    return max(layout.motion_bounds(side, envelope).bottom for side in ("left", "right"))
+
+
+def content_row_for(config: NotchVisualConfig, envelope: PoseEnvelope | None = None) -> ContentRow:
+    """Where ``config`` puts the expanded content in its nominal window."""
+
+    envelope = production_envelope() if envelope is None else envelope
+    layout = eye_layout_for(config, envelope)
+    return content_row(nominal_window(config.geometry), config.geometry, config.content_style,
+                       eye_motion_bottom(layout, envelope))
+
+
+def _checked_sizes(geometry: NotchGeometry) -> list[tuple[str, NotchSize]]:
+    compact, expanded = geometry.size_for(NotchPresence.COMPACT), geometry.size_for(NotchPresence.EXPANDED)
+    sizes = [("COMPACT", compact), ("EXPANDED", expanded)]
+    for step in range(1, TRANSITION_SAMPLES):
+        progress = step / TRANSITION_SAMPLES
+        sizes.append((f"COMPACT→EXPANDED at {progress:.0%}", compact.lerp(expanded, progress)))
+    return sizes
+
+
+def visual_config_problems(config: NotchVisualConfig, envelope: PoseEnvelope | None = None) -> list[str]:
+    """Why ``config`` would clip the eyes; empty for a valid configuration.
+
+    ``envelope`` is the embodiment's motion envelope, by default that of the
+    packaged expression profiles.
+    """
+
+    envelope = production_envelope() if envelope is None else envelope
+    window = nominal_window(config.geometry)
+    layout = eye_layout_for(config, envelope)
+    eyes = {side: layout.motion_bounds(side, envelope) for side in ("left", "right")}
+
+    problems = []
+    for label, size in _checked_sizes(config.geometry):
+        region = safe_region(window_shape_for_size(window, config.geometry, size))
+        for side, bounds in eyes.items():
+            excess = overflow(bounds, region)
+            if excess:
+                problems.append(f"{label}: {side} eye motion leaves the safe area ({', '.join(excess)})")
+        if problems:
+            # The first size that fails says enough; the rest repeat it.
+            break
+    row = content_row(window, config.geometry, config.content_style, eye_motion_bottom(layout, envelope))
+    problems += content_problems(row, config.geometry)
+    return problems
+
+
+# How tall an expanded notch may grow to make room for its content.
+MAX_FITTED_EXPANDED_HEIGHT = 600.0
+
+
+def fit_expanded_to_content(config: NotchVisualConfig, envelope: PoseEnvelope | None = None) -> NotchVisualConfig:
+    """``config`` with an expanded notch just tall (and wide) enough for its content.
+
+    Only grows, and only the expanded size: the compact notch, the eyes and
+    every other value stay as they are. Used when an older file is lifted to
+    the readable floor, so its content fits instead of making it invalid.
+    Returns ``config`` unchanged when the content already fits.
+    """
+
+    envelope = production_envelope() if envelope is None else envelope
+    geometry = config.geometry
+    expanded = geometry.expanded
+    style = config.content_style
+    width_needed = style.symbol_px + 2.0 * (expanded.corner_radius + 8.0 + 1.0)
+    width = max(expanded.width, math.ceil(width_needed))
+    height = expanded.height
+    while True:
+        candidate_size = NotchSize(width, height, min(expanded.corner_radius, width / 2.0, height / 2.0))
+        candidate = NotchVisualConfig(
+            NotchGeometry(geometry.compact, candidate_size, geometry.top_margin, geometry.offset_x),
+            config.eye_style, config.transition_duration_ms, style,
+        )
+        if not content_problems(content_row_for(candidate, envelope), candidate.geometry):
+            return candidate if candidate_size != expanded else config
+        if height >= MAX_FITTED_EXPANDED_HEIGHT:
+            return candidate
+        height = float(math.floor(height) + 1)
+
+
+def validate_visual_config(config: NotchVisualConfig, envelope: PoseEnvelope | None = None) -> NotchVisualConfig:
+    """Return ``config`` if valid; raise `InvalidVisualConfig` otherwise."""
+
+    problems = visual_config_problems(config, envelope)
+    if problems:
+        raise InvalidVisualConfig(problems)
+    return config

@@ -159,5 +159,19 @@ class GazeAttention:
         return math.copysign(abs(value) ** self._CURVE, value)
 
 
+def gaze_reach(weight: float) -> tuple[float, float]:
+    """The largest offset magnitudes a gaze at ``weight`` can produce.
+
+    The shaped look is limited to the unit disc, and the scrutiny orbit is
+    added on top of that, so each axis reaches at most its strength times one
+    plus its orbit radius.
+    """
+
+    return (
+        GAZE_STRENGTH_X * (1.0 + GazeAttention._SCRUTINY_RADIUS_X) * weight,
+        GAZE_STRENGTH_Y * (1.0 + GazeAttention._SCRUTINY_RADIUS_Y) * weight,
+    )
+
+
 def _lerp(current: float, target: float, alpha: float) -> float:
     return current + (target - current) * alpha

@@ -142,6 +142,13 @@ def test_absent_variables_select_the_production_defaults():
 
     assert camera_configuration_from_environment() == CameraConfiguration()
 
+    # Without MIRA_NOTCH_CONFIG the notch configuration lives under XDG.
+    from mira.ui.notch.config_store import config_path_from, default_config_path
+
+    assert default_config_path() == config_path_from(
+        explicit=None, xdg_config_home=os.getenv("XDG_CONFIG_HOME"), home=pathlib.Path.home()
+    )
+
 
 # --- the references the shared infrastructure documents itself with -----
 

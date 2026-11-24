@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import itertools
 import logging
+from dataclasses import replace
 from typing import Any, TYPE_CHECKING
 
 from mira.actions.action_models import ActionRequest, ActionResult
@@ -27,6 +29,9 @@ class ActionExecutor:
         self.registry = registry
         self.event_bus = event_bus
         self.policy = ActionExecutionPolicy(registry)
+        # One id per execution that actually starts. Lets observers tell
+        # overlapping executions apart once execution is not synchronous.
+        self._run_ids = itertools.count(1)
 
     def execute(self, request: ActionRequest | Any) -> ActionResult:
         validation_error = self._validate_request(request)
@@ -56,13 +61,15 @@ class ActionExecutor:
             self._emit("action_failed", result)
             return result
 
-        logger.info("Action started: %s", action_name)
+        run_id = next(self._run_ids)
+        request.run_id = run_id
+        logger.info("Action started: %s (run %d)", action_name, run_id)
 
         self._emit("action_started", request)
 
         try:
             raw_result = handler(request.parameters)
-            result = self._normalize_result(action_name, raw_result)
+            result = replace(self._normalize_result(action_name, raw_result), run_id=run_id)
 
             if result.success:
                 logger.info("Action completed: %s", action_name)
@@ -79,6 +86,7 @@ class ActionExecutor:
                 action_name=action_name,
                 message=f"Errore durante l'esecuzione di '{action_name}': {exc}",
                 data={"reason": "action_exception"},
+                run_id=run_id,
             )
 
             logger.exception("Action failed with exception: %s", action_name)

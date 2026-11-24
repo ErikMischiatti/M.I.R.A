@@ -95,6 +95,10 @@ def test_frame_contains_no_color_timing_or_cognitive_fields():
         "tired_lid",
         "angry_lid",
         "happy_lid",
+        # A semantic cue reaches the frame only as drawn geometry: which
+        # shape the eye takes and how far it has appeared, never the cue.
+        "shape",
+        "shape_amount",
     }
 
 
