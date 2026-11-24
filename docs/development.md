@@ -13,10 +13,10 @@ codebase are in [`mira/AGENTS.md`](../mira/AGENTS.md).
 
 Supported: Python 3.12 on Linux (the only combination CI validates;
 `requires-python` is `>=3.12,<3.13`). Qt needs the EGL runtime; on Ubuntu,
-`sudo apt-get install libegl1` if PySide6 fails to load.
+`sudo apt-get install libegl1 libpulse0` if PySide6 fails to load.
 
 ```bash
-git clone https://github.com/ErikMischiatti/H.A.R.O..git M.I.R.A.
+git clone https://github.com/ErikMischiatti/M.I.R.A.git M.I.R.A.
 cd M.I.R.A.
 python3.12 -m venv venv
 venv/bin/python -m pip install --requirement requirements.txt
@@ -479,3 +479,10 @@ Dependency upgrades are intentional changes:
   effects (see [architecture.md](architecture.md#4-interaction-flow)).
 - Register every action with an explicit contract.
 - Do not change `mira/config/expression_profiles.json` unintentionally.
+
+## Branch workflow
+
+Use `main` for the verified baseline, `feat/<name>` and `fix/<name>` for
+short lived development, `exp/<name>` for experiments, and `integration/<name>`
+for temporary reconciliation. No permanent develop branch is needed.
+Consult [consolidation.md](consolidation.md) before deleting historical branches.

@@ -167,7 +167,11 @@ def test_the_window_shows_perception_beside_the_camera(monkeypatch):
         camera_source=FakeCameraSource(),
         person_detector=FakePersonDetector(),
     )
-    window = MainWindow(application)
+    from mira.ui.face.face_animator import FaceAnimator
+    from mira.ui.face.face_controller import FaceController
+
+    animator = FaceAnimator(FaceController())
+    window = MainWindow(application, animator)
     try:
         panel = window.debug_panel
         assert panel.camera_status_label.text() == "Stopped"

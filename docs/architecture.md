@@ -1480,3 +1480,14 @@ but no current event requests them. A future embodiment or notch interface
 would consume the same `VocalIntent` vocabulary by calling
 `VoiceController.vocalize` from its own observer, without the voice depending
 on that interface.
+
+## Consolidated service composition
+
+The unified desktop graph also owns optional human perception and nonverbal
+voice synthesis. Capture and playback use separate adapter implementations:
+`QtAudioCaptureBackend` in `qt_audio.py`, `QtAudioOutput` in
+`qt_voice_output.py` (re-exported by `qt_audio.py` for compatibility).
+All services share the single application scheduler and event bus. Listening
+releases audio before shutdown; perception stops before camera capture; voice,
+notices, device queries and timers stop before the scheduler. See
+[consolidation.md](consolidation.md) for integration history and retained work.

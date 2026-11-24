@@ -72,6 +72,9 @@ except AudioOutputError:
 
 
 def test_no_device_is_unavailable_and_play_raises_the_port_error():
+    # This case substitutes a Qt device and needs the native Multimedia library.
+    # Other cases still exercise graceful degradation without that library.
+    pytest.importorskip("PySide6.QtMultimedia", exc_type=ImportError)
     out = assert_ok(run_case("""
 from PySide6 import QtMultimedia
 from PySide6.QtMultimedia import QAudioDevice

@@ -42,3 +42,6 @@ mira_voice_demo/
 mira_voice_demo_v2/
 mira_voice_demo_ab/
 mira_voice_presets/
+
+# Local consolidation recovery bundle (never publish)
+.mira-recovery/

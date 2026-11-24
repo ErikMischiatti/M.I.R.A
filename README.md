@@ -178,3 +178,5 @@ are listed in [docs/architecture.md](docs/architecture.md#14-intended-future-bou
 ## License
 
 MIT. See [LICENSE](LICENSE).
+
+Repository history, retained experiments and recovery: [consolidation report](docs/consolidation.md).
