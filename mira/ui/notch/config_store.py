@@ -131,7 +131,7 @@ def default_config_path() -> Path:
 
     return config_path_from(
         explicit=os.getenv(CONFIG_PATH_ENV),
-        xdg_config_home=os.getenv("XDG_CONFIG_HOME"),
+        xdg_config_home=(os.getenv("APPDATA") if os.name == "nt" else os.getenv("XDG_CONFIG_HOME")),
         home=Path.home(),
     )
 

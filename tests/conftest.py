@@ -114,3 +114,8 @@ def isolate_runtime_directory(monkeypatch: pytest.MonkeyPatch, tmp_path_factory)
     directory = tmp_path_factory.mktemp("xdg-runtime")
     directory.chmod(0o700)
     monkeypatch.setenv("XDG_RUNTIME_DIR", str(directory))
+    if sys.platform == "win32":
+        # Named-pipe/lock identity must also be isolated from a real native
+        # runtime. Windows uses per-user application data rather than XDG.
+        monkeypatch.setenv("LOCALAPPDATA", str(directory))
+        monkeypatch.setenv("APPDATA", str(directory))

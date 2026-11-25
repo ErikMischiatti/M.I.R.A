@@ -28,6 +28,8 @@ from pathlib import Path
 from PySide6.QtCore import QSocketNotifier, QTimer
 from PySide6.QtWidgets import QApplication
 
+from mira.ui.desktop.platform import configure_desktop_platform
+
 from mira.application.audio import desktop_audio_backend, desktop_sound_output
 from mira.application.voice import configure_listening
 from mira.application.composition import (
@@ -71,6 +73,17 @@ def quit_on_interrupt(app: QApplication) -> tuple[socket.socket, socket.socket] 
     life of the event loop; None if neither signal is handled.
     """
 
+    if os.name == "nt":
+        # Python signals are dispatched only between Qt callbacks on Windows.
+        # A small Qt heartbeat lets Ctrl+C request the normal shutdown path;
+        # set_wakeup_fd/QSocketNotifier is a Unix signal mechanism.
+        timer = QTimer(app)
+        timer.timeout.connect(lambda: None)
+        timer.start(100)
+        for sig in (signal.SIGINT, signal.SIGTERM):
+            if signal.getsignal(sig) is not signal.SIG_IGN:
+                signal.signal(sig, lambda *_: app.quit())
+        return None
     handled = [sig for sig in (signal.SIGINT, signal.SIGTERM) if signal.getsignal(sig) is not signal.SIG_IGN]
     if not handled:
         return None
@@ -156,6 +169,7 @@ def main(argv: list[str] | None = None, *, claim=claim_runtime):
     primary = outcome
     print(f"[mira] primary runtime (pid {os.getpid()}); requests on {primary.socket_path}")
 
+    configure_desktop_platform()
     app = QApplication(sys.argv[:1] + qt_arguments)
 
     # Composition runs on the Qt main thread, before any widget exists.
@@ -221,6 +235,17 @@ def main(argv: list[str] | None = None, *, claim=claim_runtime):
     server.listen()
     print("[mira] ready: listening for surface requests")
     sys.exit(app.exec())
+
+
+def notch_main():
+    """Installed MIRA-NOTCH command on every supported OS."""
+    main(["--notch", *sys.argv[1:]])
+
+
+def tune_main():
+    """Installed MIRA-TUNE command on every supported OS."""
+    from mira.ui.notch.__main__ import main as tune
+    tune(["--tune", *sys.argv[1:]])
 
 
 if __name__ == "__main__":

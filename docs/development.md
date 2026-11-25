@@ -72,9 +72,9 @@ directory, and prints setup instructions if `venv` is missing. Link it onto
 `PATH` once:
 
 ```bash
-ln -s "$PWD/bin/mira" ~/.local/bin/MIRA
-MIRA
-MIRA_INTENT_ENGINE=llm MIRA
+ln -s "$PWD/bin/mira" ~/.local/bin/mira
+mira
+MIRA_INTENT_ENGINE=llm mira
 ```
 
 The launcher resolves the repository through the symlink, so source-only pulls
@@ -85,18 +85,18 @@ actions use for the `current` alias and relative paths (see
 
 ### Notch launchers
 
-`MIRA` and `MIRA-NOTCH` are two ways into one M.I.R.A. runtime per user.
+`mira` and `mira-notch` are two ways into one M.I.R.A. runtime per user.
 The first one started becomes the runtime; a later one asks it to show its
 surface and exits immediately (`[mira] connected to the running M.I.R.A.
-(pid …)`), so starting `MIRA-NOTCH` while `MIRA` runs adds the notch to it,
-and the other way round. `MIRA-TUNE` is the standalone tuning tool and is
+(pid …)`), so starting `mira-notch` while `mira` runs adds the notch to it,
+and the other way round. `mira-tune` is the standalone tuning tool and is
 not part of that runtime. All use the same `venv` and symlink resolution:
 
 | Command | Script | Runs |
 |---|---|---|
-| `MIRA` | `bin/mira` | `python -m mira.main`: show the main window (starting the runtime if needed). Closing the window ends the runtime unless a notch is open. |
-| `MIRA-NOTCH` | `bin/mira-notch` | `python -m mira.main --notch`: show the notch (starting the runtime if needed), with the saved configuration and real task, device and connectivity notices; double-click opens the main window, closing it leaves the notch running. Quit from the notch's own controls (right click) or Ctrl+C. |
-| `MIRA-TUNE` | `bin/mira-tune` | `python -m mira.ui.notch --tune`: a standalone notch (no application behind it) with its tuning window, which changes it live, previews notices and eye cues, and can Save, Reload and Reset defaults. Closing the window quits. |
+| `mira` | `bin/mira` | `python -m mira.main`: show the main window (starting the runtime if needed). Closing the window ends the runtime unless a notch is open. |
+| `mira-notch` | `bin/mira-notch` | `python -m mira.main --notch`: show the notch (starting the runtime if needed), with the saved configuration and real task, device and connectivity notices; double-click opens the main window, closing it leaves the notch running. Quit from the notch's own controls (right click) or Ctrl+C. |
+| `mira-tune` | `bin/mira-tune` | `python -m mira.ui.notch --tune`: a standalone notch (no application behind it) with its tuning window, which changes it live, previews notices and eye cues, and can Save, Reload and Reset defaults. Closing the window quits. |
 
 In a running M.I.R.A., `M` (in its windows, outside text fields) or
 `Ctrl+Alt+M` (anywhere) toggles listening: the notch opens and shows the
@@ -111,9 +111,9 @@ without the tuning window, for development; it has no application and so no
 real notices.
 
 ```bash
-ln -s "$PWD/bin/mira-notch" ~/.local/bin/MIRA-NOTCH
-ln -s "$PWD/bin/mira-tune" ~/.local/bin/MIRA-TUNE
-MIRA-TUNE --config /tmp/notch-experiment.json   # any other configuration file
+ln -s "$PWD/bin/mira-notch" ~/.local/bin/mira-notch
+ln -s "$PWD/bin/mira-tune" ~/.local/bin/mira-tune
+mira-tune --config /tmp/notch-experiment.json   # any other configuration file
 ```
 
 The configuration file and its rules are in
@@ -267,10 +267,10 @@ happens, and a notice stays `notice_duration_ms` (4 s by default).
 | 6 | Unplugged during the notch animation | Plug in, and unplug while the notch is still expanding or showing "connected" | About 2.5 s after the unplug the content becomes "<name> disconnected" (or, within the first 0.8 s, nothing at all is shown); the notch collapses 4 s later. No stuck expansion, no error. |
 | 7 | Monitoring disabled | Start with `MIRA_DEVICE_MONITOR=0` | `[notices] USB device monitoring disabled`; plugging shows nothing. |
 
-Without hardware, MIRA-TUNE's *Phone connected*, *Phone disconnected* and
+Without hardware, mira-tune's *Phone connected*, *Phone disconnected* and
 *Storage connected* previews go through the same presenter and eye path.
 
-**Notice priority, without hardware (MIRA-TUNE).** *Previews → Device
+**Notice priority, without hardware (mira-tune).** *Previews → Device
 scenario* plays scripted sequences on the real presenter and eyes, on real
 time (default notice duration 4 s; replaying a scenario cancels the one
 running). Expected, by eye:
@@ -294,7 +294,7 @@ nothing. With the controls open, *Task failed* closes them and shows the
 error with the cross eyes. A long *Listening* (half a minute) followed by
 *Idle* still brings back a device that connected at its start.
 
-**Shutdown.** Start `MIRA`, then from another terminal `kill -TERM <pid>`:
+**Shutdown.** Start `mira`, then from another terminal `kill -TERM <pid>`:
 the log ends like Ctrl+C (no traceback), the process exits with status 0,
 `$XDG_RUNTIME_DIR/mira/runtime.sock` is gone and `pgrep -x pw-dump` shows
 no orphan. With an adb phone connected, stopping MIRA right after plugging
@@ -409,7 +409,7 @@ MIRA_DEVICE_MONITOR_DEBUG=1 venv/bin/python -m mira.main --notch 2>&1 \
   | grep --line-buffered -E '^\[(devices|notices|mira)\]' | tee notch-acceptance.log
 ```
 
-`MIRA-TUNE` (`bin/mira-tune`) opens the same notch with the tuning window
+`mira-tune` (`bin/mira-tune`) opens the same notch with the tuning window
 and its *Device scenario* previews, for checks that need no hardware.
 
 | Area | Check | Expect |
@@ -422,7 +422,7 @@ and its *Device scenario* previews, for checks that need no hardware.
 | USB + timer | Plug it in while "Timer done!" shows | Nothing until *OK*; then the stick's notice, greeted once |
 | Device information | iPhone (below) | "iPhone" + "N% · <state>" matching the phone |
 | Voice | Ctrl+Alt+M (or the configured key), speak, stop | The waveform shows; a device plugged in meanwhile appears only after listening ends |
-| Errors | MIRA-TUNE *Task failed* while "Timer done!" shows, and while the controls are open | The error shows with cross eyes; "Timer done!" returns after it; the controls are closed by it |
+| Errors | mira-tune *Task failed* while "Timer done!" shows, and while the controls are open | The error shows with cross eyes; "Timer done!" returns after it; the controls are closed by it |
 | Eyes | Throughout | A smile when a device notice appears (not when it waits), none for a departure or for battery updates; cross eyes for errors |
 | Shutdown | `kill -TERM <pid>` (or Ctrl+C, or *Quit*) | Exit status 0, no traceback, `$XDG_RUNTIME_DIR/mira/runtime.sock` gone, no `pw-dump` left (`pgrep -x pw-dump`) |
 | Shutdown | Quit right after plugging in an adb phone, or while a timer runs | Returns at once |
@@ -486,3 +486,93 @@ Use `main` for the verified baseline, `feat/<name>` and `fix/<name>` for
 short lived development, `exp/<name>` for experiments, and `integration/<name>`
 for temporary reconciliation. No permanent develop branch is needed.
 Consult [consolidation.md](consolidation.md) before deleting historical branches.
+
+### WSLg desktop limitations
+
+On WSLg, all three launchers prefer Qt's `xcb` backend when `DISPLAY` is
+available and `QT_QPA_PLATFORM` is unset. This allows the notch to request
+absolute screen positioning. An explicit platform choice is always preserved.
+Install the X11 runtime libraries if Qt cannot load xcb: on Ubuntu,
+`sudo apt install libxcb-cursor0 libxcb-icccm4 libxcb-keysyms1`.
+Restart the running MIRA runtime after changing its backend; later launchers
+reuse that runtime and cannot change its platform.
+
+The existing all-workspace adapter targets Linux X11/EWMH window managers.
+It does not pin the WSLg host window to every Windows virtual desktop.
+Wayland positioning and Windows desktop membership are controlled by the host
+compositor. A successful EWMH request is not proof of Windows desktop pinning.
+Qt screen metrics under WSLg may also differ from Windows monitor/DPI metrics;
+native host monitor integration remains separate work.
+
+### Native Windows (Python 3.12)
+
+For Windows monitor coordinates, DPI scaling and virtual desktops, run MIRA
+with Windows Python rather than through the WSLg remote-window bridge. The
+cognitive graph, memory, actions policy and Qt surfaces are shared with Linux;
+only runtime/desktop adapters differ. There is no second application state.
+
+From PowerShell in a Windows checkout (or a writable WSL UNC checkout):
+
+```powershell
+py -3.12 -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -c constraints.txt -e ".[dev,windows]"
+.\.venv\Scripts\mira-notch.exe
+.\.venv\Scripts\mira.exe
+.\.venv\Scripts\mira-tune.exe
+```
+
+The package supplies these commands on both operating systems. `bin/mira.cmd`,
+`bin/mira-notch.cmd` and `bin/mira-tune.cmd` also use `.venv\Scripts\python.exe`
+from any caller directory. The Unix `bin/mira*` launchers remain unchanged.
+Native Windows uses `%LOCALAPPDATA%\MIRA\runtime` for its election lock and a
+short per-user named pipe with Qt's `UserAccessOption`; no TCP port is opened.
+The client waits are bounded. Preferences use `%APPDATA%\mira`, honoring the
+existing explicit configuration path override.
+
+Qt 6 owns high-DPI conversion. Notch dimensions remain logical pixels, not a
+fixed fraction of a particular monitor: applying another Windows scale would
+double-scale the UI. Screen choice, origin, resolution and logical DPI changes
+recompute its bounds; saved monitor preferences still take precedence.
+
+The optional Windows extra supplies `pyvda` for pinning only the notch HWND
+across Windows virtual desktops after the shell has registered its view. It
+never pins the whole Python application, switches desktops or moves unrelated
+windows. This relies on Windows shell COM interfaces that can change with OS
+updates. Failure is reported once and does not prevent startup; Task View's
+"Show this window on all desktops" remains a manual fallback. WSLg does not use
+this native adapter: its visible HWND belongs to the Windows WSLg bridge, not
+the Linux process. macOS workspace pinning is not yet implemented.
+
+Explorer and Windows allowlisted application commands are selected natively;
+Linux commands keep their existing behavior. Browser executable aliases require
+that browser to be on PATH. Linux USB/PipeWire/NetworkManager producers and the
+Linux global listening shortcut are not advertised as native Windows features;
+in-window listening remains available. Native system notifications and platform
+known-folder redirects still need dedicated adapters; unavailable commands fail
+safely. Voice models and camera packages remain optional.
+
+The Windows CI job runs native named-pipe/election integration tests and portable
+cognitive/domain contracts on Python 3.12; Linux retains the full regression
+suite. Visible Windows acceptance must include primary/secondary monitors,
+mixed DPI, monitor unplug/replug and virtual-desktop changes. Offscreen success
+alone does not establish those behaviors.
+
+A local `.windows-runtime/` directory, if present, is an ignored isolated
+embedded CPython validation runtime, not a system Python installation or a
+committed distributable. The `.cmd` launchers can also use it. A distributable
+Windows build should bundle reviewed, versioned dependencies separately.
+
+Local portability validation (2026-11-25): full Linux regression 2321 passed;
+native Windows CPython 3.12.10 contract suite 121 passed, with an additional
+26-test native startup/IPC/Qt scheduler run passing. The real Windows backend
+reported a 1536x864 logical primary screen at DPR 1.25, a top-centered notch,
+both windows exposed, and successful per-window desktop pinning. Mixed-DPI
+multi-monitor hardware changes still need manual acceptance. The added Windows
+CI job has not been executed on GitHub until these changes are published.
+The embedded validation runtime was used directly. Its pip installation probe
+stalled in build isolation/network checks and was cancelled; the successfully
+built editable wheel was activated locally afterward. Native imports, all three
+command entrypoint definitions and native dependency consistency then passed.
+Normal Windows venv installation remains a CI acceptance item. The supplied
+.cmd launcher was verified joining the running native notch and opening the main
+window without creating a second runtime.

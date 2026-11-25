@@ -8,7 +8,7 @@
 # environment. Intended to be reached through a
 # symlink on PATH, for example:
 #
-#   ln -s "$PWD/bin/mira" ~/.local/bin/MIRA
+#   ln -s "$PWD/bin/mira" ~/.local/bin/mira
 #
 set -euo pipefail
 
@@ -20,8 +20,8 @@ repo_root="$(cd -- "$(dirname -- "$script_path")/.." && pwd -P)"
 python_bin="$repo_root/venv/bin/python"
 
 if [ ! -x "$python_bin" ]; then
-    printf 'MIRA: no virtual environment at %s\n' "$repo_root/venv" >&2
-    printf 'MIRA: create it with\n' >&2
+    printf 'mira: no virtual environment at %s\n' "$repo_root/venv" >&2
+    printf 'mira: create it with\n' >&2
     printf '  cd %s\n' "$repo_root" >&2
     printf '  python3.12 -m venv venv\n' >&2
     printf '  venv/bin/python -m pip install --requirement requirements.txt\n' >&2
@@ -30,7 +30,7 @@ fi
 
 # Runtime resource and safety paths are resolved explicitly by the application.
 # Preserve the caller's directory so the intentionally CWD-relative "current"
-# desktop action reports the directory from which MIRA was invoked.
+# desktop action reports the directory from which mira was invoked.
 
 # exec so signals and the exit status pass straight through to the caller.
 exec "$python_bin" -m mira.main "$@"

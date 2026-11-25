@@ -151,9 +151,45 @@ def load_xlib() -> Xlib | None:
         return None
 
 
+class WindowsAllWorkspaces:
+    """Pin only the native notch HWND through the optional Windows adapter.
+
+    Windows registers its application view after mapping, so this request is
+    deferred from showEvent. No desktop switching, polling or app-wide pinning.
+    """
+    supported = True
+
+    def __init__(self, view_factory=None):
+        self._factory = view_factory
+        self._warned = False
+
+    def prepare_to_show(self, window_id: int) -> bool:
+        return False  # the HWND's application view does not exist yet
+
+    def after_show(self, window_id: int) -> bool:
+        try:
+            factory = self._factory
+            if factory is None:
+                from pyvda import AppView
+                factory = AppView
+            view = factory(hwnd=window_id)
+            if not view.is_pinned():
+                view.pin()
+            return bool(view.is_pinned())
+        except Exception as error:
+            if not self._warned:
+                print(f"[notch] Windows desktop pinning unavailable: {error}; "
+                      "use the Windows extra or Task View > Show this window on all desktops",
+                      file=sys.stderr)
+                self._warned = True
+            return False
+
+
 def workspace_presence_for(platform_name: str, *, xlib_loader=load_xlib) -> WorkspacePresence:
     """The adapter for Qt's platform plugin name (`QGuiApplication.platformName`)."""
 
+    if platform_name == "windows":
+        return WindowsAllWorkspaces()
     if platform_name != "xcb":
         return NoWorkspacePresence()
     xlib = xlib_loader()

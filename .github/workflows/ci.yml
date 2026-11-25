@@ -45,3 +45,30 @@ jobs:
         env:
           QT_QPA_PLATFORM: offscreen
         run: python -m pytest
+
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Install native runtime and test dependencies
+        run: python -m pip install -c constraints.txt -e ".[dev,windows]"
+      - name: Compile and check architecture
+        run: |
+          python -m compileall -q mira
+          python scripts/check_layering.py
+          python scripts/check_state_authority.py
+      - name: Native IPC and portable contract regression
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: >-
+          python -m pytest -q tests/test_native_desktop.py tests/test_qt_scheduler_adapter.py
+          tests/test_platform_adapters.py tests/test_desktop_platform.py
+          tests/test_rule_intent_engine.py tests/test_llm_intent_engine.py
+          tests/test_response_builder.py tests/test_memory_contracts.py
+          tests/test_messaging_contracts.py tests/test_embodiment_frame.py
+          tests/test_scheduler_contracts.py tests/test_consolidated_lifecycle.py

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import platform
+import os
 from dataclasses import dataclass
 from pathlib import Path
 import shutil
@@ -190,7 +191,21 @@ def _resolve_app_command(
         return None, None
 
     app_key = APP_ALIASES.get(normalized, normalized)
-    configured_command = APP_COMMANDS.get(app_key)
+    commands = APP_COMMANDS
+    if sys.platform == "win32":
+        commands = {
+            "terminal": ["cmd.exe"], "calculator": ["calc.exe"],
+            "files": ["explorer.exe"], "firefox": ["firefox.exe"],
+            "google-chrome": ["chrome.exe"],
+        }
+    elif sys.platform == "darwin":
+        commands = {
+            "terminal": ["open", "-a", "Terminal"],
+            "calculator": ["open", "-a", "Calculator"],
+            "files": ["open"], "firefox": ["open", "-a", "Firefox"],
+            "google-chrome": ["open", "-a", "Google Chrome"],
+        }
+    configured_command = commands.get(app_key)
 
     if configured_command is None:
         return app_key, None
@@ -371,7 +386,17 @@ def make_open_directory_action(paths: DesktopPaths | None = None):
                 data={"requested_directory": raw_directory},
             )
 
-        xdg_open = shutil.which("xdg-open")
+        if sys.platform == "win32":
+            try:
+                os.startfile(str(directory_path))
+            except OSError as exc:
+                return ActionResult(success=False, action_name="open_directory",
+                                    message=f"Errore durante l'apertura della cartella: {exc}",
+                                    data={"path": str(directory_path)})
+            return ActionResult(success=True, action_name="open_directory",
+                                message="Ho aperto la cartella richiesta.",
+                                data={"requested_directory": requested_directory, "path": str(directory_path)})
+        xdg_open = shutil.which("open" if sys.platform == "darwin" else "xdg-open")
         if xdg_open is None:
             return ActionResult(
                 success=False,

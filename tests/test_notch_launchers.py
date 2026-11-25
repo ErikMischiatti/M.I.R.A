@@ -1,4 +1,4 @@
-"""Repository launchers: MIRA and MIRA-NOTCH run the application, MIRA-TUNE the tuner.
+"""Repository launchers: mira and mira-notch run the application, mira-tune the tuner.
 
 Each launcher is run for real, through a symlink as on PATH, inside a copy of
 the repository layout whose virtual-environment interpreter is a stub that
@@ -23,9 +23,9 @@ REPO_ROOT = pathlib.Path(__file__).resolve().parents[1]
 BIN = REPO_ROOT / "bin"
 
 LAUNCHERS = {
-    "MIRA": ("mira", ["-m", "mira.main"]),
-    "MIRA-NOTCH": ("mira-notch", ["-m", "mira.main", "--notch"]),
-    "MIRA-TUNE": ("mira-tune", ["-m", "mira.ui.notch", "--tune"]),
+    "mira": ("mira", ["-m", "mira.main"]),
+    "mira-notch": ("mira-notch", ["-m", "mira.main", "--notch"]),
+    "mira-tune": ("mira-tune", ["-m", "mira.ui.notch", "--tune"]),
 }
 
 STUB_PYTHON = """#!/usr/bin/env bash
@@ -119,7 +119,7 @@ def test_the_runtime_mode_flags():
 
 
 def test_the_standalone_notch_tools_never_load_the_application_window():
-    # MIRA-TUNE (and the tool's --notch-only mode) build their own embodiment
+    # mira-tune (and the tool's --notch-only mode) build their own embodiment
     # and notch; neither may depend on MainWindow or the application's shell.
     source = """
 import sys

@@ -1491,3 +1491,20 @@ All services share the single application scheduler and event bus. Listening
 releases audio before shutdown; perception stops before camera capture; voice,
 notices, device queries and timers stop before the scheduler. See
 [consolidation.md](consolidation.md) for integration history and retained work.
+
+## Native desktop portability
+
+Platform-specific runtime election is contained in `application.instance`:
+Unix retains flock/AF_UNIX, Windows uses msvcrt byte locks and per-user named
+pipes. The bounded Windows Qt client is an adapter; the server remains in UI.
+No cognitive or domain component needs Qt, Windows APIs or host shell commands.
+
+Desktop actions select allowlisted commands for the host OS while preserving
+path restrictions. Native Windows uses Qt monitor geometry/DPI directly rather
+than the WSLg proxy screen. The notch listens for logical DPI changes as well as
+screen geometry changes. Windows needs a regular shell HWND for per-window
+virtual desktop pinning; Linux keeps its existing tool-window and EWMH policy.
+Optional `pyvda` is loaded only by the Windows workspace adapter after mapping.
+Pinning failure is logged and never prevents the window from opening. Other
+platforms retain explicit fallback behavior rather than pretending their
+workspaces are controlled. See development.md for validation and limitations.

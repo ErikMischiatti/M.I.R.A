@@ -31,8 +31,8 @@ name = "mira"
 version = "0.1.0"
 description = "M.I.R.A. — a local desktop assistant."
 readme = "README.md"
-# Python 3.12 is the only interpreter series currently validated by CI. Widen
-# this range deliberately after adding coverage for another series.
+# Python 3.12 is the supported series; CI covers Linux and native Windows.
+# Widen deliberately after adding coverage for another series.
 requires-python = ">=3.12,<3.13"
 # Direct runtime compatibility belongs here. Exact versions for the tested
 # development environment live in constraints.txt.
@@ -57,6 +57,13 @@ camera = ["opencv-python-headless>=4.10,<5", "numpy>=1.26,<3"]
 # is detected by the built-in energy detector. The model files are not on
 # PyPI; docs/configuration.md#voice says where they go.
 voice = ["sherpa-onnx>=1.13,<2", "sentencepiece>=0.2,<1"]
+# Optional native Windows shell support; no dependency on Linux/macOS.
+windows = ["pyvda>=0.6,<0.7; sys_platform == 'win32'"]
+
+[project.scripts]
+mira = "mira.main:main"
+mira-notch = "mira.main:notch_main"
+mira-tune = "mira.main:tune_main"
 
 [tool.setuptools.packages.find]
 # `mira.actions` and `mira.cognition` carry no `__init__.py`, so they are

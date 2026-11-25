@@ -45,3 +45,6 @@ mira_voice_presets/
 
 # Local consolidation recovery bundle (never publish)
 .mira-recovery/
+
+# Local native Windows validation runtime
+.windows-runtime/

@@ -388,3 +388,17 @@ Current main focus areas:
 - Improve the existing bounded session-context integration where concrete
   behavior requires it.
 - Keep the codebase clean, modular, and easy to extend.
+
+## Native desktop portability
+
+- Keep native Windows and Linux behavior behind runtime/desktop adapters; do
+  not put host OS or shell logic into domain/cognition.
+- Windows local IPC uses named pipes restricted by Qt UserAccessOption. Preserve
+  bounded waits and do not replace them with an unauthenticated TCP listener.
+- Keep all Windows imports lazy/guarded so Unix imports and tests still run.
+- Qt owns monitor DPI scaling. Do not multiply notch geometry by Windows DPI a
+  second time. Windows pinning targets only the notch HWND after mapping.
+- The Windows desktop extra is optional and may fail on a future shell build;
+  report the limitation without switching desktops or pinning the whole app.
+- Run the full Linux suite and native Windows IPC/startup/scheduler tests after
+  changing portability code. Mixed-DPI/monitor hardware acceptance remains manual.

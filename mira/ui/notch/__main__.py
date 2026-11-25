@@ -29,6 +29,8 @@ from pathlib import Path
 
 from PySide6.QtWidgets import QApplication
 
+from mira.ui.desktop.platform import configure_desktop_platform
+
 from mira.application.scheduling import build_scheduler
 from mira.domain.embodiment import ActivityState, EmbodimentIntent
 from mira.domain.scheduler import Scheduler
@@ -161,6 +163,7 @@ def parse_arguments(argv: list[str]) -> argparse.Namespace:
 
 def main(argv: list[str] | None = None):
     arguments = parse_arguments(sys.argv[1:] if argv is None else argv)
+    configure_desktop_platform()
     app = QApplication(sys.argv[:1])
     # Let Ctrl+C in the terminal end the tool; the Qt loop otherwise hides it.
     signal.signal(signal.SIGINT, signal.SIG_DFL)

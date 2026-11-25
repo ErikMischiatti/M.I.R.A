@@ -28,14 +28,16 @@ Directory: ``$XDG_RUNTIME_DIR/mira`` — per user, mode 0700, on tmpfs, emptied 
 private. Never derived from the working directory, so launchers agree from
 anywhere, and other users never share it.
 
-Qt-free on purpose: a launcher that only forwards exits without ever
-creating a `QApplication`.
+Unix uses flock/AF_UNIX as before. Native Windows uses a one-byte msvcrt
+lock and a per-user Qt named pipe restricted to UserAccessOption. Its bounded
+client lives in the adapter layer; no QApplication is created for forwarding.
+Windows runtime files live below LOCALAPPDATA and inherit its per-user ACL.
 """
 
 from __future__ import annotations
 
 import errno
-import fcntl
+import hashlib
 import json
 import os
 import socket
@@ -98,6 +100,15 @@ def runtime_directory(environ: dict[str, str] | None = None, *, uid: int | None 
     """This user's runtime directory, created if needed; see the module."""
 
     environ = os.environ if environ is None else environ
+    if os.name == "nt":
+        base = environ.get("LOCALAPPDATA", "")
+        if not base or not Path(base).is_absolute():
+            raise InstanceError("LOCALAPPDATA must name this user's application-data directory")
+        path = Path(base) / "MIRA" / "runtime"
+        path.mkdir(parents=True, exist_ok=True)
+        if path.is_symlink() or path.is_junction() or not path.is_dir():
+            raise InstanceError(f"invalid runtime directory: {path}")
+        return path
     uid = os.getuid() if uid is None else uid
     xdg = (environ.get("XDG_RUNTIME_DIR") or "").strip()
     if xdg and Path(xdg).is_absolute() and Path(xdg).is_dir():
@@ -125,7 +136,7 @@ class Primary:
 
     @property
     def socket_path(self) -> Path:
-        return self.directory / SOCKET_NAME
+        return endpoint_path(self.directory)
 
     def release(self) -> None:
         # The lock file itself stays: unlinking it would let a newcomer lock a
@@ -142,6 +153,14 @@ class Forwarded:
     pid: int | None
 
 
+def endpoint_path(directory: Path) -> Path:
+    """Qt uses a short per-user named pipe on Windows, a socket path on Unix."""
+    if os.name == "nt":
+        identity = str(directory.resolve()).casefold().encode("utf-8")
+        return Path("mira-" + hashlib.sha256(identity).hexdigest()[:32])
+    return directory / SOCKET_NAME
+
+
 def try_lock(directory: Path) -> int | None:
     """An fd holding the exclusive runtime lock, or None if someone has it."""
 
@@ -149,13 +168,24 @@ def try_lock(directory: Path) -> int | None:
     # opened by an action can never keep the lock alive after MIRA exits.
     fd = os.open(directory / LOCK_NAME, os.O_RDWR | os.O_CREAT, 0o600)
     try:
-        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        if os.name == "nt":
+            import msvcrt
+            if os.fstat(fd).st_size == 0:
+                os.write(fd, b"\0")
+            os.lseek(fd, 0, os.SEEK_SET)
+            msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+        else:
+            import fcntl
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
     except OSError as error:
         os.close(fd)
         if error.errno in (errno.EWOULDBLOCK, errno.EAGAIN, errno.EACCES):
             return None
         raise
-    os.ftruncate(fd, 0)
+    if os.name != "nt":
+        os.ftruncate(fd, 0)
+    else:
+        os.lseek(fd, 1, os.SEEK_SET)
     os.write(fd, f"{os.getpid()}\n".encode())
     return fd
 
@@ -166,6 +196,14 @@ def send_request(path: Path, request: SurfaceRequest, *, timeout_s: float = REPL
     None means nobody is listening there (no file, a stale file, refused).
     A primary that accepts but never answers raises `InstanceError`.
     """
+
+    if os.name == "nt":
+        from mira.adapters.qt_instance_client import exchange_local_message
+        try:
+            reply = exchange_local_message(str(path), request.encode(), timeout_s, MAX_MESSAGE_BYTES)
+        except (OSError, ValueError) as error:
+            raise InstanceError(f"the running M.I.R.A. did not answer: {error}") from error
+        return None if reply is None else _decode_reply(reply)
 
     connection = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     try:
@@ -185,6 +223,10 @@ def send_request(path: Path, request: SurfaceRequest, *, timeout_s: float = REPL
             raise InstanceError(f"the running M.I.R.A. did not answer: {error}") from error
     finally:
         connection.close()
+    return _decode_reply(reply)
+
+
+def _decode_reply(reply: bytes) -> dict:
     try:
         data = json.loads(reply.decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError) as error:
@@ -221,7 +263,7 @@ def claim_or_forward(
     listening within ``wait_s`` (a hung runtime).
     """
 
-    socket_path = directory / SOCKET_NAME
+    socket_path = endpoint_path(directory)
     deadline = clock() + wait_s
     while True:
         reply = send_request(socket_path, request)

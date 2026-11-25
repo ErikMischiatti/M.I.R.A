@@ -61,13 +61,15 @@ expresses what it is doing.
   frontal-face cascade, so no model download is needed. It detects presence
   only: no identity, no recognition, and it does not move the eyes yet.
 
-Current scope: the rule engine and built-in replies are in **Italian**, and
-desktop actions target **Linux** (`xdg-open`, `notify-send`). There is no voice,
-face or person recognition, object detection, persistent memory, or hardware
-desktop actions target **Linux** (`xdg-open`, `notify-send`). There is no speech
-recognition or spoken output (the voice is nonverbal), no visual perception
-(face, person or object recognition), no persistent memory, and no hardware
-integration.
+Current scope: the rule engine and built-in replies are in **Italian**.
+The desktop runtime supports Linux and native Windows through platform adapters;
+Windows setup and limitations are documented in
+[development.md](docs/development.md#native-windows-python-312).
+Explorer/application actions have native Windows commands; Linux system notices
+and notifications remain platform-specific. Speech transcription, spoken output
+(the voice is nonverbal), identity recognition, object recognition, persistent
+memory and physical hardware integration are not implemented. Optional camera
+and human-presence observations are implemented as described above.
 
 ## Architecture
 
@@ -100,7 +102,9 @@ are discarded. Details: [docs/architecture.md](docs/architecture.md).
 
 ## Quick start
 
-Requires Python 3.12 on Linux. Ollama is needed only for LLM mode.
+Requires Python 3.12. The commands below are for Linux; use the
+[native Windows setup](docs/development.md#native-windows-python-312) on Windows.
+Ollama is needed only for LLM mode.
 
 ```bash
 git clone https://github.com/ErikMischiatti/H.A.R.O..git M.I.R.A.

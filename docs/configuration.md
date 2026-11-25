@@ -3,7 +3,7 @@
 The application has no configuration file. Runtime behavior is selected by a
 small set of environment variables, a packaged expression-profile file, and
 fixed tables in the desktop-action module. The notch keeps one user file of
-its own, shared by `MIRA` and the standalone notch tools and described under
+its own, shared by `mira` and the standalone notch tools and described under
 [Notch](#notch). Architecture context is in
 [architecture.md](architecture.md).
 
@@ -30,7 +30,7 @@ environment.
 | `MIRA_DEVICE_MONITOR_DEBUG` | unset (disabled) | `1`, `true`, `yes` or `on` logs the USB devices present at start and every arrival and removal to stderr (`[devices] …`) with its category, vendor:product id and interface classes. Serial numbers are never read. |
 | `MIRA_DEVICE_INFO` | unset (enabled) | `0`, `false`, `no` or `off` turns device information off: no provider is built and nothing beyond the connection is shown. Providers only ask a phone that already offers USB debugging (adb) or Apple's multiplexer (UPower), and read a storage device's size from sysfs. |
 | `MIRA_DEVICE_INFO_REFRESH_S` | unset (no refresh) | Re-read a connected device's battery every that many seconds, held to `30`–`3600`. `0`, blank or non-integer: each connection is read once. |
-| `MIRA_NOTCH_CONFIG` | `$XDG_CONFIG_HOME/mira/notch.json` | Notch configuration file used by `MIRA`, `MIRA-NOTCH` and `MIRA-TUNE`. `--config PATH` overrides it for the notch tools. |
+| `MIRA_NOTCH_CONFIG` | `$XDG_CONFIG_HOME/mira/notch.json` | Notch configuration file used by `mira`, `mira-notch` and `mira-tune`. `--config PATH` overrides it for the notch tools. |
 
 | `MIRA_PERSON_DETECTION` | unset (disabled) | `1`, `true`, `yes` or `on` (case-insensitive) enables human presence perception. Needs the camera; without it perception reports `unavailable`. |
 | `MIRA_PERSON_DETECTION_MODEL` | OpenCV's bundled `haarcascade_frontalface_default.xml` | Path to an OpenCV cascade XML to detect with instead. Blank selects the default. |
@@ -257,12 +257,12 @@ intentionally.
 
 ## Notch
 
-`MIRA-NOTCH` (`python -m mira.main --notch`) and `MIRA-TUNE`
+`mira-notch` (`python -m mira.main --notch`) and `mira-tune`
 (`python -m mira.ui.notch`) read the notch's tuned settings from one JSON
 file: `MIRA_NOTCH_CONFIG`, else `$XDG_CONFIG_HOME/mira/notch.json`
 (`~/.config/mira/notch.json`); both also accept `--config PATH`. Each prints
 which file it used — when the notch is first shown, so a runtime started by
-`MIRA` reads it only once `MIRA-NOTCH` asks for the notch. A `--config`
+`mira` reads it only once `mira-notch` asks for the notch. A `--config`
 given to a launcher that forwards to a running runtime is used if that
 runtime builds its notch for this request; an existing notch keeps its file. Only the settings window's **Save** writes it. The production
 defaults live in code and never change by saving; **Reset defaults**
@@ -380,7 +380,7 @@ read version 4.
 
 **Settings while running.** Right-click the notch to open its own
 controls, drawn inside the notch (no menu pops up): *Settings* opens the
-same paged settings window as `MIRA-TUNE` for the running notch (without the
+same paged settings window as `mira-tune` for the running notch (without the
 development previews, with a Listening page), *Quit M.I.R.A.* ends the
 runtime. The controls close when one is used, on another right click, or
 1.5 s after the pointer leaves the notch. Double-click the notch to open the
@@ -390,7 +390,7 @@ main window.
 
 `~/.config/mira/listening.json` (`$XDG_CONFIG_HOME/mira/`) holds how
 listening starts and when speech ends. It belongs to the runtime, not to
-the notch, so a runtime started by `MIRA` uses it too:
+the notch, so a runtime started by `mira` uses it too:
 
 ```json
 {"version": 2, "activation": "keyboard",

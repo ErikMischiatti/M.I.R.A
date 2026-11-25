@@ -82,7 +82,7 @@ class ListeningSettings:
 
 
 def default_path() -> Path:
-    base = (os.getenv("XDG_CONFIG_HOME") or "").strip()
+    base = (os.getenv("APPDATA" if os.name == "nt" else "XDG_CONFIG_HOME") or "").strip()
     root = Path(base) if base and Path(base).is_absolute() else Path.home() / ".config"
     return root / "mira" / "listening.json"
 

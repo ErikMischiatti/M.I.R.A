@@ -19,3 +19,8 @@ opencv-python-headless==4.14.0.94
 sentencepiece==0.2.2
 sherpa-onnx==1.13.8
 sherpa-onnx-core==1.13.8
+
+# Native Windows desktop pinning and its COM adapter; not installed on Unix.
+pyvda==0.6.0; sys_platform == "win32"
+comtypes==1.5.0; sys_platform == "win32"
+colorama==0.4.6; sys_platform == "win32"

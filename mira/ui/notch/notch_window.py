@@ -308,11 +308,14 @@ class NotchWindow(QWidget):
     ):
         super().__init__(None)
 
+        # A native Windows tool window has no shell ApplicationView and
+        # cannot be pinned across virtual desktops. Keep a regular HWND there;
+        # show-without-activating/NoFocus still prevent stealing keyboard focus.
+        native_windows = QGuiApplication.platformName() == "windows"
         self.setWindowFlags(
             Qt.FramelessWindowHint
             | Qt.WindowStaysOnTopHint
-            | Qt.Tool
-            | Qt.WindowDoesNotAcceptFocus
+            | (Qt.Window if native_windows else Qt.Tool | Qt.WindowDoesNotAcceptFocus)
         )
         self.setAttribute(Qt.WA_TranslucentBackground)
         self.setAttribute(Qt.WA_ShowWithoutActivating)
@@ -770,6 +773,20 @@ class NotchWindow(QWidget):
         if not event.spontaneous():
             self.all_workspaces_requested = self.workspace_presence.prepare_to_show(int(self.winId()))
         super().showEvent(event)
+        after_show = getattr(self.workspace_presence, "after_show", None)
+        if after_show is not None and not event.spontaneous():
+            # Shell view registration follows the map. Retry briefly because
+            # the Windows shell can register a new HWND asynchronously.
+            self._pin_after_show(5)
+
+    def _pin_after_show(self, attempts):
+        def request():
+            if not self.isVisible():
+                return
+            self.all_workspaces_requested = self.workspace_presence.after_show(int(self.winId()))
+            if not self.all_workspaces_requested and attempts > 1:
+                self._pin_after_show(attempts - 1)
+        QTimer.singleShot(100, self, request)
 
     def hideEvent(self, event):
         # A hidden window receives no leave event; the pointer is gone anyway.
@@ -815,6 +832,9 @@ class NotchWindow(QWidget):
         if any(watched is screen for watched in self._watched_screens):
             return
         screen.geometryChanged.connect(self._on_screen_geometry)
+        dpi_signal = getattr(screen, "logicalDotsPerInchChanged", None)
+        if dpi_signal is not None:
+            dpi_signal.connect(self._on_screen_dpi)
         self._watched_screens.append(screen)
 
     def _unwatch_screen(self, screen: QScreen):
@@ -823,6 +843,9 @@ class NotchWindow(QWidget):
         self._watched_screens = [watched for watched in self._watched_screens if watched is not screen]
         try:
             screen.geometryChanged.disconnect(self._on_screen_geometry)
+            dpi_signal = getattr(screen, "logicalDotsPerInchChanged", None)
+            if dpi_signal is not None:
+                dpi_signal.disconnect(self._on_screen_dpi)
         except (RuntimeError, TypeError):
             pass  # The screen is already gone, and its connections with it.
 
@@ -841,6 +864,11 @@ class NotchWindow(QWidget):
     def _on_primary_screen_changed(self, _screen: QScreen):
         # The primary screen decides between two screens and breaks ties.
         self.retarget_screen()
+
+    def _on_screen_dpi(self, _dpi: float):
+        # Qt owns physical/logical conversion. Never apply a second DPI scale.
+        self.retarget_screen()
+        self.update()
 
     def _on_screen_geometry(self, _geometry: QRect):
         # Any screen moving or resizing can change the automatic choice.
