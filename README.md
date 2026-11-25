@@ -1,186 +1,144 @@
+![M.I.R.A. — Modular Interactive Robotic Agent. A personal robotics project by Erik Mischiatti.](docs/media/mira-banner.svg)
+
 # M.I.R.A.
 
-M.I.R.A. is a **software-first embodied assistant prototype** built in Python
-and PySide6: a compact desktop companion with an expressive animated face, text
-chat, modular cognition, and safe local desktop actions.
+**An embodied assistant, built software first.**
 
-Rather than starting from motors and sensors, the project first develops the
-interaction and behavioral core of a future robotic assistant: how an agent
-receives input, interprets it, chooses an action, responds, and visibly
-expresses what it is doing.
+M.I.R.A. explores how an assistant perceives, responds and expresses itself before it has a physical body. Expressive eyes, a compact conversation window and an ambient notch share one modular runtime. The current implementation is a desktop prototype built with Python and PySide6, with a technology-independent core intended to support future robotic embodiment.
 
-<p align="center">
-  <img src="assets/mira_record.gif" alt="M.I.R.A. desktop prototype in action" width="850"/>
-</p>
+[Portfolio & demos](https://erikmischiatti.com/pages/mira_page.html) · [Setup](#getting-started) · [Architecture](docs/architecture.md) · [Configuration](docs/configuration.md) · [Development](docs/development.md)
 
-## Current capabilities
+[![CI](https://github.com/ErikMischiatti/M.I.R.A/actions/workflows/ci.yml/badge.svg)](https://github.com/ErikMischiatti/M.I.R.A/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-131313)](LICENSE)
 
-- **Expressive face**: procedurally animated eyes with blinking, idle motion,
-  gaze that follows the cursor, thinking drift, speaking pulse, and smooth
-  transitions between idle, listening, thinking, speaking, happy, and confused
-  expressions.
-- **Text interaction**: a compact chat panel. The face reacts to focus,
-  typing, processing, and responses.
-- **Modular cognition**: a deterministic rule-based intent engine by default,
-  or an optional local LLM engine through [Ollama](https://ollama.com). The LLM
-  path validates every model proposal and falls back to the rules when the
-  model is unreachable or returns unusable output.
-- **Session memory**: recent conversation and the last intent, kept for the
-  current session only.
-- **Local actions**: time and date, session introspection, opening URLs,
-  applications, and allowed directories, notifications, and system info. Every
-  action passes an explicit execution policy. Actions that require confirmation
-  are blocked because no confirmation flow exists yet.
-- **Ambient notch** (`MIRA-NOTCH`): MIRA's eyes in a small notch at the top
-  of the screen, on every X11 workspace. It expands on hover and for real
-  notices — action results, USB and audio devices, network connectivity —
-  and the eyes react to success, warnings and errors, and narrow while MIRA
-  is working on a task. Press `Ctrl+Alt+M` (or `M` in its window) and MIRA
-  listens: the notch opens and shows the microphone's real waveform. With
-  the optional voice engine, a wake word ("mira" by default, configurable)
-  starts listening instead, detected locally. MIRA notices when you start
-  and stop speaking and hands the utterance on; there is no speech
-  recognition yet. `MIRA` and `MIRA-NOTCH` share one runtime per user:
-  the second only asks the first to show its surface. Double-click the notch
-  to open the main window. Tunable with `MIRA-TUNE`.
-- **Debug drawer**: hidden by default. It offers live tuning of expression
-  geometry, animation, and blink parameters, with save/reload of the profile
-  file, and shows camera and human-perception status.
-  file, and shows the camera status.
-- **Optional nonverbal voice**: with `MIRA_VOICE=1`, MIRA greets on start and
-  reacts to each response with a short, procedurally synthesized babble whose
-  intonation carries intent (greeting, acknowledgement, happy, confused,
-  error…). It is not speech, is generated offline in pure Python, and plays
-  through Qt Multimedia.
-- **Optional camera input**: with `MIRA_CAMERA=1` and the `camera` extra
-  installed, frames are captured from a webcam through OpenCV on a background
-  thread.
-- **Optional human presence perception**: with `MIRA_PERSON_DETECTION=1` as
-  well, a background detector reports whether someone is in view and where
-  in the image, stabilized against flicker. It uses OpenCV's bundled
-  frontal-face cascade, so no model download is needed. It detects presence
-  only: no identity, no recognition, and it does not move the eyes yet.
+## 01 / Two surfaces, one assistant
 
-Current scope: the rule engine and built-in replies are in **Italian**.
-The desktop runtime supports Linux and native Windows through platform adapters;
-Windows setup and limitations are documented in
-[development.md](docs/development.md#native-windows-python-312).
-Explorer/application actions have native Windows commands; Linux system notices
-and notifications remain platform-specific. Speech transcription, spoken output
-(the voice is nonverbal), identity recognition, object recognition, persistent
-memory and physical hardware integration are not implemented. Optional camera
-and human-presence observations are implemented as described above.
+<table>
+<tr>
+<td width="65%" valign="top">
+<img src="docs/media/main-window-chat-poster.webp" alt="MIRA main window with expressive eyes, conversation panel and a hidden debug drawer" width="620">
+<br><strong>Main window</strong><br>
+Animated face, text interaction, action feedback and an optional debug drawer.
+</td>
+<td width="35%" valign="top">
+<img src="docs/media/notch-hover-poster.webp" alt="Compact MIRA notch attached to the top edge of the screen" width="360">
+<br><strong>Ambient notch</strong><br>
+Compact eyes at the top of the selected screen. Expansion reveals notices, controls, a countdown timer or the listening waveform. Double-click opens the main window.
+</td>
+</tr>
+</table>
 
-## Architecture
+*Images are frames from the project's offscreen portfolio demos, not photographs of a physical robot. The portfolio contains earlier branch-status descriptions; the feature status below reflects this repository.*
 
-The package is split into layers with an enforced dependency direction: a
-technology-independent domain, session memory, messaging, actions, cognition,
-core orchestration, adapters, an explicit composition root, and a Qt UI. One
-component, `ActivityAuthority`, commits embodiment state. The face's
-micro-motions (blink, idle wander, gaze, thinking drift, speaking pulse) are
-computed in the Qt-free domain and resolved into immutable, renderer-independent
-frames. The widget only draws those frames and converts the cursor into a
-normalized attention target. A future perception source could produce the same
-target. Camera frames and person detections, when enabled, flow on their own
-pull-based data plane on background threads, separate from the semantic event
-bus.
+`mira` and `mira-notch` join the same runtime per user on each operating system. `mira-tune` is a separate preview and configuration tool. Both application surfaces share one embodiment clock, so opening another view does not duplicate the assistant or speed up its animations.
+
+## 02 / Implemented today
+
+| Area | Current implementation |
+|---|---|
+| Embodiment | Renderer-independent frames, expressive eyes, blink, gaze, idle movement, thinking/speaking motion and semantic feedback cues. |
+| Cognition | Italian rule-based intents; optional local Ollama inference with validated output, confidence gates and rule fallback. |
+| Safe actions | Explicit registry, contracts and execution policy. Stale asynchronous results cannot execute actions. Requests requiring confirmation are blocked until a confirmation flow exists. |
+| Session context | Bounded in-session memory and contextual prompts. No persistent personal memory. |
+| Ambient interaction | Notch transitions, notice priority, task feedback, device information and countdown timer. Linux device/connectivity producers are optional and platform-specific. |
+| Audio input | Keyboard activation, optional local wake-word detection, voice-activity detection and utterance segmentation. Speech transcription is not implemented. |
+| Nonverbal voice | Optional offline synthesized vocalizations, with configurable identity and two synthesis engines. This is expressive sound, not spoken replies. |
+| Perception | Optional threaded camera capture, person observations, stabilized human presence and diagnostics. No identity recognition or perception-driven gaze yet. |
+| Native desktop adapters | Linux and Windows runtime election/IPC, host-specific application/folder actions, monitor selection and Qt DPI handling. Optional Windows per-window desktop pinning. |
+
+Long-running inference stays off the UI thread. Memory, actions, events and visible state are finalized in one serialized context after checking that the result still belongs to the current request.
+
+## 03 / Getting started
+
+Requires **Python 3.12**. The default engine is rule-based; Ollama, a camera and voice models are optional.
+
+### Linux
+
+```bash
+git clone https://github.com/ErikMischiatti/M.I.R.A.git
+cd M.I.R.A
+python3.12 -m venv venv
+venv/bin/python -m pip install --requirement requirements.txt
+source venv/bin/activate
+
+mira              # main window
+mira-notch        # ambient notch, same application runtime
+mira-tune         # standalone tuning and previews
+```
+
+The repository's `./bin/mira`, `./bin/mira-notch` and `./bin/mira-tune` launchers also work without activating the environment. See [system libraries and PATH setup](docs/development.md).
+
+### Native Windows — PowerShell
+
+```powershell
+git clone https://github.com/ErikMischiatti/M.I.R.A.git
+cd M.I.R.A
+py -3.12 -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -c constraints.txt -e ".[dev,windows]"
+
+.\.venv\Scripts\mira.exe
+.\.venv\Scripts\mira-notch.exe
+.\.venv\Scripts\mira-tune.exe
+```
+
+The `bin\mira*.cmd` launchers use the repository's native Windows environment. Native Windows runs Qt directly against Windows monitors and scaling; a Linux process launched inside WSL uses the WSLg bridge instead. Choose the native runtime for Windows desktop integration. [Windows setup and limitations](docs/development.md#native-windows-python-312)
+
+### Optional features
+
+| Feature | Install / enable |
+|---|---|
+| Local LLM | Run Ollama locally; set `MIRA_INTENT_ENGINE=llm`. The rule engine remains the fallback. |
+| Camera + presence | Install the `camera` extra; set `MIRA_CAMERA=1` and optionally `MIRA_PERSON_DETECTION=1`. |
+| Wake-word activation | Install the `voice` extra, supply the documented local models and configure listening. Keyboard activation remains available. |
+| Expressive sound | Set `MIRA_VOICE=1`; configure its engine, pitch and volume through the documented environment variables. |
+| Windows desktops | The `windows` extra supplies the pinning adapter. It targets the notch only and degrades safely if the Windows shell API is unavailable. |
+
+All environment variables, model locations, hardware checks and platform-specific capabilities are described in [configuration](docs/configuration.md) and [development](docs/development.md). Linux/X11 workspace requests do not control Windows virtual desktops through WSLg. Wayland placement is compositor-controlled; macOS workspace pinning is not implemented.
+
+## 04 / Architecture
 
 ```mermaid
 flowchart LR
-    user([User]) -->|text| ui["Qt UI<br/>chat · face · debug drawer"]
-    ui -->|process_text_async| brain["Brain<br/>turn orchestration"]
-    brain --> cognition["Cognition<br/>rule engine / Ollama LLM"]
-    brain --> actions["Actions<br/>contracts → policy → executor"]
-    brain --> memory[("Session memory")]
-    brain -->|EmbodimentIntent| authority["ActivityAuthority"]
-    authority -->|state_changed event| ui
+    User[Text / listening activation] --> UI[Main window + notch]
+    UI --> Brain[Brain / turn orchestration]
+    Brain --> Intent[Rules / optional local LLM]
+    Brain --> Memory[Session memory]
+    Brain --> Policy[Action contracts + policy]
+    Policy --> Actions[Host actions]
+    Brain --> Authority[Activity authority]
+    Authority --> Frames[Embodiment / motion / frames]
+    Frames --> UI
+    Ports[Scheduler / camera / audio / desktop adapters] --> Brain
 ```
 
-Intent inference runs off the UI thread. Actions, memory updates, and events
-happen only when the result is committed on the UI thread, and stale results
-are discarded. Details: [docs/architecture.md](docs/architecture.md).
+The domain, memory and messaging layers are independent of Qt. Technology bindings live in adapters; the application composition root owns the shared graph and shutdown sequence. One activity authority commits visible state. Camera frames and perception results use a pull-based data plane rather than flooding the semantic event bus.
 
-## Quick start
+[Full architecture](docs/architecture.md) · [Module boundaries and contributor rules](mira/AGENTS.md)
 
-Requires Python 3.12. The commands below are for Linux; use the
-[native Windows setup](docs/development.md#native-windows-python-312) on Windows.
-Ollama is needed only for LLM mode.
+## 05 / Validation & scope
+
+GitHub Actions validates **Python 3.12 on Linux and native Windows**. Linux runs the full suite; Windows runs native locking/named-pipe integration, startup/shutdown, Qt scheduler and portable cognitive/domain contracts. Both jobs compile the package and check layering and state authority.
 
 ```bash
-git clone https://github.com/ErikMischiatti/H.A.R.O..git M.I.R.A.
-cd M.I.R.A.
-python3.12 -m venv venv
-venv/bin/python -m pip install --requirement requirements.txt
-
-venv/bin/python -m mira.main                          # rule-based engine
-MIRA_INTENT_ENGINE=llm venv/bin/python -m mira.main   # local Ollama engine
+python -m compileall -q mira
+python scripts/check_layering.py
+python scripts/check_state_authority.py
+QT_QPA_PLATFORM=offscreen python -m pytest   # Linux full regression
 ```
 
-Try messages such as `ciao`, `che ore sono`, `cosa sai fare`, or
-`apri cartella download`.
+Camera and microphone tests use doubles, and LLM tests do not need a real Ollama server. Visible GUI behavior, real devices, mixed-DPI monitor changes and virtual-desktop behavior need separate acceptance checks. Native Windows DPI, placement and per-window pinning have also been exercised on a real desktop; this does not guarantee compatibility with every Windows shell version.
 
-To try the camera and presence perception, install the optional extra and opt
-in:
+**Next milestones:** portable desktop adapters, speech transcription, explicit action-confirmation UI, persistent memory and perception-driven attention. Physical robot integration remains a future stage. Historical identity experiments and validation branches are preserved separately; their functionality is not claimed as integrated.
 
-```bash
-venv/bin/python -m pip install --constraint constraints.txt --editable ".[dev,camera]"
-MIRA_CAMERA=1 MIRA_PERSON_DETECTION=1 venv/bin/python -m mira.main   # status in the debug drawer
-```
+## 06 / Project notes
 
-To hear the nonverbal voice, opt in, or try every vocalization standalone:
+Created by **[Erik Mischiatti](https://erikmischiatti.com/)** as a personal, software-first robotics project. README presentation and demo imagery draw on the [portfolio case study](https://erikmischiatti.com/pages/mira_page.html); implementation and validation claims are grounded in this repository.
 
-```bash
-MIRA_VOICE=1 venv/bin/python -m mira.main
-venv/bin/python scripts/voice_demo.py        # --no-play --out DIR exports WAVs
-```
-
-LLM mode uses `llama3.2:3b` at `http://localhost:11434` by default. See
-[docs/configuration.md](docs/configuration.md) for all settings. To launch from
-any directory, link `bin/mira` onto your `PATH` as described in
-[docs/development.md](docs/development.md#launcher).
-
-## Development
-
-```bash
-venv/bin/python scripts/check_layering.py
-venv/bin/python scripts/check_state_authority.py
-QT_QPA_PLATFORM=offscreen venv/bin/python -m pytest
-```
-
-The complete validation baseline, test organization, and dependency workflow
-are in [docs/development.md](docs/development.md).
-
-## Documentation
-
-| Document | Contents |
+| Document | Purpose |
 |---|---|
-| [docs/architecture.md](docs/architecture.md) | Layers, composition, interaction flow, messaging, cognition, actions, embodiment, lifecycle |
-| [docs/configuration.md](docs/configuration.md) | Environment variables, LLM fallback diagnostics, expression profiles, desktop actions |
-| [docs/development.md](docs/development.md) | Setup, launcher, validation, tests, dependency updates, conventions |
-| [mira/AGENTS.md](mira/AGENTS.md) | Rules for contributors and coding agents working in the codebase |
-| [docs/MIRA_technical_analysis.md](docs/MIRA_technical_analysis.md) | Historical, non-normative snapshot (Italian, 2026-06-28) |
+| [Development](docs/development.md) | Environments, lowercase launchers, tests, platform limitations and hardware acceptance. |
+| [Configuration](docs/configuration.md) | Runtime options, optional subsystems and feature flags. |
+| [Architecture](docs/architecture.md) | Responsibilities, interfaces and dependency direction. |
+| [Consolidation report](docs/consolidation.md) | Branch reconciliation, integration history, preservation and recovery. |
 
-## Project status
-
-M.I.R.A. is an active software prototype, and the Foundation v1 architecture
-baseline is complete. Next steps focus on the embodied experience and
-cognition: richer face motion, better integration between cognitive output and
-expression, lower LLM latency, an action confirmation flow, and letting
-detected presence steer the eyes' attention.
-
-The longer-term direction includes voice interaction, richer context memory,
-visual presence awareness, and eventually physical embodiment on a robotic
-platform. None of these exist yet. Camera capture and human presence detection
-now exist; mapping presence into the existing `AttentionTarget` gaze input is
-the next step. The architecture's planned extension points
-are listed in [docs/architecture.md](docs/architecture.md#14-intended-future-boundaries-not-implemented).
-
-## Author
-
-**Erik Mischiatti**, M.Sc. Mechatronics Engineering
-
-## License
-
-MIT. See [LICENSE](LICENSE).
-
-Repository history, retained experiments and recovery: [consolidation report](docs/consolidation.md).
+Licensed under [MIT](LICENSE).

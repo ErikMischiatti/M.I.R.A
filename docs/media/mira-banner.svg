@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="340" viewBox="0 0 1200 340" role="img" aria-labelledby="title description">
+  <title id="title">M.I.R.A. — Modular Interactive Robotic Agent</title>
+  <desc id="description">A software-first embodied assistant. Personal robotics project by Erik Mischiatti. Active desktop prototype, Python and Qt.</desc>
+  <rect width="1200" height="340" fill="#e3e2de"/>
+  <path d="M40 40H1160" stroke="#131313" stroke-width="4"/>
+  <g fill="#55534e" font-family="Arial, Helvetica, sans-serif" font-size="15" font-weight="600" letter-spacing="1.4">
+    <text x="40" y="72">01 / PERSONAL PROJECT</text>
+    <text x="1160" y="72" text-anchor="end">ERIK MISCHIATTI · ROBOTICS</text>
+  </g>
+  <text x="34" y="200" fill="#131313" font-family="Arial, Helvetica, sans-serif" font-size="116" font-weight="800" letter-spacing="-5">M.I.R.A.</text>
+  <text x="40" y="242" fill="#393835" font-family="Arial, Helvetica, sans-serif" font-size="25">Modular Interactive Robotic Agent</text>
+  <rect x="928" y="117" width="232" height="124" rx="27" fill="#131313"/>
+  <rect x="986" y="143" width="35" height="71" rx="17" fill="#f3f2ef"/>
+  <rect x="1067" y="143" width="35" height="71" rx="17" fill="#f3f2ef"/>
+  <path d="M40 278H1160" stroke="#b7b4ac"/>
+  <rect x="40" y="294" width="170" height="25" fill="#f2c200"/>
+  <g fill="#131313" font-family="Arial, Helvetica, sans-serif" font-size="13" font-weight="600">
+    <text x="51" y="311">ACTIVE PROTOTYPE</text>
+    <text x="233" y="311">SOFTWARE FIRST / EMBODIMENT / LOCAL COGNITION</text>
+    <text x="1160" y="311" text-anchor="end">PYTHON 3.12 + QT 6</text>
+  </g>
+</svg>
