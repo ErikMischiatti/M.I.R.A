@@ -16,19 +16,19 @@ M.I.R.A. explores how an assistant perceives, responds and expresses itself befo
 <table>
 <tr>
 <td width="65%" valign="top">
-<img src="docs/media/main-window-chat-poster.webp" alt="MIRA main window with expressive eyes, conversation panel and a hidden debug drawer" width="620">
+<img src="docs/media/main-window-chat.gif" alt="Animated MIRA main window: blinking eyes, gaze movement, typed interaction and expressive responses" width="620">
 <br><strong>Main window</strong><br>
 Animated face, text interaction, action feedback and an optional debug drawer.
 </td>
 <td width="35%" valign="top">
-<img src="docs/media/notch-hover-poster.webp" alt="Compact MIRA notch attached to the top edge of the screen" width="360">
+<img src="docs/media/notch-hover.gif" alt="Animated MIRA notch: compact eyes, hover expansion, blinking and collapse" width="360">
 <br><strong>Ambient notch</strong><br>
 Compact eyes at the top of the selected screen. Expansion reveals notices, controls, a countdown timer or the listening waveform. Double-click opens the main window.
 </td>
 </tr>
 </table>
 
-*Images are frames from the project's offscreen portfolio demos, not photographs of a physical robot. The portfolio contains earlier branch-status descriptions; the feature status below reflects this repository.*
+*Looping GIFs from the project's silent offscreen portfolio demos: 12 seconds for the main window and about 5 seconds for the notch. They show the running desktop prototype, not a physical robot. The portfolio contains earlier branch-status descriptions; the feature status below reflects this repository.*
 
 `mira` and `mira-notch` join the same runtime per user on each operating system. `mira-tune` is a separate preview and configuration tool. Both application surfaces share one embodiment clock, so opening another view does not duplicate the assistant or speed up its animations.
 
