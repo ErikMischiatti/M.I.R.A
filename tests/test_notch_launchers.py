@@ -39,6 +39,7 @@ def fake_repo(tmp_path) -> pathlib.Path:
     (repo / "bin").mkdir(parents=True)
     for script, _ in LAUNCHERS.values():
         shutil.copy2(BIN / script, repo / "bin" / script)
+    shutil.copy2(BIN / "desktop-runtime.bash", repo / "bin" / "desktop-runtime.bash")
     python = repo / "venv" / "bin" / "python"
     python.parent.mkdir(parents=True)
     python.write_text(STUB_PYTHON)
@@ -137,7 +138,7 @@ print("LOADED", loaded)
 """
     result = subprocess.run(
         [sys.executable, "-c", source], capture_output=True, text=True, timeout=60,
-        env={**os.environ, "QT_QPA_PLATFORM": "offscreen"},
+        env={**os.environ, "QT_QPA_PLATFORM": "offscreen", "MIRA_DESKTOP_RUNTIME": "linux"},
     )
 
     assert result.returncode == 0, result.stderr
@@ -164,8 +165,44 @@ def test_the_real_launchers_reach_their_entry_points(script, options):
 
     result = subprocess.run(
         [str(BIN / script), "--help"], capture_output=True, text=True, timeout=60,
-        env={**os.environ, "QT_QPA_PLATFORM": "offscreen"},
+        env={**os.environ, "QT_QPA_PLATFORM": "offscreen", "MIRA_DESKTOP_RUNTIME": "linux"},
     )
 
     assert result.returncode == 0, result.stderr
     assert all(option in result.stdout for option in options)
+
+
+def test_wsl_launcher_prefers_installed_native_runtime(fake_repo, tmp_path):
+    import json
+    native = fake_repo / '.venv' / 'Scripts' / 'python.exe'
+    native.parent.mkdir(parents=True)
+    native.touch()
+    helper = fake_repo / 'scripts' / 'launch_windows.py'
+    helper.parent.mkdir()
+    helper.write_text('import json,sys;print(json.dumps(sys.argv[1:]))')
+    result = subprocess.run(
+        [str(fake_repo / 'bin' / 'mira-notch'), '--config', '/path with spaces/settings.json'],
+        capture_output=True, text=True,
+        env={'PATH': os.environ['PATH'], 'WSL_INTEROP': '/test-interop', 'MIRA_DESKTOP_RUNTIME': 'auto'},
+        timeout=10,
+    )
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout) == [str(native), 'mira.main', '--notch', '--config', '/path with spaces/settings.json']
+
+
+def test_explicit_linux_preserves_original_launcher(fake_repo):
+    native = fake_repo / '.venv' / 'Scripts' / 'python.exe'
+    native.parent.mkdir(parents=True)
+    native.touch()
+    result = subprocess.run([str(fake_repo / 'bin' / 'mira-notch')], capture_output=True, text=True,
+        env={'PATH': os.environ['PATH'], 'WSL_INTEROP': '/test', 'MIRA_DESKTOP_RUNTIME': 'linux'}, timeout=10)
+    assert result.returncode == 0
+    assert result.stdout.splitlines() == ['-m', 'mira.main', '--notch']
+
+
+def test_requiring_native_windows_never_silently_falls_back(fake_repo):
+    result = subprocess.run([str(fake_repo / 'bin' / 'mira-notch')], capture_output=True, text=True,
+        env={'PATH': os.environ['PATH'], 'WSL_INTEROP': '/test', 'MIRA_DESKTOP_RUNTIME': 'windows'}, timeout=10)
+    assert result.returncode == 1
+    assert 'Native Windows environment missing' in result.stderr
+    assert '-m' not in result.stdout

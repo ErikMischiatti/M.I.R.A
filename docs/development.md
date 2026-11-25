@@ -576,3 +576,26 @@ command entrypoint definitions and native dependency consistency then passed.
 Normal Windows venv installation remains a CI acceptance item. The supplied
 .cmd launcher was verified joining the running native notch and opening the main
 window without creating a second runtime.
+
+### Launching from Ubuntu on a Windows host
+
+The Unix launchers now use `MIRA_DESKTOP_RUNTIME=auto` by default. Under WSL,
+when `.venv/Scripts/python.exe` or the local `.windows-runtime/python.exe`
+exists, `mira`, `mira-notch` and `mira-tune` select native Windows automatically.
+Their terminal output identifies the selected runtime. This avoids silently
+reopening the Linux/WSLg notch after validating the native Windows placement.
+Without an installed native environment, auto mode reports its Linux fallback.
+
+Use `MIRA_DESKTOP_RUNTIME=linux mira-notch` to explicitly test Linux/WSLg,
+or `MIRA_DESKTOP_RUNTIME=windows mira-notch` to require the native runtime
+and fail clearly if it is unavailable. Linux desktops outside WSL keep the
+original launcher behavior. Named-pipe and Unix runtime identities remain
+separate; selecting native Windows does not transfer an already running Linux
+instance to Windows. Close an older Linux instance before changing runtime.
+
+The bridge passes arguments as quoted PowerShell literals, converts `--config`
+and `MIRA_NOTCH_CONFIG` paths with `wslpath`, and forwards explicit `MIRA_*`
+configuration. It preserves the caller's working directory. Linux Qt plugin
+choices are replaced by the Windows platform; explicit headless test choices
+are retained. It never changes saved notch margins or geometry to compensate
+for WSLg decoration offsets.

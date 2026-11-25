@@ -261,6 +261,7 @@ def test_launcher_preserves_the_callers_working_directory(tmp_path: Path):
     python_bin.parent.mkdir(parents=True)
     caller.mkdir()
     shutil.copy2(REPO_ROOT / "bin" / "mira", launcher)
+    shutil.copy2(REPO_ROOT / "bin" / "desktop-runtime.bash", launcher.parent / "desktop-runtime.bash")
     python_bin.write_text(
         "#!/usr/bin/env bash\nprintf '%s\\n' \"$PWD\"\nprintf '%s\\n' \"$@\"\n",
         encoding="utf-8",

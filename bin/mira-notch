@@ -20,6 +20,11 @@ set -euo pipefail
 script_path="$(readlink -f -- "${BASH_SOURCE[0]}")"
 repo_root="$(cd -- "$(dirname -- "$script_path")/.." && pwd -P)"
 
+# Use native host window management when running through WSL on Windows.
+# shellcheck source=bin/desktop-runtime.bash
+source "$repo_root/bin/desktop-runtime.bash"
+launch_desktop_runtime mira.main --notch "$@"
+
 python_bin="$repo_root/venv/bin/python"
 
 if [ ! -x "$python_bin" ]; then

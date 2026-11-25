@@ -81,7 +81,7 @@ py -3.12 -m venv .venv
 .\.venv\Scripts\mira-tune.exe
 ```
 
-The `bin\mira*.cmd` launchers use the repository's native Windows environment. Native Windows runs Qt directly against Windows monitors and scaling; a Linux process launched inside WSL uses the WSLg bridge instead. Choose the native runtime for Windows desktop integration. [Windows setup and limitations](docs/development.md#native-windows-python-312)
+The `bin\mira*.cmd` launchers use the repository's native Windows environment. From Ubuntu/WSL, the shell launchers also select that native environment automatically when it is installed, so `mira-notch` uses Windows monitor/DPI and desktop integration. Set `MIRA_DESKTOP_RUNTIME=linux` only to explicitly test the Linux/WSLg path. [Windows setup and limitations](docs/development.md#native-windows-python-312)
 
 ### Optional features
 
