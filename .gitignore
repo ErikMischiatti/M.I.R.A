@@ -48,3 +48,6 @@ mira_voice_presets/
 
 # Local native Windows validation runtime
 .windows-runtime/
+
+# Local source bundles for native Windows startup cache
+.mira-launch-cache/

@@ -51,7 +51,6 @@ clock, `shutdown` stops the clock and closes every surface.
 from __future__ import annotations
 
 from collections.abc import Callable
-from enum import StrEnum
 from pathlib import Path
 
 from PySide6.QtCore import Qt
@@ -77,11 +76,7 @@ from mira.ui.notch.presentation import NotchAction, NotchPresenter, TimerButton,
 from mira.ui.notch.startup import bind_presenter, build_notch, deliver_notice, deliver_tasks, deliver_timer
 
 
-class Surface(StrEnum):
-    """A top-level surface presenting MIRA; launchers request them by name."""
-
-    MAIN_WINDOW = "main window"
-    NOTCH = "notch"
+from mira.ui.desktop.surfaces import Surface
 
 
 # The intents the notch offers; the shell honours each of them.

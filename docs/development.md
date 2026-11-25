@@ -599,3 +599,44 @@ configuration. It preserves the caller's working directory. Linux Qt plugin
 choices are replaced by the Windows platform; explicit headless test choices
 are retained. It never changes saved notch margins or geometry to compensate
 for WSLg decoration offsets.
+
+### Startup performance on WSL-hosted checkouts
+
+A native Windows interpreter reading Python modules and Qt DLLs through
+`\\wsl.localhost\...` pays cross-filesystem I/O costs on every process start.
+The WSL bridge now builds a versioned user-local program cache under
+`%LOCALAPPDATA%\MIRA\startup\<checkout-key>`. Its first launch (or a dependency
+change) copies the native environment once; source changes update a much smaller
+application bundle. Later launches use WSL interoperability directly, avoiding a
+new PowerShell process. An incomplete cache is never executed: deployment uses
+an exclusive update lock, staging directories and completion markers. Cache setup
+failure reports a warning and retains the original native source launch path.
+
+Only program files are cached. Profiles and resources retain their original
+`__file__` locations, so expression-profile Save, project-path actions, caller
+working directory and explicit configuration paths keep their previous behavior.
+Runtime identity and preferences remain in their existing per-user locations.
+A small import adapter reads mirrored Python code/bytecode locally while keeping
+source filenames for resource lookup and tracebacks. Dependency metadata and
+source content invalidate versions automatically. Temporary bundles/manifests in
+`.mira-launch-cache/` are ignored by Git and contain no launcher settings.
+Old versions are retained rather than removed while a runtime might use them.
+This is a development-launch cache, not a standalone distributable: original
+resource files must still be accessible.
+
+Set `MIRA_STARTUP_CACHE=0` to bypass caching for diagnostics. Local Windows
+checkouts/interpreters already on a native drive keep their original path.
+`mira.main` also defers GUI graph/device imports until it wins primary-runtime
+election, so `--help` and forwarding to an existing runtime avoid that work on
+both Windows and Linux. Native console/.cmd launches directly against a WSL UNC
+checkout do not use the WSL bridge cache; use the WSL shell launchers for that
+checkout or install the project on a local Windows drive.
+
+Measurements on the development PC (2026-11-25, not a guarantee for other PCs):
+WSL-to-Windows `--help` fell from 6–10 s to about 0.4 s for main/notch and 1.7 s
+for tune. Linux main/notch `--help` fell from about 0.5 s to 0.1 s; tune remained
+about 0.5 s. Isolated native GUI measurements reached visible main/notch windows
+in about 3–4 s with a warm program cache versus about 22 s from the UNC source;
+tune took about 2–2.4 s cached versus about 11 s from source. The first cache
+preparation is excluded from warm figures. Tests used isolated preferences,
+closed only their own windows and did not execute real desktop actions.

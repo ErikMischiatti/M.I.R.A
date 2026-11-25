@@ -18,38 +18,58 @@ when the notch is first built, in whichever process that is. Any other
 argument is left to Qt.
 """
 
+from __future__ import annotations
+
 import argparse
+import importlib
 import os
 import signal
 import socket
 import sys
 from pathlib import Path
 
-from PySide6.QtCore import QSocketNotifier, QTimer
-from PySide6.QtWidgets import QApplication
-
-from mira.ui.desktop.platform import configure_desktop_platform
-
-from mira.application.audio import desktop_audio_backend, desktop_sound_output
-from mira.application.voice import configure_listening
-from mira.application.composition import (
-    build_application,
-    desktop_device_info_providers,
-    desktop_system_event_sources,
-)
-from mira.application.device_config import device_monitor_configuration_from_environment
 from mira.application.instance import (
-    Forwarded,
-    InstanceError,
-    Primary,
-    SurfaceRequest,
-    claim_or_forward,
-    runtime_directory,
+    Forwarded, InstanceError, Primary, SurfaceRequest, claim_or_forward, runtime_directory,
 )
-from mira.ui.desktop_shell import DesktopShell, Surface
-from mira.ui.instance_server import InstanceServer
-from mira.ui.listening_settings import ListeningSession
-from mira.ui.notch.config_store import ConfigSession
+from mira.ui.desktop.surfaces import Surface
+
+# Forwarding and --help need no GUI composition, cognition or device adapters.
+# Preserve named seams for tests and integrations while importing them only
+# after this process has actually become the primary runtime.
+_RUNTIME_IMPORTS = {
+    "QTimer": ("PySide6.QtCore", "QTimer"),
+    "QSocketNotifier": ("PySide6.QtCore", "QSocketNotifier"),
+    "QApplication": ("PySide6.QtWidgets", "QApplication"),
+    "configure_desktop_platform": ("mira.ui.desktop.platform", "configure_desktop_platform"),
+    "desktop_audio_backend": ("mira.application.audio", "desktop_audio_backend"),
+    "desktop_sound_output": ("mira.application.audio", "desktop_sound_output"),
+    "configure_listening": ("mira.application.voice", "configure_listening"),
+    "build_application": ("mira.application.composition", "build_application"),
+    "desktop_device_info_providers": ("mira.application.composition", "desktop_device_info_providers"),
+    "desktop_system_event_sources": ("mira.application.composition", "desktop_system_event_sources"),
+    "device_monitor_configuration_from_environment": ("mira.application.device_config", "device_monitor_configuration_from_environment"),
+    "DesktopShell": ("mira.ui.desktop_shell", "DesktopShell"),
+    "InstanceServer": ("mira.ui.instance_server", "InstanceServer"),
+    "ListeningSession": ("mira.ui.listening_settings", "ListeningSession"),
+    "ConfigSession": ("mira.ui.notch.config_store", "ConfigSession"),
+}
+
+
+def __getattr__(name):
+    if name in globals():
+        return globals()[name]
+    if name not in _RUNTIME_IMPORTS:
+        raise AttributeError(name)
+    module, symbol = _RUNTIME_IMPORTS[name]
+    value = getattr(importlib.import_module(module), symbol)
+    globals()[name] = value
+    return value
+
+
+def _load_runtime_components():
+    for name in _RUNTIME_IMPORTS:
+        if name not in globals():
+            __getattr__(name)
 
 
 def quit_on_interrupt(app: QApplication) -> tuple[socket.socket, socket.socket] | None:
@@ -73,6 +93,8 @@ def quit_on_interrupt(app: QApplication) -> tuple[socket.socket, socket.socket] 
     life of the event loop; None if neither signal is handled.
     """
 
+    QTimer = __getattr__("QTimer")
+    QSocketNotifier = __getattr__("QSocketNotifier")
     if os.name == "nt":
         # Python signals are dispatched only between Qt callbacks on Windows.
         # A small Qt heartbeat lets Ctrl+C request the normal shutdown path;
@@ -136,7 +158,7 @@ def load_notch_session(path: Path | None) -> ConfigSession:
 
     # Missing or invalid contents fall back to the production defaults, never
     # fail. The session also lets the notch settings window save and reload.
-    session = ConfigSession(path)
+    session = __getattr__("ConfigSession")(path)
     print(f"[notch] configuration: {session.path} ({session.source.value})")
     if session.last_load.migrated_from is not None:
         print(f"[notch] configuration is schema version {session.last_load.migrated_from}; Save in the notch settings upgrades it")
@@ -169,6 +191,7 @@ def main(argv: list[str] | None = None, *, claim=claim_runtime):
     primary = outcome
     print(f"[mira] primary runtime (pid {os.getpid()}); requests on {primary.socket_path}")
 
+    _load_runtime_components()
     configure_desktop_platform()
     app = QApplication(sys.argv[:1] + qt_arguments)
 
